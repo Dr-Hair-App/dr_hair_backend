@@ -17,8 +17,13 @@ function positiveNumber(name) {
 
 export class ShiprocketService {
   getConfiguration() {
+    const isVercelPreview = process.env.VERCEL_ENV?.trim().toLowerCase() === 'preview';
     const defaultEnvironment = process.env.NODE_ENV === 'production' ? 'production' : 'sandbox';
-    const environment = process.env.SHIPROCKET_API_ENV?.trim().toLowerCase() || defaultEnvironment;
+    // Preview deployments are isolated test environments. Never let a copied
+    // production variable accidentally route Preview traffic to live shipping.
+    const environment = isVercelPreview
+      ? 'sandbox'
+      : process.env.SHIPROCKET_API_ENV?.trim().toLowerCase() || defaultEnvironment;
     const apiBase = API_BASES[environment] || '';
     const email = environment === 'sandbox'
       ? process.env.SHIPROCKET_SANDBOX_API_EMAIL?.trim() || ''
