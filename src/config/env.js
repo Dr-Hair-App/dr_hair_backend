@@ -1,17 +1,9 @@
 import dotenv from 'dotenv';
 import { randomBytes } from 'node:crypto';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // Load environment variables from .env located at project root (if exists)
-try {
-  dotenv.config({ path: path.resolve(__dirname, '../../.env') });
-} catch {
-  // Ignore in serverless/production environments where .env is absent
-}
+// Wrangler supplies deployed bindings through process.env; skip dotenv there.
+if (!process.env.DRHAIR_DEPLOYMENT_ENV) dotenv.config();
 
 const environment = (process.env.NODE_ENV || 'production').trim().toLowerCase();
 const isLocalDevelopment = environment === 'development';

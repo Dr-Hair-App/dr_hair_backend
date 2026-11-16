@@ -3,7 +3,7 @@
   "name": "dr-hair-backend",
   "main": "cloudflare/index.ts",
   "compatibility_date": "2026-11-16",
-  "compatibility_flags": ["nodejs_compat", "nodejs_compat_populate_process_env"],
+  "compatibility_flags": ["nodejs_compat", "nodejs_compat_populate_process_env", "enable_nodejs_http_server_modules"],
   "workers_dev": true,
   "vars": {
     "NODE_ENV": "development",

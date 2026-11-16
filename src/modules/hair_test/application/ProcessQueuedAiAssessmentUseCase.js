@@ -6,10 +6,11 @@ export class ProcessQueuedAiAssessmentUseCase {
     this.geminiAiService = geminiAiService;
     this.assessmentProductAvailabilityService = assessmentProductAvailabilityService;
     this.logger = logger;
-    this.workerId = randomUUID();
+    this.workerId = null;
   }
 
   async processOne() {
+    this.workerId ||= randomUUID();
     const hairTest = await this.hairTestRepository.claimNextAiAssessment(this.workerId);
     if (!hairTest) return false;
 

@@ -2,9 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import compression from 'compression';
 import morgan from 'morgan';
-import swaggerUi from 'swagger-ui-express';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { config } from './config/env.js';
 import { createContainer } from './container.js';
 import { errorHandler } from './shared/middlewares/error.middleware.js';
@@ -14,9 +11,6 @@ import { InventoryOperationModel, OrderModel, ProviderWebhookEventModel } from '
 import { sendError } from './shared/utils/response.js';
 import { requestIdMiddleware } from './shared/middlewares/requestId.middleware.js';
 import { cacheControl } from './shared/middlewares/cache.middleware.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const isDatabaseReady = (database) => {
   if (database === 'connected') return true;
@@ -76,7 +70,11 @@ export const createApp = () => {
       },
     }),
   );
-  app.use(compression({ threshold: 1024 }));
+  // Compression middleware relies on Node stream behavior that can close the
+  // Worker HTTP response before the Node compatibility bridge flushes it.
+  if (!process.env.DRHAIR_DEPLOYMENT_ENV) {
+    app.use(compression({ threshold: 1024 }));
+  }
   app.use(express.json({
     limit: '10mb',
     verify(req, res, buffer) {
@@ -101,8 +99,8 @@ export const createApp = () => {
       status: healthy ? 'operational' : 'unavailable',
       database: db,
       architecture: 'Modular Monolith + Clean Architecture',
-      documentation: '/api/docs',
-      openapi: '/api/openapi.yaml',
+      documentation: null,
+      openapi: null,
       endpoints: {
         auth: ['/auth/send_login_otp', '/auth/verify_login_otp'],
         adminAuth: ['/api/v1/admin-auth/login'],
@@ -133,25 +131,8 @@ export const createApp = () => {
     });
   });
 
-  // API contract and interactive documentation. The spec is also available
-  // as a standalone file for Flutter/admin client integration.
-  app.get('/api/openapi.yaml', (req, res, next) => {
-    res.type('application/yaml');
-    res.sendFile(path.resolve(__dirname, '../docs/openapi.yaml'), (error) => {
-      if (error) next(error);
-    });
-  });
-  app.use(
-    '/api/docs',
-    swaggerUi.serve,
-    swaggerUi.setup(null, {
-      customSiteTitle: 'Dr. Hair API Documentation',
-      swaggerOptions: { url: '/api/openapi.yaml' },
-    }),
-  );
-
   // Never acknowledge API writes in process memory on a production deployment.
-  // Keep health/docs reachable so operators can diagnose and restore the DB.
+  // Keep health endpoints reachable so operators can diagnose and restore the DB.
   const isProductionDeployment = config.env === 'production';
   app.use((req, res, next) => {
     if (isProductionDeployment && databaseStatus() !== 'connected') {

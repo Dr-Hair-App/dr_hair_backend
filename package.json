@@ -11,7 +11,8 @@
     "test": "node --test test/**/*.test.js",
     "build:cloudflare": "wrangler deploy --dry-run --env=",
     "deploy:cloudflare": "wrangler deploy",
-    "deploy": "wrangler deploy --env staging"
+    "deploy": "wrangler deploy --env staging",
+    "postinstall": "node scripts/patch-iconv-lite.js"
   },
   "keywords": [
     "express",
@@ -32,13 +33,15 @@
     "google-auth-library": "^11.3.4",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
-    "multer": "^1.4.5-lts.1",
-    "swagger-ui-express": "^5.0.1"
+    "multer": "^1.4.5-lts.1"
   },
   "devDependencies": {
     "wrangler": "^4.162.0"
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "overrides": {
+    "iconv-lite": "0.7.3"
   }
 }
