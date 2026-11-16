@@ -1,5 +1,5 @@
 import { ContentItemModel } from '../../../shared/database/models.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { store } from '../../../shared/database/store.js';
 
 export const VALID_CONTENT_STATUSES = ['draft', 'review', 'published', 'hidden', 'archived'];
@@ -53,7 +53,7 @@ export class ContentRepository {
       updated_at: now.toISOString(),
     };
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const doc = await ContentItemModel.create({
         ...record,
         created_at: now,
@@ -69,7 +69,7 @@ export class ContentRepository {
 
   async findById(id) {
     if (!id) return null;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return ContentItemModel.findOne({ id: String(id) }).lean();
     }
     store.contentItems = store.contentItems || [];
@@ -78,7 +78,7 @@ export class ContentRepository {
 
   async update(id, updates = {}) {
     const now = new Date();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return ContentItemModel.findOneAndUpdate(
         { id: String(id) },
         { $set: { ...updates, updated_at: now } },
@@ -127,7 +127,7 @@ export class ContentRepository {
   async listPublished({ type, placement, limit = 50 } = {}) {
     const parsedLimit = Math.max(1, Math.min(100, parseInt(limit, 10) || 50));
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const query = { status: 'published' };
       if (type) query.type = type;
       if (placement && placement !== 'all') {
@@ -162,7 +162,7 @@ export class ContentRepository {
     const parsedLimit = Math.max(1, Math.min(100, parseInt(limit, 10) || 50));
     const skip = (parsedPage - 1) * parsedLimit;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const query = {};
       if (type) query.type = type;
       if (status) query.status = status;
@@ -206,7 +206,7 @@ export class ContentRepository {
   }
 
   async delete(id) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const result = await ContentItemModel.deleteOne({ id: String(id) });
       return result.deletedCount > 0;
     }

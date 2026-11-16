@@ -1,4 +1,5 @@
 import { BadRequestError, ConflictError, ServiceUnavailableError, BadGatewayError } from '../../../shared/errors/index.js';
+import { isSandboxCommerceDeployment } from './CommerceRuntimeEnvironment.js';
 
 const API_BASES = Object.freeze({
   production: 'https://apiv2.shiprocket.in/v1/external',
@@ -17,11 +18,9 @@ function positiveNumber(name) {
 
 export class ShiprocketService {
   getConfiguration() {
-    const isVercelPreview = process.env.VERCEL_ENV?.trim().toLowerCase() === 'preview';
     const defaultEnvironment = process.env.NODE_ENV === 'production' ? 'production' : 'sandbox';
-    // Preview deployments are isolated test environments. Never let a copied
-    // production variable accidentally route Preview traffic to live shipping.
-    const environment = isVercelPreview
+    // The separate staging environment must always use sandbox credentials.
+    const environment = isSandboxCommerceDeployment()
       ? 'sandbox'
       : process.env.SHIPROCKET_API_ENV?.trim().toLowerCase() || defaultEnvironment;
     const apiBase = API_BASES[environment] || '';

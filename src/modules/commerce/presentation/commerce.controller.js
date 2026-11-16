@@ -295,6 +295,15 @@ export class CommerceController {
         actor: { id: userId, type: 'patient' },
       });
 
+      if (!result.idempotentReplay && result.order?.payment?.gateway === 'cod') {
+        await this.notifyPatient({
+          userId,
+          title: 'Order received',
+          body: `Your order ${result.order.order_id} has been placed. We’ll update you as it moves through delivery.`,
+          entityId: result.order.order_id,
+        });
+      }
+
       return sendCreated(res, {
         order: result.order.toJSON(),
         paymentIntent: result.paymentIntent,
@@ -316,6 +325,7 @@ export class CommerceController {
         throw new BadRequestError('Order ID and Payment ID are required');
       }
 
+      const before = await this.orderRepository.findById(cleanOrderId);
       const updated = await this.verifyPaymentUseCase.execute({
         orderId: cleanOrderId,
         paymentId: cleanPaymentId,
@@ -324,6 +334,15 @@ export class CommerceController {
         isWebhook: false,
         actor: req.user ? { id: req.user.id, type: req.user.role ? 'admin' : 'patient' } : null,
       });
+
+      if (before?.payment?.payment_status !== 'Paid' && updated.payment?.payment_status === 'Paid') {
+        await this.notifyPatient({
+          userId: updated.user_id,
+          title: 'Payment confirmed',
+          body: `Payment for order ${updated.order_id} was received. We’ll notify you when it ships.`,
+          entityId: updated.order_id,
+        });
+      }
 
       return sendSuccess(res, updated.toJSON(), 'Payment verified successfully');
     } catch (err) {
@@ -422,12 +441,22 @@ export class CommerceController {
               }
               await this.appointmentController.recoverCapturedPaymentFromWebhook(paymentEntity);
             } else {
+              const before = await this.orderRepository?.findById?.(orderId);
               await this.verifyPaymentUseCase.execute({
                 orderId,
                 paymentId,
                 isWebhook: true,
                 actor: { id: 'webhook', type: 'system' },
               });
+              const settled = await this.orderRepository?.findById?.(orderId);
+              if (before?.payment?.payment_status !== 'Paid' && settled?.payment?.payment_status === 'Paid') {
+                await this.notifyPatient({
+                  userId: settled.user_id,
+                  title: 'Payment confirmed',
+                  body: `Payment for order ${settled.order_id} was received. We’ll notify you when it ships.`,
+                  entityId: settled.order_id,
+                });
+              }
             }
           }
         }
@@ -436,6 +465,15 @@ export class CommerceController {
           const orderId = String(paymentEntity.notes?.app_order_id || paymentEntity.notes?.order_id || '').trim();
           const order = orderId && !orderId.startsWith('APT-') ? await this.orderRepository.findById(orderId) : null;
           if (order && (!paymentEntity.order_id || order.payment.payment_intent_id === paymentEntity.order_id)) {
+            await this.orderRepository.appendPaymentAttempt?.(order.order_id, {
+              payment_id: paymentEntity.id,
+              status: 'failed',
+              amount: Number(paymentEntity.amount) / 100,
+              currency: paymentEntity.currency || 'INR',
+              method: paymentEntity.method,
+              failure_code: paymentEntity.error_code || paymentEntity.error_reason || 'payment_attempt_failed',
+              attempted_at: paymentEntity.created_at ? new Date(Number(paymentEntity.created_at) * 1000).toISOString() : new Date().toISOString(),
+            });
             const updated = await this.orderRepository.update(order.order_id, {
               payment: {
                 gateway_status: 'failed_attempt',
@@ -445,6 +483,12 @@ export class CommerceController {
             });
             updated.addTimelineEvent('Razorpay payment attempt failed; order remains available for payment retry');
             await this.orderRepository.update(order.order_id, { timeline: updated.timeline });
+            await this.notifyPatient({
+              userId: order.user_id,
+              title: 'Payment not completed',
+              body: `Payment for order ${order.order_id} did not go through. You can retry it from your orders.`,
+              entityId: order.order_id,
+            });
           }
         }
         if (['refund.created', 'refund.processed', 'refund.failed'].includes(event)) {

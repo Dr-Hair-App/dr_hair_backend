@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AdminAccountModel } from '../../../shared/database/models.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { store } from '../../../shared/database/store.js';
 import { config } from '../../../config/env.js';
 import { ConflictError, NotFoundError } from '../../../shared/errors/index.js';
@@ -50,7 +50,7 @@ export class AdminAccountRepository {
       };
     }
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const account = await AdminAccountModel.findOne({ email: normalized }).select('+passwordHash +permissions +permissionOverrides +roleTemplate').lean();
       return account ? { ...account, id: String(account._id) } : null;
     }
@@ -76,7 +76,7 @@ export class AdminAccountRepository {
       };
     }
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const account = await AdminAccountModel.findById(cleanId).select('+passwordHash +permissions +permissionOverrides +roleTemplate').lean();
       return account ? { ...account, id: String(account._id) } : null;
     }
@@ -96,7 +96,7 @@ export class AdminAccountRepository {
   }) {
     const normalized = String(email).trim().toLowerCase();
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       try {
         const created = await AdminAccountModel.create({
           email: normalized,
@@ -143,7 +143,7 @@ export class AdminAccountRepository {
     const cleanId = String(id).trim();
     const now = new Date();
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const doc = await AdminAccountModel.findByIdAndUpdate(
         cleanId,
         { $set: { ...updates, updated_at: now } },
@@ -214,7 +214,7 @@ export class AdminAccountRepository {
     }
 
     const cleanId = String(account.id || id).trim();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await AdminAccountModel.findByIdAndDelete(cleanId);
       return { success: true, id: cleanId, email: account.email };
     }
@@ -229,7 +229,7 @@ export class AdminAccountRepository {
     if (!account) throw new NotFoundError('Admin account not found.');
 
     const now = new Date();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await AdminAccountModel.findByIdAndUpdate(account.id, {
         $set: { passwordHash, updated_at: now },
       });
@@ -246,7 +246,7 @@ export class AdminAccountRepository {
   }
 
   async list() {
-    const accounts = isMongoConnected()
+    const accounts = isDatabaseConnected()
       ? await AdminAccountModel.find().select('+permissions +permissionOverrides +roleTemplate name email role active suspendedAt lastLoginAt created_at').sort({ created_at: -1 }).lean()
       : [...store.adminAccounts];
 

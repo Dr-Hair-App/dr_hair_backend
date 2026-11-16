@@ -1,103 +1,33 @@
 # Dr. Hair API
 
-Express.js API for the Dr. Hair Flutter app and admin panel. The backend is a modular monolith. MongoDB Atlas is the durable store when `MONGODB_URI` is set; local development can fall back to seeded in-memory data. Images and scalp photos use Cloudinary, test videos use Cloudinary, and notifications use Firebase Cloud Messaging.
+Express API for the Dr. Hair Flutter app and admin panel, deployed as a Cloudflare Worker. D1 is the durable database, R2 stores images and private clinical documents, and YouTube streams video content. No existing database or media records are imported into the fresh D1/R2 development environment.
 
-The OpenAPI contract is in [`docs/openapi.yaml`](docs/openapi.yaml). The screen-based database/API design is in [`docs/DATA_ARCHITECTURE_AND_API_DESIGN.md`](docs/DATA_ARCHITECTURE_AND_API_DESIGN.md), with rollout state in [`docs/API_ROADMAP.md`](docs/API_ROADMAP.md).
-
-## Current deployment state
-
-`render.yaml` prepares a free Render web service in Singapore, the closest Render region to the Atlas cluster in Mumbai. No live service has been created yet: the Atlas URI is missing, Render still needs a Git source, and admin/CORS values need to be chosen. Render's free service sleeps after 15 minutes idle, takes about a minute to wake, and has an ephemeral filesystem. Use Cloudinary and Atlas for persistent files and records; use an always-on Render plan before production traffic.
-
-## Stack
-
-- Node.js 22 and Express.js
-- MongoDB Atlas via Mongoose for durable data
-- JWT bearer tokens for app sessions and admin authorization
-- Cloudinary for profile/scalp images and test video uploads
-- Firebase Admin SDK for FCM delivery
-- OpenAPI 3.1 and Swagger UI
-- No Redis dependency at this stage
-
-## Run locally
+## Local development
 
 Requirements: Node.js 22 or later and npm.
 
 ```sh
 npm ci
-if [ ! -f .env ]; then cp .env.example .env; fi
 npm run dev
+npx wrangler d1 migrations apply dr-hair-dev --local
 ```
 
-Set `JWT_SECRET` to a private random string of at least 32 characters. Leave `MONGODB_URI` empty only for local demo mode; that mode uses process memory and seeded data, so writes disappear when the process restarts. Production requires a valid Atlas URI and fails startup without it.
+Wrangler runs the Worker with local D1, R2, and KV bindings. `npm test` runs the backend unit and API tests. `npm run build:cloudflare` performs a Wrangler dry-run. `npm run deploy` targets the isolated staging environment; production deployment is available only through the gated GitHub workflow.
 
-OTP is delivered through Fast2SMS in development, staging, and production. OTP requests return a generic message, codes are HMAC-hashed in storage, and the API never returns the OTP. Verification allows five guesses per OTP. Production rate limits are persisted in MongoDB and combine per-IP with per-login limits. Configure `FAST2SMS_API_KEY` in every environment before sending OTPs.
+The default D1 database starts empty. Create catalog, clinic, and admin configuration through the application/admin APIs. Do not seed historical production data. The first Super Admin is configured with Worker secrets (`SUPER_ADMIN_ID`, `SUPER_ADMIN_NAME`, `SUPER_ADMIN_PASSWORD_HASH`).
 
-Clinical assessment and progress photos now upload as Cloudinary `authenticated` assets and API responses use five-minute signed URLs. Existing photos uploaded before this change remain public until migrated. After connecting the Atlas URI, preview the existing asset count with `npm run media:migrate-clinical-private`; migrate assets and record metadata with `npm run media:migrate-clinical-private -- --apply`. The apply command changes Cloudinary delivery types and invalidates cached public URLs.
+## Persistence and media
 
-Keep `.env` private and out of Git. The current `.gitignore` excludes it. Render secrets belong in the Render environment settings, not in the Blueprint or source code.
+D1 is authoritative for users, appointments, assessments, treatments, products, carts, orders, payments, inventory, webhooks, notifications, and admin settings. Migrations are in `migrations/`. High-use fields have SQLite expression indexes; all D1 statements bind request values.
 
-When Gemini is configured, the backend sends assessment answers and up to two authenticated scalp photos to Google's Gemini API to generate the assessment. Configure this integration only where the applicable patient notice, consent, and data-handling requirements are in place. The AI output is a screening aid and does not replace review by a qualified clinician.
+The R2 bucket is private. Image uploads use `/api/v1/media/upload`; public catalog images are served through the backend, while clinical photos and reports use short-lived signed URLs. Video upload/storage is disabled: admin video entries must use YouTube URLs and play through YouTube streaming. Admin and patient API data is not shared-cached. The public config KV binding is reserved and currently unused.
 
-Assessment submission now saves the patient record and queues AI analysis without waiting for Gemini. The queue status is stored on the assessment document in MongoDB (no separate queue collection), and the patient app polls the owner-protected status endpoint. Run `npm run worker:assessment` as a separate, always-on process with the same `MONGODB_URI`, Gemini, and Cloudinary environment as the API. This worker is required in serverless deployments such as Vercel; a serverless API function cannot reliably process jobs after returning the response. If the worker is offline, jobs remain queued and resume when it starts. Local in-memory mode is not shared between separate API and worker processes and is not suitable for this flow.
+## Worker secrets
 
-## Environment variables
+Set secrets separately for staging/production with Wrangler or GitHub Environment secrets. Keep `JWT_SECRET`, Super Admin credentials, SMS/OTP credentials, Razorpay test/live keys and webhook secret, Shiprocket sandbox/live credentials and webhook secret, and optional Gemini/Firebase keys out of source control. Staging must use `DRHAIR_DEPLOYMENT_ENV=staging` so commerce providers remain in sandbox/test mode.
 
-| Variable | Purpose |
-|---|---|
-| `PORT` | Local HTTP port; Render sets its own port |
-| `NODE_ENV` | Use `development` locally and `production` on Render |
-| `JWT_SECRET` | JWT signing secret, at least 32 characters |
-| `JWT_EXPIRES_IN` | Token lifetime; defaults to `30d` |
-| `MAX_FILE_SIZE_MB` | Maximum accepted image upload size |
-| `MONGODB_URI` | MongoDB Atlas connection URI; required in production |
-| `SUPER_ADMIN_ID` | Private first Super Admin login ID; required in production |
-| `SUPER_ADMIN_NAME` | Display name for the bootstrap Super Admin |
-| `SUPER_ADMIN_PASSWORD_HASH` | Scrypt password hash generated locally with `npm run admin:setup`; required in production |
-| `CORS_ORIGINS` | Comma-separated exact browser origins for the admin panel |
-| `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Cloudinary server credentials |
-| `CLOUDINARY_IMAGE_FOLDER`, `CLOUDINARY_VIDEO_FOLDER` | Cloudinary folders |
-| `GEMINI_API_KEY` | Server-side Google AI Studio key for hair assessment analysis; leave unset to use the local fallback |
-| `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` | Primary and fallback Gemini model IDs |
-| `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` | Firebase Admin service-account credentials for FCM |
-| `SHIPROCKET_API_ENV` | Shiprocket target: `sandbox` for test requests, `production` for live requests; defaults to `sandbox` in development and `production` in production |
-| `SHIPROCKET_API_EMAIL`, `SHIPROCKET_API_PASSWORD` | Production Shiprocket API user credentials |
-| `SHIPROCKET_SANDBOX_API_EMAIL`, `SHIPROCKET_SANDBOX_API_PASSWORD` | Sandbox Shiprocket API user credentials |
-| `SHIPROCKET_PICKUP_LOCATION` | Exact pickup location name from the Shiprocket account; pickup PIN is resolved from its API settings |
-| `SHIPROCKET_WEBHOOK_SECRET` | Secret token configured in Shiprocket webhook settings and sent in the `x-api-key` header |
-| `SHIPROCKET_PACKAGE_LENGTH_CM`, `SHIPROCKET_PACKAGE_BREADTH_CM`, `SHIPROCKET_PACKAGE_HEIGHT_CM`, `SHIPROCKET_PACKAGE_WEIGHT_KG` | Legacy defaults. New checkout quotes require weight and dimensions on each product supply plan in Admin |
-| `OTP_EXPIRY_MINUTES` | OTP validity window |
+## API routes and design
 
-For local Shiprocket integration testing, use the sandbox API user's credentials. The backend defaults to sandbox in development and production in production. The sandbox endpoint keeps test calls separate from live orders and wallet activity. Set `SHIPROCKET_API_ENV=production` only when live shipping is intended; production shipment creation may incur courier charges.
+The OpenAPI contract is in [`docs/openapi.yaml`](docs/openapi.yaml). Swagger UI is served at `/api/docs`. Route groups include `/api/v1/auth`, `/api/v1/users`, `/api/v1/hair-tests`, `/api/v1/treatments`, `/api/v1/products`, `/api/v1/commerce`, `/api/v1/appointments`, `/api/v1/media`, `/api/v1/videos`, and `/api/v1/admin`.
 
-Checkout delivery quotes are requested from Shiprocket using the selected delivery PIN, payment mode, declared item value, and combined supply-plan parcel profile. Orders retain the selected quote, package dimensions, courier, rate, and ETA for fulfilment. Shiprocket webhook callbacks should be configured at `/api/v1/commerce/webhooks/carrier-updates`; set the same security token in `SHIPROCKET_WEBHOOK_SECRET`. Product package profiles must reflect the actual packed parcel; mixed items are estimated as a stacked parcel and may need a packaging rule update if actual packing differs.
-
-## API routes
-
-All versioned routes are listed with request/response schemas in [`docs/openapi.yaml`](docs/openapi.yaml). Swagger UI is available at `/api/docs` when the server is running; the raw contract is served from `/api/openapi.yaml`.
-
-Main route groups:
-
-- `/api/v1/auth/*` — request and verify a login OTP
-- `/api/v1/users/*` — profile creation/update and profile photo upload
-- `/api/v1/hair-tests/*` — submit an assessment with optional scalp photos and list the signed-in user's assessments
-- `/api/v1/treatments/*` — read treatment history belonging to the signed-in user
-- `/api/v1/reviews/*` — public active reviews and moderated review submission
-- `/api/v1/notifications/*` — register/remove the signed-in user's FCM device token
-- `/api/v1/videos` — public published videos
-- `/api/v1/admin/*` — allowlisted admin operations for users, hair tests, treatments, reviews, videos, and per-user push notifications
-
-Legacy Flutter-compatible paths such as `/auth/*`, `/Admin/*`, `/HairTest/*`, and `/Review/*` remain mounted. Profile registration requires the bearer token returned by OTP verification and only accepts the identity verified by that OTP.
-
-## Render test deployment
-
-1. Put this backend repository on the Git provider account you want to connect to Render. Review the source first: a connected branch is shared with Render and pushes can trigger deployments.
-2. Create a Blueprint from the repository so Render reads `render.yaml`.
-3. Add `MONGODB_URI`, `ADMIN_EMAILS`, `CORS_ORIGINS`, Cloudinary, and Firebase values as private Render environment variables.
-4. Add the selected Render service region's outbound CIDR ranges to Atlas Network Access. Render's shared ranges can rotate; dedicated static egress IPs require a paid workspace. Do not allow every IP to reach Atlas.
-5. Open `/health`, then `/api/docs` on the generated `onrender.com` URL.
-
-The Atlas cluster and Cloudinary/Firebase projects are separate services; Render hosts only this Express API. Free Render is for testing and may sleep or hit monthly limits. The current smallest always-on paid web instance is listed on Render's pricing page; pricing and limits can change.
-
-## Not wired end to end yet
-
-Some Flutter screens and the admin panel still use mock/demo data. Their API base URLs and calls need to be connected after the test backend has a live URL. Patient inbox APIs and Flutter FCM token registration, foreground display, and notification tap routing are implemented. Real iOS push delivery still requires APNs credentials in Firebase; web push requires a VAPID key. A real OTP delivery API is also needed before public use.
+Cloudflare bindings, staging rollout and CI/CD are documented in [`docs/CLOUDFLARE_MIGRATION.md`](docs/CLOUDFLARE_MIGRATION.md). No live Cloudflare resources or production endpoints are changed by local code edits.

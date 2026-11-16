@@ -1,7 +1,7 @@
 import { IHairTestRepository } from '../domain/IHairTestRepository.js';
 import { HairTest } from '../domain/HairTest.js';
 import { store } from '../../../shared/database/store.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { HairTestModel, HairTestDraftModel, nextId } from '../../../shared/database/models.js';
 import { BadRequestError, NotFoundError } from '../../../shared/errors/index.js';
 
@@ -30,7 +30,7 @@ export class HairTestRepository extends IHairTestRepository {
           note: data.note || 'Assessment submitted',
         }];
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const id = await nextId('hairTests', 100);
       const year = new Date().getFullYear();
       const record = await HairTestModel.create({
@@ -63,7 +63,7 @@ export class HairTestRepository extends IHairTestRepository {
   async findByUserId(userId, { includeArchived = false } = {}) {
     const numericId = parseInt(userId, 10);
     const statusFilter = includeArchived ? { $ne: 'draft' } : { $nin: ['draft', 'archived'] };
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const records = await HairTestModel.find({ userId: numericId, status: statusFilter }).sort({ created_at: -1 }).lean();
       return records.map(toHairTest);
     }
@@ -72,7 +72,7 @@ export class HairTestRepository extends IHairTestRepository {
   }
 
   async findByReferenceNo(referenceNo) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return toHairTest(await HairTestModel.findOne({ reference_no: referenceNo }).lean());
     }
     const test = store.hairTests.find((t) => t.reference_no === referenceNo);
@@ -83,7 +83,7 @@ export class HairTestRepository extends IHairTestRepository {
     const numericAssessmentId = Number(assessmentId);
     const numericUserId = Number(userId);
     if (!Number.isSafeInteger(numericAssessmentId) || !Number.isSafeInteger(numericUserId)) return null;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return toHairTest(await HairTestModel.findOne({ id: numericAssessmentId, userId: numericUserId }).lean());
     }
     const record = store.hairTests.find((item) => Number(item.id) === numericAssessmentId && Number(item.userId) === numericUserId);
@@ -94,7 +94,7 @@ export class HairTestRepository extends IHairTestRepository {
     const numericUserId = Number(userId);
     const numericAssessmentId = Number(assessmentId);
     if (!Number.isSafeInteger(numericUserId) || !Number.isSafeInteger(numericAssessmentId) || !Number.isInteger(photoIndex) || photoIndex < 0) return null;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await HairTestModel.findOne({ id: numericAssessmentId, userId: numericUserId }).lean();
       if (!record) return null;
       const photos = Array.isArray(record.scalp_photos) ? record.scalp_photos : [];
@@ -120,7 +120,7 @@ export class HairTestRepository extends IHairTestRepository {
     const numericUserId = Number(userId);
     const numericAssessmentId = Number(assessmentId);
     if (!Number.isSafeInteger(numericUserId) || !Number.isSafeInteger(numericAssessmentId) || !photo) return false;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await HairTestModel.findOne({ id: numericAssessmentId, userId: numericUserId }).lean();
       if (!record) return false;
       const photos = Array.isArray(record.scalp_photos) ? record.scalp_photos : [];
@@ -144,7 +144,7 @@ export class HairTestRepository extends IHairTestRepository {
       throw new BadRequestError(`Invalid assessment status: ${newStatus}. Allowed: ${validStatuses.join(', ')}.`);
     }
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await HairTestModel.findOne({ reference_no: referenceNo });
       if (!record) throw new NotFoundError('Assessment not found for that reference number.');
 
@@ -195,7 +195,7 @@ export class HairTestRepository extends IHairTestRepository {
     if (!Number.isSafeInteger(numericUserId)) throw new BadRequestError('A valid numeric user id is required.');
     const safeStep = Math.max(0, parseInt(step, 10) || 0);
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const draft = await HairTestDraftModel.findOneAndUpdate(
         { userId: numericUserId },
         { $set: { formData, step: safeStep, updated_at: new Date() } },
@@ -224,7 +224,7 @@ export class HairTestRepository extends IHairTestRepository {
     const numericUserId = Number(userId);
     if (!Number.isSafeInteger(numericUserId)) return null;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const draft = await HairTestDraftModel.findOne({ userId: numericUserId }).lean();
       return draft ? { userId: draft.userId, formData: draft.formData, step: draft.step, updated_at: draft.updated_at } : null;
     }
@@ -238,7 +238,7 @@ export class HairTestRepository extends IHairTestRepository {
     const numericUserId = Number(userId);
     if (!Number.isSafeInteger(numericUserId)) return false;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const result = await HairTestDraftModel.deleteOne({ userId: numericUserId });
       return result.deletedCount > 0;
     }
@@ -254,7 +254,7 @@ export class HairTestRepository extends IHairTestRepository {
 
   async saveAiAssessment(referenceNo, aiAssessment) {
     const updatedAt = new Date();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await HairTestModel.findOneAndUpdate(
         { reference_no: referenceNo },
         { $set: { ai_assessment: aiAssessment, ai_assessment_status: 'ready', ai_assessment_updated_at: updatedAt }, $unset: { ai_assessment_locked_at: 1, ai_assessment_locked_by: 1, ai_assessment_error: 1, ai_assessment_queued_at: 1 } },
@@ -278,7 +278,7 @@ export class HairTestRepository extends IHairTestRepository {
   async claimNextAiAssessment(workerId, { staleAfterMs = 120000 } = {}) {
     const now = new Date();
     const staleBefore = new Date(now.getTime() - staleAfterMs);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await HairTestModel.findOneAndUpdate(
         {
           ai_assessment: null,
@@ -311,7 +311,7 @@ export class HairTestRepository extends IHairTestRepository {
   async markAiAssessmentFailed(referenceNo, errorCode = 'processing_failed') {
     const updatedAt = new Date();
     const safeError = String(errorCode).slice(0, 80);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await HairTestModel.findOneAndUpdate(
         { reference_no: referenceNo, ai_assessment_status: 'processing' },
         { $set: { ai_assessment_status: 'failed', ai_assessment_error: safeError, ai_assessment_updated_at: updatedAt }, $unset: { ai_assessment_locked_at: 1, ai_assessment_locked_by: 1, ai_assessment_queued_at: 1 } },
@@ -332,7 +332,7 @@ export class HairTestRepository extends IHairTestRepository {
 
   async getAiAssessmentStatus(referenceNo, userId) {
     const numericUserId = Number(userId);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await HairTestModel.findOne({ reference_no: referenceNo, userId: numericUserId }).select('reference_no ai_assessment_status ai_assessment ai_assessment_error ai_assessment_updated_at').lean();
       return record ? {
         reference_no: record.reference_no,
@@ -356,7 +356,7 @@ export class HairTestRepository extends IHairTestRepository {
   async retryAiAssessment(referenceNo, userId) {
     const numericUserId = Number(userId);
     const updatedAt = new Date();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await HairTestModel.findOneAndUpdate(
         { reference_no: referenceNo, userId: numericUserId, ai_assessment_status: 'failed', ai_assessment: null },
         { $set: { ai_assessment_status: 'queued', ai_assessment_queued_at: updatedAt, ai_assessment_updated_at: updatedAt, ai_assessment_error: null } },
@@ -379,7 +379,7 @@ export class HairTestRepository extends IHairTestRepository {
 
     const filter = status ? { status } : { status: { $ne: 'draft' } };
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const [records, total] = await Promise.all([
         HairTestModel.find(filter)
           .sort({ created_at: -1 })

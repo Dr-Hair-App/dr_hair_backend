@@ -1,6 +1,6 @@
 import { IAddressRepository } from '../domain/IAddressRepository.js';
 import { Address } from '../domain/Address.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { AddressModel } from '../../../shared/database/models.js';
 import { store } from '../../../shared/database/store.js';
 import { NotFoundError } from '../../../shared/errors/index.js';
@@ -10,7 +10,7 @@ export class AddressRepository extends IAddressRepository {
     const cleanUserId = String(userId).trim();
     if (!cleanUserId) return [];
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const records = await AddressModel.find({ userId: cleanUserId })
         .sort({ is_default: -1, created_at: -1 })
         .lean();
@@ -28,7 +28,7 @@ export class AddressRepository extends IAddressRepository {
     const cleanUserId = String(userId).trim();
     const cleanId = String(addressId).trim();
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await AddressModel.findOne({
         $or: [{ id: cleanId }, { _id: cleanId.match(/^[0-9a-fA-F]{24}$/) ? cleanId : null }],
         userId: cleanUserId,
@@ -56,7 +56,7 @@ export class AddressRepository extends IAddressRepository {
       is_default: shouldBeDefault,
     });
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       if (shouldBeDefault) {
         await AddressModel.updateMany({ userId: cleanUserId }, { $set: { is_default: false } });
       }
@@ -91,7 +91,7 @@ export class AddressRepository extends IAddressRepository {
       updated_at: new Date().toISOString(),
     });
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       if (shouldBeDefault) {
         await AddressModel.updateMany(
           { userId: cleanUserId, id: { $ne: existing.id } },
@@ -128,7 +128,7 @@ export class AddressRepository extends IAddressRepository {
     }
 
     const cleanUserId = String(userId).trim();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await AddressModel.deleteOne({ id: existing.id, userId: cleanUserId });
       if (existing.is_default) {
         // promote latest remaining address to default

@@ -1,7 +1,6 @@
 import { AppError, BadRequestError, NotFoundError } from '../../../shared/errors/index.js';
 import { sendSuccess } from '../../../shared/utils/response.js';
 import { createClinicalReportDownloadUrl } from '../../admin/infrastructure/ClinicalReportStorage.js';
-import { config } from '../../../config/env.js';
 import { progressCheckInResponse } from '../../../shared/utils/progress-checkin-response.js';
 
 const publicReport = (report) => ({
@@ -476,7 +475,7 @@ export class PatientClinicalController {
       if (!body.date || Number.isNaN(date.getTime())) throw new BadRequestError('A valid check-in date is required.');
       if (!Array.isArray(photos) || photos.length < 1 || photos.length > 3) throw new BadRequestError('Attach one to three progress photos uploaded through the media API.');
       const seenAngles = new Set();
-      const ownedPrefix = `${String(config.cloudinary.imageFolder || 'drhair/images').replace(/^\/+|\/+$/g, '')}/user-${userId}/progress/`;
+      const ownedPrefix = `drhair/images/user-${userId}/progress/`;
       for (const photo of photos) {
         const angle = String(photo?.angle || '').toLowerCase();
         const publicId = String(photo?.public_id || '').trim();

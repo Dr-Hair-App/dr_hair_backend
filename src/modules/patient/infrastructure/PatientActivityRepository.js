@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { PatientActivityModel } from '../../../shared/database/models.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { store } from '../../../shared/database/store.js';
 
 export class PatientActivityRepository {
@@ -16,7 +16,7 @@ export class PatientActivityRepository {
       occurred_at: new Date(),
       metadata,
     };
-    if (isMongoConnected()) return (await PatientActivityModel.create(event)).toObject();
+    if (isDatabaseConnected()) return (await PatientActivityModel.create(event)).toObject();
     const record = { ...event, occurred_at: event.occurred_at.toISOString() };
     store.patientActivity.unshift(record);
     return record;
@@ -24,7 +24,7 @@ export class PatientActivityRepository {
 
   async listByPatient(userId, limit = 100) {
     const safeLimit = Math.max(1, Math.min(250, Number(limit) || 100));
-    if (isMongoConnected()) return PatientActivityModel.find({ userId: Number(userId) }).sort({ occurred_at: -1 }).limit(safeLimit).lean();
+    if (isDatabaseConnected()) return PatientActivityModel.find({ userId: Number(userId) }).sort({ occurred_at: -1 }).limit(safeLimit).lean();
     return store.patientActivity.filter((item) => Number(item.userId) === Number(userId)).sort((a, b) => new Date(b.occurred_at) - new Date(a.occurred_at)).slice(0, safeLimit);
   }
 }

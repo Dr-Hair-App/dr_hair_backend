@@ -1,6 +1,6 @@
 import { ICartRepository } from '../domain/ICartRepository.js';
 import { Cart } from '../domain/Cart.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { CartModel } from '../../../shared/database/models.js';
 import { store } from '../../../shared/database/store.js';
 
@@ -9,7 +9,7 @@ export class CartRepository extends ICartRepository {
     if (!userId) return new Cart({ userId: 'guest', items: [] });
     const cleanUserId = String(userId).trim();
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await CartModel.findOne({ userId: cleanUserId }).lean();
       if (!record) {
         return new Cart({ userId: cleanUserId, items: [] });
@@ -43,7 +43,7 @@ export class CartRepository extends ICartRepository {
     const data = cart.toJSON();
     const cleanUserId = String(cart.userId).trim();
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await CartModel.findOneAndUpdate(
         { userId: cleanUserId },
         {
@@ -79,7 +79,7 @@ export class CartRepository extends ICartRepository {
 
   async clearCart(userId) {
     const cleanUserId = String(userId).trim();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await CartModel.deleteOne({ userId: cleanUserId });
       return true;
     }

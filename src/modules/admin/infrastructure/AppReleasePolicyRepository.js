@@ -1,5 +1,5 @@
 import { AppReleasePolicyModel } from '../../../shared/database/models.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { store } from '../../../shared/database/store.js';
 
 const parseSemver = (v) => {
@@ -18,7 +18,7 @@ const compareSemver = (a, b) => {
 
 export class AppReleasePolicyRepository {
   async list() {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return AppReleasePolicyModel.find().lean();
     }
     store.appReleasePolicies = store.appReleasePolicies || [];
@@ -27,7 +27,7 @@ export class AppReleasePolicyRepository {
 
   async getByPlatform(platform = 'android') {
     const cleanPlatform = String(platform).trim().toLowerCase();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return AppReleasePolicyModel.findOne({ platform: cleanPlatform }).lean();
     }
     store.appReleasePolicies = store.appReleasePolicies || [];
@@ -38,7 +38,7 @@ export class AppReleasePolicyRepository {
     const cleanPlatform = String(platform).trim().toLowerCase();
     const now = new Date();
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return AppReleasePolicyModel.findOneAndUpdate(
         { platform: cleanPlatform },
         {

@@ -1,5 +1,5 @@
 import { AppointmentModel, ClinicClosedDateModel, nextId } from '../../../shared/database/models.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { store } from '../../../shared/database/store.js';
 import { ConflictError } from '../../../shared/errors/index.js';
 import { clinicDateBoundary } from '../domain/clinic-time.js';
@@ -13,7 +13,7 @@ const addCalendarDay = (dateKey) => {
 
 export class AppointmentRepository {
   async create(data) {
-    const sequence = isMongoConnected()
+    const sequence = isDatabaseConnected()
       ? await nextId('appointments')
       : store.appointments.reduce((max, item) => Math.max(max, Number(String(item.id).split('-').at(-1)) || 0), 0) + 1;
     const year = new Date(data.starts_at).getUTCFullYear();
@@ -32,7 +32,7 @@ export class AppointmentRepository {
       created_at: now,
       updated_at: now,
     };
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       try {
         return plain(await AppointmentModel.create(record));
       } catch (error) {
@@ -54,7 +54,7 @@ export class AppointmentRepository {
   }
 
   async findById(id, userId) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const filter = { id: String(id), ...(userId == null ? {} : { userId: Number(userId) }) };
       return plain(await AppointmentModel.findOne(filter).lean());
     }
@@ -62,7 +62,7 @@ export class AppointmentRepository {
   }
 
   async findSlot(startsAt, exceptId = '') {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return plain(await AppointmentModel.findOne({ slot_key: startsAt, status: { $ne: 'Cancelled' }, ...(exceptId ? { id: { $ne: String(exceptId) } } : {}) }).lean());
     }
     return store.appointments.find((item) => item.slot_key === startsAt && item.id !== String(exceptId) && item.status !== 'Cancelled') || null;
@@ -71,14 +71,14 @@ export class AppointmentRepository {
   async findByPaymentTransactionId(transactionId) {
     const normalized = String(transactionId || '').trim();
     if (!normalized) return null;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return plain(await AppointmentModel.findOne({ payment_transaction_id: normalized }).lean());
     }
     return store.appointments.find((item) => item.payment_transaction_id === normalized) || null;
   }
 
   async listByPatient(userId) {
-    if (isMongoConnected()) return AppointmentModel.find({ userId: Number(userId) }).sort({ starts_at: -1 }).lean();
+    if (isDatabaseConnected()) return AppointmentModel.find({ userId: Number(userId) }).sort({ starts_at: -1 }).lean();
     return store.appointments.filter((item) => Number(item.userId) === Number(userId)).sort((a, b) => b.starts_at.localeCompare(a.starts_at));
   }
 
@@ -92,7 +92,7 @@ export class AppointmentRepository {
     }
     if (status) filter.status = status;
     if (payment_status) filter.payment_status = payment_status;
-    if (isMongoConnected()) return AppointmentModel.find(filter).sort({ starts_at: 1 }).limit(safeLimit).lean();
+    if (isDatabaseConnected()) return AppointmentModel.find(filter).sort({ starts_at: 1 }).limit(safeLimit).lean();
     return store.appointments
       .filter((item) => (!from || item.starts_at >= from) && (!to || item.starts_at <= to) && (!status || item.status === status) && (!payment_status || item.payment_status === payment_status))
       .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
@@ -102,7 +102,7 @@ export class AppointmentRepository {
   async update(id, patch, event, userId) {
     const now = new Date();
     const update = { $set: { ...patch, updated_at: now }, $push: { status_history: { ...event, changed_at: now } } };
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       try {
         const baseFilter = { id: String(id), ...(userId == null ? {} : { userId: Number(userId) }) };
         const current = await AppointmentModel.findOne(baseFilter).select('starts_at status').lean();
@@ -139,7 +139,7 @@ export class AppointmentRepository {
   async listActiveByClinicDate(date, timeZone = 'UTC') {
     const startsAt = clinicDateBoundary(date, timeZone);
     const endsAt = clinicDateBoundary(addCalendarDay(date), timeZone);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return AppointmentModel.find({
         starts_at: { $gte: startsAt, $lt: endsAt },
         status: { $ne: 'Cancelled' },
@@ -151,7 +151,7 @@ export class AppointmentRepository {
   async listActiveSlotTimesInRange(from, to, timeZone = 'UTC') {
     const startsAt = clinicDateBoundary(from, timeZone);
     const endsAt = clinicDateBoundary(addCalendarDay(to), timeZone);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return AppointmentModel.find({
         starts_at: { $gte: startsAt, $lt: endsAt },
         status: { $ne: 'Cancelled' },
@@ -164,12 +164,12 @@ export class AppointmentRepository {
   }
 
   async listClosedDates() {
-    if (isMongoConnected()) return ClinicClosedDateModel.find().sort({ date: 1 }).lean();
+    if (isDatabaseConnected()) return ClinicClosedDateModel.find().sort({ date: 1 }).lean();
     return [...store.clinicClosedDates].sort((a, b) => a.date.localeCompare(b.date));
   }
 
   async addClosedDate({ date, reason = '', created_by = '' }) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       try { return (await ClinicClosedDateModel.create({ date, reason, created_by })).toObject(); }
       catch (error) { if (error?.code === 11000) throw new ConflictError('The clinic is already closed on this date.'); throw error; }
     }
@@ -180,7 +180,7 @@ export class AppointmentRepository {
   }
 
   async removeClosedDate(date) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const result = await ClinicClosedDateModel.deleteOne({ date });
       return result.deletedCount > 0;
     }

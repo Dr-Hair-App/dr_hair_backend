@@ -60,7 +60,7 @@ describe('OTP response contract', () => {
     assert.equal(captured.record.login, '919876543210');
   });
 
-  it('has no test OTP configuration in Vercel deployments', () => {
+  it('has no test OTP configuration in deployed environments', () => {
     const configUrl = new URL('../src/config/env.js', import.meta.url).href;
     const script = `import { config } from '${configUrl}'; process.stdout.write(JSON.stringify({ isDev: config.isDev, hasDefaultOtp: Object.hasOwn(config.otp, 'defaultOtp'), hasExposeTestOtp: Object.hasOwn(config.otp, 'exposeTestOtp') }));`;
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
@@ -68,8 +68,7 @@ describe('OTP response contract', () => {
       env: {
         ...process.env,
         NODE_ENV: 'development',
-        VERCEL: '1',
-        VERCEL_ENV: 'production',
+        NODE_ENV: 'production',
       },
     });
 

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { isMongoConnected as isDbConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected as isDatabaseConnected } from '../../../shared/database/database.js';
 import { AuditEventModel } from '../../../shared/database/models.js';
 import { store } from '../../../shared/database/store.js';
 
@@ -76,7 +76,7 @@ export class AuditEventRepository {
       created_at: timestamp,
     };
 
-    if (isDbConnected()) {
+    if (isDatabaseConnected()) {
       await AuditEventModel.create(event);
     } else {
       store.auditEvents.unshift(event);
@@ -106,7 +106,7 @@ export class AuditEventRepository {
     const safeLimit = Math.min(100, Math.max(1, Number(limit) || 50));
     const skip = (safePage - 1) * safeLimit;
 
-    if (isDbConnected()) {
+    if (isDatabaseConnected()) {
       const filter = {};
       if (action) filter.action = action;
       if (actorId) filter.actorId = String(actorId);

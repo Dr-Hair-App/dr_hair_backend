@@ -202,7 +202,7 @@ test('Phase 2 - Patient Clinical Vertical Slice', async (t) => {
         {
           angle: 'front',
           public_id: `drhair/images/user-${patientA.id}/progress/front_sample`,
-          url: 'https://res.cloudinary.com/demo/image/upload/sample.jpg',
+          url: 'https://example.test/media/sample.jpg',
           delivery_type: 'authenticated',
           format: 'jpg',
           bytes: 12000,

@@ -1,7 +1,7 @@
 import { ITreatmentRepository } from '../domain/ITreatmentRepository.js';
 import { Treatment } from '../domain/Treatment.js';
 import { store } from '../../../shared/database/store.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { TreatmentModel, nextId } from '../../../shared/database/models.js';
 
 const toTreatment = (record) => {
@@ -12,7 +12,7 @@ const toTreatment = (record) => {
 export class TreatmentRepository extends ITreatmentRepository {
   async findByTestIdentifier(referenceNoOrId, { userId } = {}) {
     const search = String(referenceNoOrId).trim();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const numeric = Number(search);
       const filters = [{ reference_no: search }];
       if (Number.isFinite(numeric)) filters.push({ test_id: numeric }, { id: numeric });
@@ -35,7 +35,7 @@ export class TreatmentRepository extends ITreatmentRepository {
 
   async findByUserId(userId) {
     const numericId = Number(userId);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const records = await TreatmentModel.find({ userId: numericId }).sort({ date: -1, id: -1 }).lean();
       return records.map(toTreatment);
     }
@@ -46,7 +46,7 @@ export class TreatmentRepository extends ITreatmentRepository {
   }
 
   async create(treatmentData) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return toTreatment(
         await TreatmentModel.create({
           ...treatmentData,
@@ -69,7 +69,7 @@ export class TreatmentRepository extends ITreatmentRepository {
   async list({ page = 1, limit = 25 } = {}) {
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const [records, total] = await Promise.all([
         TreatmentModel.find().sort({ date: -1 }).skip((safePage - 1) * safeLimit).limit(safeLimit).lean(),
         TreatmentModel.countDocuments(),
@@ -88,7 +88,7 @@ export class TreatmentRepository extends ITreatmentRepository {
   async updateDietMeals(userId, dietMeals) {
     const numericId = Number(userId);
     const meals = Array.isArray(dietMeals) ? dietMeals : [];
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       let treatment = await TreatmentModel.findOne({ userId: numericId }).sort({ date: -1, id: -1 });
       if (treatment) {
         treatment.diet_meals = meals;
@@ -124,7 +124,7 @@ export class TreatmentRepository extends ITreatmentRepository {
 
   async getRoutineSteps(userId) {
     const numericId = Number(userId);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const treatment = await TreatmentModel.findOne({ userId: numericId }).sort({ date: -1, id: -1 }).lean();
       return treatment?.routine_steps || [];
     }
@@ -142,7 +142,7 @@ export class TreatmentRepository extends ITreatmentRepository {
       created_by: 'patient',
     };
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       let treatment = await TreatmentModel.findOne({ userId: numericId }).sort({ date: -1, id: -1 });
       if (treatment) {
         treatment.routine_steps = [...(treatment.routine_steps || []), cleanStep];
@@ -179,7 +179,7 @@ export class TreatmentRepository extends ITreatmentRepository {
   async removeRoutineStep(userId, stepIndex) {
     const numericId = Number(userId);
     const index = parseInt(stepIndex, 10);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       let treatment = await TreatmentModel.findOne({ userId: numericId }).sort({ date: -1, id: -1 });
       if (treatment && Array.isArray(treatment.routine_steps)) {
         if (index >= 0 && index < treatment.routine_steps.length) {
@@ -202,7 +202,7 @@ export class TreatmentRepository extends ITreatmentRepository {
 
   async getReminders(userId) {
     const numericId = Number(userId);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const treatment = await TreatmentModel.findOne({ userId: numericId }).sort({ date: -1, id: -1 }).lean();
       return treatment?.care_reminders || [];
     }
@@ -212,7 +212,7 @@ export class TreatmentRepository extends ITreatmentRepository {
 
   async saveReminder(userId, reminder) {
     const numericId = Number(userId);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       let treatment = await TreatmentModel.findOne({ userId: numericId }).sort({ date: -1, id: -1 });
       if (treatment) {
         const existing = Array.isArray(treatment.care_reminders) ? [...treatment.care_reminders] : [];
@@ -264,7 +264,7 @@ export class TreatmentRepository extends ITreatmentRepository {
   async deleteReminder(userId, reminderId) {
     const numericId = Number(userId);
     const searchId = String(reminderId).trim();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       let treatment = await TreatmentModel.findOne({ userId: numericId }).sort({ date: -1, id: -1 });
       if (treatment && Array.isArray(treatment.care_reminders)) {
         treatment.care_reminders = treatment.care_reminders.filter((r) => r.id !== searchId);

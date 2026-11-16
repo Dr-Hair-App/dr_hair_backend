@@ -68,3 +68,74 @@ test('repeating the same admin fulfillment status does not send duplicate milest
   assert.equal(res.statusCode, 200);
   assert.equal(notifications.length, 0);
 });
+
+test('a new COD checkout sends an order received notification exactly once', async () => {
+  const notifications = [];
+  const checkoutOrder = {
+    user_id: '42',
+    order_id: 'ORD-COD-1',
+    payment: { gateway: 'cod', payment_status: 'Pending' },
+    toJSON() { return { order_id: this.order_id }; },
+  };
+  const controller = new CommerceController({
+    checkoutUseCase: {
+      async execute() {
+        return { order: checkoutOrder, paymentIntent: null, idempotentReplay: false };
+      },
+    },
+    notificationRepository: {
+      async create(notification) {
+        notifications.push(notification);
+        return { ...notification, id: 'notif-cod' };
+      },
+    },
+    deviceTokenRepository: { async listByUserId() { return []; } },
+  });
+
+  const res = response();
+  await controller.checkout({
+    user: { id: 42 },
+    headers: {},
+    body: { shipping_quote_id: 'quote-1' },
+  }, res, (error) => { throw error; });
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].title, 'Order received');
+  assert.equal(notifications[0].destination.screen, 'orders');
+});
+
+test('successful Razorpay verification sends a payment confirmation notification', async () => {
+  const notifications = [];
+  const before = {
+    user_id: '42', order_id: 'ORD-PAID-1',
+    payment: { payment_status: 'Pending' },
+  };
+  const settled = {
+    ...before,
+    payment: { payment_status: 'Paid' },
+    toJSON() { return { order_id: this.order_id, payment: this.payment }; },
+  };
+  const controller = new CommerceController({
+    orderRepository: { async findById() { return before; } },
+    verifyPaymentUseCase: { async execute() { return settled; } },
+    notificationRepository: {
+      async create(notification) {
+        notifications.push(notification);
+        return { ...notification, id: 'notif-paid' };
+      },
+    },
+    deviceTokenRepository: { async listByUserId() { return []; } },
+  });
+
+  const res = response();
+  await controller.verifyPayment({
+    user: { id: 42 },
+    body: { order_id: 'ORD-PAID-1', payment_id: 'pay-1', payment_signature: 'signature' },
+  }, res, (error) => { throw error; });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].title, 'Payment confirmed');
+  assert.equal(notifications[0].destination.entityId, 'ORD-PAID-1');
+});

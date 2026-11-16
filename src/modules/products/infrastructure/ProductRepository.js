@@ -1,5 +1,5 @@
 import { IProductRepository } from '../domain/IProductRepository.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { ProductModel } from '../../../shared/database/models.js';
 import { store } from '../../../shared/database/store.js';
 
@@ -21,7 +21,7 @@ export class ProductRepository extends IProductRepository {
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
     const skip = (safePage - 1) * safeLimit;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const andClauses = [];
       if (status && status !== 'all') {
         andClauses.push({ status: new RegExp(`^${escapeRegex(status)}$`, 'i') });
@@ -124,7 +124,7 @@ export class ProductRepository extends IProductRepository {
     if (!id) return null;
     const cleanId = String(id).trim();
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return ProductModel.findOne({
         $or: [{ id: cleanId }, { sku: cleanId }, { _id: cleanId.match(/^[0-9a-fA-F]{24}$/) ? cleanId : null }],
       }).lean();
@@ -139,7 +139,7 @@ export class ProductRepository extends IProductRepository {
   }
 
   async create(productData) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       try {
         return await ProductModel.create(productData);
       } catch (err) {
@@ -168,7 +168,7 @@ export class ProductRepository extends IProductRepository {
 
   async update(id, productData) {
     const cleanId = String(id).trim();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return ProductModel.findOneAndUpdate(
         { id: cleanId },
         { ...productData, updated_at: new Date() },
@@ -191,7 +191,7 @@ export class ProductRepository extends IProductRepository {
 
   async delete(id) {
     const cleanId = String(id).trim();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const result = await ProductModel.deleteOne({ id: cleanId });
       return result.deletedCount > 0;
     }

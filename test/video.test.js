@@ -134,20 +134,6 @@ describe('Admin video content', () => {
     assert.match(res.body.message, /updated successfully/i);
   });
 
-  it('purges legacy demo videos', async () => {
-    const controller = new VideoController({
-      videoRepository: {
-        purgeLegacyVideos: async () => ({ deletedCount: 5 }),
-      },
-    });
-    const res = responseRecorder();
-    await controller.purgeLegacyVideos({}, res, (error) => { throw error; });
-
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.body.data.deletedCount, 5);
-    assert.match(res.body.message, /Purged 5 legacy\/demo video records/i);
-  });
-
   it('verifies real repository chunk loading: page 1 has_more true, page 2 has_more false', async () => {
     const { VideoRepository } = await import('../src/modules/media/infrastructure/VideoRepository.js');
     const repo = new VideoRepository();

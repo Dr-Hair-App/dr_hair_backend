@@ -94,7 +94,7 @@ describe('Phase 0 - Release Safety & Truthfulness Guardrails', () => {
   });
 
   describe('CORS Restrictions in Production', () => {
-    it('blocks unconfigured .vercel.app and arbitrary origins in production', async () => {
+    it('blocks unconfigured Cloudflare preview and arbitrary origins in production', async () => {
       const originalIsDev = config.isDev;
       const originalOrigins = config.cors.origins;
       try {
@@ -107,7 +107,7 @@ describe('Phase 0 - Release Safety & Truthfulness Guardrails', () => {
         let corsBlocked = false;
         const fakeReq = {
           method: 'GET',
-          headers: { origin: 'https://attacker.vercel.app' },
+          headers: { origin: 'https://attacker.pages.dev' },
         };
         const fakeRes = {
           setHeader() {},
@@ -129,7 +129,7 @@ describe('Phase 0 - Release Safety & Truthfulness Guardrails', () => {
           .find((handle) => handle.name === 'corsMiddleware');
 
         // Verify with exact origin test
-        assert.equal(config.cors.origins.includes('https://attacker.vercel.app'), false);
+        assert.equal(config.cors.origins.includes('https://attacker.pages.dev'), false);
         assert.equal(config.cors.origins.includes('https://admin.drhair.in'), true);
       } finally {
         config.isDev = originalIsDev;

@@ -12,7 +12,7 @@ describe('Hair Test & Treatment Modules - Clean Architecture Tests', () => {
   submitHairTestUseCase.imageStorage = {
     uploadImage: async (_buffer, folder) => ({
       publicId: `${folder}/test-scalp-image`,
-      secureUrl: 'https://res.cloudinary.com/test/image/upload/test-scalp-image.jpg',
+      secureUrl: 'https://example.test/media/test-scalp-image.jpg',
     }),
   };
 

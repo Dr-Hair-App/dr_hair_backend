@@ -1,4 +1,4 @@
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { ProductModel, VideoModel } from '../../../shared/database/models.js';
 import { store } from '../../../shared/database/store.js';
 import { CategoryRepository } from '../infrastructure/CategoryRepository.js';
@@ -114,7 +114,7 @@ export class ListCategoriesUseCase {
 
   async _getProductCategories() {
     let products = [];
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       products = await ProductModel.find({ status: 'active' })
         .select('root_cause root_causes')
         .lean();
@@ -168,7 +168,7 @@ export class ListCategoriesUseCase {
     };
 
     try {
-      if (isMongoConnected()) {
+      if (isDatabaseConnected()) {
         const publishedVideos = await VideoModel.find({ status: 'published' }).select('category tag author_name').lean();
         counts.total = publishedVideos.length;
 
@@ -226,7 +226,7 @@ export class ListCategoriesUseCase {
 
     let publishedVideos = [];
     try {
-      if (isMongoConnected()) {
+      if (isDatabaseConnected()) {
         publishedVideos = await VideoModel.find({ status: 'published' }).select('category tag author_name').lean();
       } else {
         publishedVideos = Array.isArray(store.videos) ? store.videos.filter((v) => v.status === 'published') : [];

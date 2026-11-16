@@ -45,7 +45,7 @@ export const LEGAL_POLICIES = [
         content: 'You retain full statutory rights over your personal and clinical data as a Data Principal under the DPDP Act 2023:',
         bullet_points: [
           'Right to Access: View all submitted profile, assessment, and treatment records anytime in the app.',
-          'Right to Erasure: Request permanent deletion directly in the app via Settings → Delete Account, or through our public web deletion portal at https://drhair-admin.vercel.app/delete-account.',
+          'Right to Erasure: Request permanent deletion directly in the app via Settings → Delete Account, or through our public web deletion portal at /delete-account.',
         ],
       },
       {

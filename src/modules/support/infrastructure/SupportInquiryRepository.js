@@ -1,4 +1,4 @@
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { SupportInquiryModel } from '../../../shared/database/models.js';
 import { store } from '../../../shared/database/store.js';
 import { randomUUID } from 'node:crypto';
@@ -30,7 +30,7 @@ export class SupportInquiryRepository {
       updated_at: new Date(),
     };
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await SupportInquiryModel.create(record);
       return record;
     }
@@ -46,7 +46,7 @@ export class SupportInquiryRepository {
     const numericLimit = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
     const skip = (numericPage - 1) * numericLimit;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const filter = {};
       if (status && status !== 'all') filter.status = status;
 
@@ -97,7 +97,7 @@ export class SupportInquiryRepository {
     };
     if (adminNotes !== null) update.admin_notes = adminNotes;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return SupportInquiryModel.findOneAndUpdate(
         { id: cleanId },
         { $set: update },

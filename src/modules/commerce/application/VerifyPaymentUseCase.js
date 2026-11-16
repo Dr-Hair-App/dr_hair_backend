@@ -59,6 +59,14 @@ export class VerifyPaymentUseCase {
       throw new BadRequestError('The order changed while confirming payment. Refresh the order before retrying.');
     }
 
+    await this.orderRepository.appendPaymentAttempt?.(cleanOrderId, {
+      payment_id: paymentId,
+      status: 'captured',
+      amount: order.pricing.total,
+      currency: 'INR',
+      attempted_at: new Date().toISOString(),
+    });
+
     if (this.auditEventRepository) {
       await this.auditEventRepository.record({
         actor: actor || { id: order.user_id, type: 'patient' },

@@ -1,16 +1,13 @@
 import { NotFoundError, BadRequestError } from '../../../shared/errors/index.js';
-import { config } from '../../../config/env.js';
 
 const ownedProfilePublicId = (url, userId) => {
-  if (typeof url !== 'string' || !config.cloudinary.cloudName) return null;
+  if (typeof url !== 'string') return null;
   try {
     const parsed = new URL(url);
-    const marker = `/${config.cloudinary.cloudName}/image/upload/`;
-    if (parsed.protocol !== 'https:' || parsed.hostname !== 'res.cloudinary.com' || !parsed.pathname.includes(marker)) return null;
-    const parts = parsed.pathname.split(marker)[1].split('/').filter(Boolean);
-    if (/^v\d+$/.test(parts[0] || '')) parts.shift();
-    const publicId = parts.join('/').replace(/\.[a-zA-Z0-9]+$/, '');
-    return publicId === `${config.cloudinary.imageFolder}/profiles/user-${userId}` ? publicId : null;
+    const marker = '/api/v1/media/assets/';
+    if (!['https:', 'http:'].includes(parsed.protocol) || !parsed.pathname.includes(marker)) return null;
+    const key = parsed.pathname.slice(parsed.pathname.indexOf(marker) + marker.length).split('/').map(decodeURIComponent).join('/');
+    return key.startsWith(`drhair/images/profiles/user-${userId}.`) ? key : null;
   } catch {
     return null;
   }
@@ -56,6 +53,7 @@ export class UpdateProfilePictureUseCase {
       file.buffer,
       'profiles',
       'user-' + userId,
+      { contentType: file.mimetype || 'image/jpeg' },
     );
     const updatedUser = await this.userRepository.updateAvatar(userId, stored.secureUrl);
 

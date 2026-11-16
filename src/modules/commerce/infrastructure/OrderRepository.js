@@ -1,8 +1,9 @@
 import { IOrderRepository } from '../domain/IOrderRepository.js';
 import { Order } from '../domain/Order.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { OrderModel } from '../../../shared/database/models.js';
 import { store } from '../../../shared/database/store.js';
+import { getDatabaseBinding } from '../../../shared/database/runtime.js';
 import { NotFoundError } from '../../../shared/errors/index.js';
 
 function escapeRegex(str) {
@@ -48,16 +49,10 @@ export class OrderRepository extends IOrderRepository {
     }
 
     let grouped;
-    if (isMongoConnected()) {
-      grouped = await OrderModel.aggregate([
-        { $match: { created_at: { $gte: start, $lt: end }, 'payment.payment_status': { $in: ['Paid', 'Partially refunded', 'Refunded'] } } },
-        { $group: {
-          _id: { $dateToString: { format: dateFormat, date: { $convert: { input: '$created_at', to: 'date', onError: null, onNull: null } }, timezone: 'UTC' } },
-          order_count: { $sum: 1 },
-          gross_sales: { $sum: '$pricing.total' },
-          refunds: { $sum: { $ifNull: ['$payment.refund_amount', 0] } },
-        } },
-      ]);
+    if (isDatabaseConnected()) {
+      const sql = `SELECT strftime('${dateFormat}', json_extract(payload, '$.created_at')) AS _id, COUNT(*) AS order_count, SUM(COALESCE(CAST(json_extract(payload, '$.pricing.total') AS REAL), 0)) AS gross_sales, SUM(COALESCE(CAST(json_extract(payload, '$.payment.refund_amount') AS REAL), 0)) AS refunds FROM orders WHERE json_extract(payload, '$.created_at') >= ? AND json_extract(payload, '$.created_at') < ? AND json_extract(payload, '$.payment.payment_status') IN ('Paid', 'Partially refunded', 'Refunded') GROUP BY _id`;
+      const result = await getDatabaseBinding().prepare(sql).bind(start.toISOString(), end.toISOString()).all();
+      grouped = result.results || [];
     } else {
       const totals = new Map();
       for (const order of (store.orders || [])) {
@@ -93,7 +88,7 @@ export class OrderRepository extends IOrderRepository {
   async create(order) {
     const data = order instanceof Order ? order.toJSON() : order;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await OrderModel.create(data);
       return new Order(data);
     }
@@ -106,7 +101,7 @@ export class OrderRepository extends IOrderRepository {
   async findById(orderId) {
     const cleanId = String(orderId).trim();
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await OrderModel.findOne({
         $or: [{ order_id: cleanId }, { id: cleanId }],
       }).lean();
@@ -123,7 +118,7 @@ export class OrderRepository extends IOrderRepository {
   async findByPaymentTransactionId(paymentId) {
     const cleanId = String(paymentId || '').trim();
     if (!cleanId) return null;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await OrderModel.findOne({ 'payment.transaction_id': cleanId }).lean();
       return record ? new Order(record) : null;
     }
@@ -133,7 +128,7 @@ export class OrderRepository extends IOrderRepository {
 
   async listForCheckoutReconciliation({ olderThan, limit = 50 } = {}) {
     const safeLimit = Math.max(1, Math.min(100, Number(limit) || 50));
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const records = await OrderModel.find({
         $or: [
           {
@@ -164,7 +159,7 @@ export class OrderRepository extends IOrderRepository {
     const intentId = String(paymentIntentId || '').trim();
     const now = new Date();
     const label = 'Unpaid Razorpay checkout expired; reserved stock release is pending';
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await OrderModel.findOneAndUpdate({
         $or: [{ order_id: cleanId }, { id: cleanId }],
         'payment.gateway': 'razorpay',
@@ -207,7 +202,7 @@ export class OrderRepository extends IOrderRepository {
   async markInventoryReleaseComplete(orderId) {
     const now = new Date();
     const filter = { $or: [{ order_id: String(orderId) }, { id: String(orderId) }], 'fulfillment.status': 'Cancelled' };
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await OrderModel.updateOne(filter, { $set: { 'fulfillment.inventory_release_status': 'completed', updated_at: now } });
       return;
     }
@@ -220,7 +215,7 @@ export class OrderRepository extends IOrderRepository {
 
   async markPaymentCaptured({ orderId, paymentIntentId, paymentId, paymentSignature = null }) {
     const now = new Date();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await OrderModel.findOneAndUpdate({
         $or: [{ order_id: String(orderId) }, { id: String(orderId) }],
         'payment.payment_intent_id': String(paymentIntentId),
@@ -249,10 +244,32 @@ export class OrderRepository extends IOrderRepository {
     return new Order(record);
   }
 
+  async appendPaymentAttempt(orderId, attempt) {
+    const cleanOrderId = String(orderId || '').trim();
+    const paymentId = String(attempt?.payment_id || '').trim();
+    if (!cleanOrderId || !paymentId) return null;
+    const existing = await this.findById(cleanOrderId);
+    if (!existing) return null;
+    const attempts = Array.isArray(existing.payment.payment_attempts) ? existing.payment.payment_attempts : [];
+    const next = {
+      payment_id: paymentId,
+      status: String(attempt.status || 'unknown').slice(0, 32),
+      amount: Math.max(0, Number(attempt.amount) || 0),
+      currency: String(attempt.currency || 'INR').slice(0, 8),
+      method: String(attempt.method || '').slice(0, 32),
+      failure_code: String(attempt.failure_code || '').slice(0, 80),
+      attempted_at: attempt.attempted_at || new Date().toISOString(),
+    };
+    const index = attempts.findIndex((item) => String(item.payment_id) === paymentId);
+    if (index >= 0) attempts[index] = { ...attempts[index], ...next };
+    else attempts.push(next);
+    return this.update(cleanOrderId, { payment: { payment_attempts: attempts.slice(-20) } });
+  }
+
   async findByAwb(awbCode) {
     const awb = String(awbCode || '').trim();
     if (!awb) return null;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await OrderModel.findOne({ $or: [
         { 'fulfillment.awb_code': awb }, { 'fulfillment.tracking_number': awb },
       ] }).lean();
@@ -278,7 +295,7 @@ export class OrderRepository extends IOrderRepository {
       ],
     };
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await OrderModel.findOneAndUpdate(
         canClaim,
         {
@@ -315,7 +332,7 @@ export class OrderRepository extends IOrderRepository {
         { 'fulfillment.shiprocket_status': { $nin: ['return_processing', 'return_needs_review', 'return_created'] } },
       ],
     };
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await OrderModel.findOneAndUpdate(canClaim, {
         $set: { 'fulfillment.shiprocket_status': 'return_processing', updated_at: new Date().toISOString() },
       }, { new: true }).lean();
@@ -334,7 +351,7 @@ export class OrderRepository extends IOrderRepository {
     const cleanKey = String(key).trim();
     const cleanUserId = String(userId).trim();
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await OrderModel.findOne({
         idempotency_key: cleanKey,
         user_id: cleanUserId,
@@ -357,7 +374,7 @@ export class OrderRepository extends IOrderRepository {
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
     const skip = (safePage - 1) * safeLimit;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const query = { user_id: cleanUserId };
       if (status && status !== 'All' && status !== 'all') {
         const lower = status.toLowerCase();
@@ -422,7 +439,7 @@ export class OrderRepository extends IOrderRepository {
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
     const skip = (safePage - 1) * safeLimit;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const andClauses = [];
       if (status && status !== 'All' && status !== 'all') {
         andClauses.push({ 'fulfillment.status': status });
@@ -531,7 +548,7 @@ export class OrderRepository extends IOrderRepository {
 
     const updated = new Order(updatedData);
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await OrderModel.findOneAndUpdate(
         { $or: [{ order_id: existing.order_id }, { id: existing.order_id }] },
         { $set: updated.toJSON() },

@@ -4,12 +4,12 @@ import {
   ProgressCheckInModel,
   VideoModel,
 } from '../../../shared/database/models.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { store } from '../../../shared/database/store.js';
 
 export class MediaReferenceRepository {
   async isReferenced(publicId) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const references = await Promise.all([
         HairTestModel.exists({ 'scalp_photos.file_name': publicId }),
         ProgressCheckInModel.exists({ 'photos.public_id': publicId }),

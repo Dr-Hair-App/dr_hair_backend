@@ -1,4 +1,4 @@
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { ProviderWebhookEventModel } from '../../../shared/database/models.js';
 import { store } from '../../../shared/database/store.js';
 import { ConflictError } from '../../../shared/errors/index.js';
@@ -12,7 +12,7 @@ export class ProviderWebhookEventRepository {
     if (key.length > 200) throw new Error('Provider webhook event ID is invalid.');
     const now = new Date();
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       try {
         await ProviderWebhookEventModel.create({
           provider, event_id: key, event_type: eventType, payload_hash: payloadHash,
@@ -60,7 +60,7 @@ export class ProviderWebhookEventRepository {
 
   async markProcessed({ provider = 'razorpay', eventId }) {
     const filter = { provider, event_id: String(eventId) };
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await ProviderWebhookEventModel.updateOne(filter, { $set: { status: 'processed', updated_at: new Date() } });
       return;
     }
@@ -70,7 +70,7 @@ export class ProviderWebhookEventRepository {
 
   async markFailed({ provider = 'razorpay', eventId, errorCode = 'processing_failed' }) {
     const filter = { provider, event_id: String(eventId) };
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await ProviderWebhookEventModel.updateOne(filter, { $set: { status: 'failed', last_error_code: String(errorCode).slice(0, 80), updated_at: new Date() } });
       return;
     }

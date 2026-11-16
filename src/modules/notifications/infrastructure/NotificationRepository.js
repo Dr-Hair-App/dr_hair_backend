@@ -1,5 +1,5 @@
 import { NotificationModel } from '../../../shared/database/models.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { store } from '../../../shared/database/store.js';
 
 export class NotificationRepository {
@@ -35,7 +35,7 @@ export class NotificationRepository {
       created_at: now.toISOString(),
     };
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const doc = await NotificationModel.create({
         ...record,
         created_at: now,
@@ -54,7 +54,7 @@ export class NotificationRepository {
     const parsedLimit = Math.max(1, Math.min(50, parseInt(limit, 10) || 20));
     const skip = (parsedPage - 1) * parsedLimit;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const query = {
         $or: [{ userId: numericId }, { userId: null }],
       };
@@ -120,7 +120,7 @@ export class NotificationRepository {
     const numericUserId = Number(userId);
     const now = new Date();
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const updated = await NotificationModel.findOneAndUpdate(
         {
           id,
@@ -153,7 +153,7 @@ export class NotificationRepository {
     const numericUserId = Number(userId);
     const now = new Date();
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await NotificationModel.updateMany(
         {
           $or: [{ userId: numericUserId }, { userId: null }],
@@ -184,7 +184,7 @@ export class NotificationRepository {
     const parsedLimit = Math.max(1, Math.min(100, parseInt(limit, 10) || 50));
     const skip = (parsedPage - 1) * parsedLimit;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const [items, total] = await Promise.all([
         NotificationModel.find()
           .sort({ created_at: -1 })

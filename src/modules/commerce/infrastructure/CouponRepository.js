@@ -1,4 +1,4 @@
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { CouponModel } from '../../../shared/database/models.js';
 import { store } from '../../../shared/database/store.js';
 import { NotFoundError, ConflictError, BadRequestError } from '../../../shared/errors/index.js';
@@ -9,7 +9,7 @@ export class CouponRepository {
     const numericLimit = Math.max(1, Math.min(100, parseInt(limit, 10) || 50));
     const skip = (numericPage - 1) * numericLimit;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const filter = {};
       if (status && status !== 'all') {
         filter.status = status;
@@ -51,7 +51,7 @@ export class CouponRepository {
     const cleanCode = String(code || '').trim().toUpperCase();
     if (!cleanCode) return null;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const doc = await CouponModel.findOne({ code: cleanCode }).lean();
       return doc ? this._mapDoc(doc) : null;
     }
@@ -68,7 +68,7 @@ export class CouponRepository {
       timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
     }).format(new Date());
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const updated = await CouponModel.findOneAndUpdate({
         code: cleanCode,
         status: 'Active',
@@ -95,7 +95,7 @@ export class CouponRepository {
     const cleanId = String(id || '').trim();
     if (!cleanId) return null;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const doc = await CouponModel.findOne({ id: cleanId }).lean();
       return doc ? this._mapDoc(doc) : null;
     }
@@ -132,7 +132,7 @@ export class CouponRepository {
       updated_at: new Date(),
     };
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await CouponModel.create(record);
       return this._mapDoc(record);
     }
@@ -169,7 +169,7 @@ export class CouponRepository {
       update.expires_on = data.expires_on ?? data.expiresOn;
     }
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const updated = await CouponModel.findOneAndUpdate(
         { id: cleanId },
         { $set: update },
@@ -186,7 +186,7 @@ export class CouponRepository {
 
   async delete(id) {
     const cleanId = String(id || '').trim();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const res = await CouponModel.deleteOne({ id: cleanId });
       return res.deletedCount > 0;
     }

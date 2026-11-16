@@ -949,12 +949,12 @@ export const store = {
       unit_cost: 980,
       status: 'active',
       images: [
-        'https://res.cloudinary.com/demo/image/upload/w_800,c_fill,ar_1:1/samples/ecommerce/accessories-bag.jpg',
+        'https://images.unsplash.com/photo-1608248597359-5509a5665805?q=80&w=800',
         'https://images.unsplash.com/photo-1608248597359-5509a5665805?q=80&w=800',
         'https://images.unsplash.com/photo-1620916566398-39f1143ab7be?q=80&w=800',
       ],
       media: [
-        { name: 'https://res.cloudinary.com/demo/image/upload/w_800,c_fill,ar_1:1/samples/ecommerce/accessories-bag.jpg', kind: 'image', isPrimary: true },
+        { name: 'https://images.unsplash.com/photo-1608248597359-5509a5665805?q=80&w=800', kind: 'image', isPrimary: true },
         { name: 'https://images.unsplash.com/photo-1608248597359-5509a5665805?q=80&w=800', kind: 'image' },
       ],
       supply_plans: [
@@ -1007,11 +1007,11 @@ export const store = {
       unit_cost: 210,
       status: 'active',
       images: [
-        'https://res.cloudinary.com/demo/image/upload/w_800,c_fill,ar_1:1/samples/ecommerce/leather-bag-gray.jpg',
+        'https://images.unsplash.com/photo-1620916566398-39f1143ab7be?q=80&w=800',
         'https://images.unsplash.com/photo-1535585209827-a15fcdbc4c2d?q=80&w=800',
       ],
       media: [
-        { name: 'https://res.cloudinary.com/demo/image/upload/w_800,c_fill,ar_1:1/samples/ecommerce/leather-bag-gray.jpg', kind: 'image', isPrimary: true },
+        { name: 'https://images.unsplash.com/photo-1620916566398-39f1143ab7be?q=80&w=800', kind: 'image', isPrimary: true },
       ],
       supply_plans: [
         { id: 'shampoo-200ml', title: '200ml Bottle', subtitle: '8-10 Weeks Supply', sku: 'DRH-SHM-200', price: 699, mrp: 949, badge: '' },
@@ -1056,11 +1056,11 @@ export const store = {
       unit_cost: 380,
       status: 'active',
       images: [
-        'https://res.cloudinary.com/demo/image/upload/w_800,c_fill,ar_1:1/samples/ecommerce/analog-classic.jpg',
+        'https://images.unsplash.com/photo-1611930022073-b7a4ba5fcccd?q=80&w=800',
         'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?q=80&w=800',
       ],
       media: [
-        { name: 'https://res.cloudinary.com/demo/image/upload/w_800,c_fill,ar_1:1/samples/ecommerce/analog-classic.jpg', kind: 'image', isPrimary: true },
+        { name: 'https://images.unsplash.com/photo-1611930022073-b7a4ba5fcccd?q=80&w=800', kind: 'image', isPrimary: true },
       ],
       supply_plans: [
         { id: 'thyro-1m', title: '1 Month', subtitle: '60 Veg Capsules', sku: 'DRH-THY-060', price: 1199, mrp: 1599, badge: '' },
@@ -1105,11 +1105,11 @@ export const store = {
       unit_cost: 320,
       status: 'active',
       images: [
-        'https://res.cloudinary.com/demo/image/upload/w_800,c_fill,ar_1:1/samples/ecommerce/accessories-bag.jpg',
+        'https://images.unsplash.com/photo-1608248597359-5509a5665805?q=80&w=800',
         'https://images.unsplash.com/photo-1550572017-edd951aa8f72?q=80&w=800',
       ],
       media: [
-        { name: 'https://res.cloudinary.com/demo/image/upload/w_800,c_fill,ar_1:1/samples/ecommerce/accessories-bag.jpg', kind: 'image', isPrimary: true },
+        { name: 'https://images.unsplash.com/photo-1608248597359-5509a5665805?q=80&w=800', kind: 'image', isPrimary: true },
       ],
       supply_plans: [
         { id: 'gut-1m', title: '1 Month', subtitle: '60 Capsules', sku: 'DRH-GUT-060', price: 1099, mrp: 1499, badge: '' },
@@ -1153,11 +1153,11 @@ export const store = {
       unit_cost: 260,
       status: 'active',
       images: [
-        'https://res.cloudinary.com/demo/image/upload/w_800,c_fill,ar_1:1/samples/ecommerce/leather-bag-gray.jpg',
+        'https://images.unsplash.com/photo-1620916566398-39f1143ab7be?q=80&w=800',
         'https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?q=80&w=800',
       ],
       media: [
-        { name: 'https://res.cloudinary.com/demo/image/upload/w_800,c_fill,ar_1:1/samples/ecommerce/leather-bag-gray.jpg', kind: 'image', isPrimary: true },
+        { name: 'https://images.unsplash.com/photo-1620916566398-39f1143ab7be?q=80&w=800', kind: 'image', isPrimary: true },
       ],
       supply_plans: [
         { id: 'stress-1m', title: '1 Month', subtitle: '60 Tablets', sku: 'DRH-STR-060', price: 899, mrp: 1299, badge: '' },
@@ -1201,11 +1201,11 @@ export const store = {
       unit_cost: 410,
       status: 'active',
       images: [
-        'https://res.cloudinary.com/demo/image/upload/w_800,c_fill,ar_1:1/samples/ecommerce/analog-classic.jpg',
+        'https://images.unsplash.com/photo-1611930022073-b7a4ba5fcccd?q=80&w=800',
         'https://images.unsplash.com/photo-1556228720-195a672e8a03?q=80&w=800',
       ],
       media: [
-        { name: 'https://res.cloudinary.com/demo/image/upload/w_800,c_fill,ar_1:1/samples/ecommerce/analog-classic.jpg', kind: 'image', isPrimary: true },
+        { name: 'https://images.unsplash.com/photo-1611930022073-b7a4ba5fcccd?q=80&w=800', kind: 'image', isPrimary: true },
       ],
       supply_plans: [
         { id: 'pcos-1m', title: '1 Month', subtitle: '30 Sachets', sku: 'DRH-PCO-030', price: 1399, mrp: 1899, badge: '' },
@@ -1249,11 +1249,11 @@ export const store = {
       unit_cost: 350,
       status: 'active',
       images: [
-        'https://res.cloudinary.com/demo/image/upload/w_800,c_fill,ar_1:1/samples/ecommerce/accessories-bag.jpg',
+        'https://images.unsplash.com/photo-1608248597359-5509a5665805?q=80&w=800',
         'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?q=80&w=800',
       ],
       media: [
-        { name: 'https://res.cloudinary.com/demo/image/upload/w_800,c_fill,ar_1:1/samples/ecommerce/accessories-bag.jpg', kind: 'image', isPrimary: true },
+        { name: 'https://images.unsplash.com/photo-1608248597359-5509a5665805?q=80&w=800', kind: 'image', isPrimary: true },
       ],
       supply_plans: [
         { id: 'dht-1m', title: '1 Month', subtitle: '60 Veg Capsules', sku: 'DRH-DHT-060', price: 1249, mrp: 1699, badge: '' },
@@ -1297,11 +1297,11 @@ export const store = {
       unit_cost: 490,
       status: 'active',
       images: [
-        'https://res.cloudinary.com/demo/image/upload/w_800,c_fill,ar_1:1/samples/ecommerce/leather-bag-gray.jpg',
+        'https://images.unsplash.com/photo-1620916566398-39f1143ab7be?q=80&w=800',
         'https://images.unsplash.com/photo-1608248597359-5509a5665805?q=80&w=800',
       ],
       media: [
-        { name: 'https://res.cloudinary.com/demo/image/upload/w_800,c_fill,ar_1:1/samples/ecommerce/leather-bag-gray.jpg', kind: 'image', isPrimary: true },
+        { name: 'https://images.unsplash.com/photo-1620916566398-39f1143ab7be?q=80&w=800', kind: 'image', isPrimary: true },
       ],
       supply_plans: [
         { id: 'kit-3m', title: 'Complete Kit', subtitle: 'Serum + Oil + DHT Herbal Capsules', sku: 'DRH-KIT-001', price: 1445, mrp: 2044, badge: 'SAVINGS 29%' },

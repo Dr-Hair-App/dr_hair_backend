@@ -34,7 +34,7 @@ export function createCommerceRouter({ commerceController }) {
 
   // Public Gateway Webhook (HMAC signature verified inside controller)
   router.post('/webhook/payment', (req, res, next) => commerceController.handlePaymentWebhook(req, res, next));
-  // Vercel Cron invokes this only when CRON_SECRET is configured in the project environment.
+  // The Cloudflare scheduled Worker invokes maintenance from the configured cron trigger.
   router.post('/internal/reconcile-pending-checkouts', (req, res, next) => commerceController.reconcilePendingCheckouts(req, res, next));
   // Shiprocket delivery event URL intentionally uses a neutral path.
   router.post('/webhooks/carrier-updates', (req, res, next) => commerceController.handleCarrierWebhook(req, res, next));

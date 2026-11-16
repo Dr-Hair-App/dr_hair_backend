@@ -1,12 +1,12 @@
 import { DeviceTokenModel } from '../../../shared/database/models.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { store } from '../../../shared/database/store.js';
 
 export class DeviceTokenRepository {
   async register({ userId, token, platform }) {
     const now = new Date();
     const cleanUserId = userId != null && !isNaN(Number(userId)) && Number(userId) > 0 ? Number(userId) : null;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const updateData = { token, platform, updated_at: now };
       if (cleanUserId !== null) {
         updateData.userId = cleanUserId;
@@ -37,14 +37,14 @@ export class DeviceTokenRepository {
 
   async listByUserId(userId) {
     const numericId = Number(userId);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return DeviceTokenModel.find({ userId: numericId }).lean();
     }
     return store.deviceTokens.filter((record) => record.userId === numericId);
   }
 
   async listAll() {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return DeviceTokenModel.find().lean();
     }
     return store.deviceTokens || [];
@@ -57,7 +57,7 @@ export class DeviceTokenRepository {
     }
 
     if (cleanAudience === 'Active patients') {
-      if (isMongoConnected()) {
+      if (isDatabaseConnected()) {
         const { HairTestModel, AppointmentModel, ProgressCheckInModel } = await import('../../../shared/database/models.js');
         const [testUsers, aptUsers, checkInUsers] = await Promise.all([
           HairTestModel.distinct('userId', { userId: { $ne: null } }),
@@ -74,7 +74,7 @@ export class DeviceTokenRepository {
     }
 
     if (cleanAudience === 'Patients with a shared report') {
-      if (isMongoConnected()) {
+      if (isDatabaseConnected()) {
         const { ClinicalReportModel } = await import('../../../shared/database/models.js');
         const reportUsers = await ClinicalReportModel.distinct('userId', {
           userId: { $ne: null },
@@ -101,7 +101,7 @@ export class DeviceTokenRepository {
       return [];
     }
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return DeviceTokenModel.find({ userId: { $in: userIds } }).lean();
     }
     const idSet = new Set(userIds.map(Number));
@@ -121,7 +121,7 @@ export class DeviceTokenRepository {
 
   async remove({ userId, token }) {
     const numericId = userId != null && !isNaN(Number(userId)) ? Number(userId) : null;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const query = { token };
       if (numericId !== null) query.userId = numericId;
       const result = await DeviceTokenModel.deleteOne(query);
@@ -137,7 +137,7 @@ export class DeviceTokenRepository {
 
   async removeInvalidTokens(tokens) {
     if (!tokens.length) return;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await DeviceTokenModel.deleteMany({ token: { $in: tokens } });
       return;
     }

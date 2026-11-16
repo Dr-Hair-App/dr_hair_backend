@@ -1,4 +1,4 @@
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { VideoModel } from '../../../shared/database/models.js';
 import { store } from '../../../shared/database/store.js';
 
@@ -6,7 +6,7 @@ const orderNewestFirst = (a, b) => new Date(b.created_at) - new Date(a.created_a
 
 export class VideoRepository {
   async create(videoData) {
-    if (isMongoConnected()) return VideoModel.create(videoData);
+    if (isDatabaseConnected()) return VideoModel.create(videoData);
     const record = {
       ...videoData,
       created_at: new Date().toISOString(),
@@ -16,37 +16,6 @@ export class VideoRepository {
     return record;
   }
 
-  async syncOrRepairVideos() {
-    if (!isMongoConnected()) return;
-    try {
-      const existingCount = await VideoModel.countDocuments();
-      if (existingCount === 0 && store.videos && store.videos.length > 0) {
-        const cleanVideos = store.videos.filter((v) => v.provider === 'youtube');
-        if (cleanVideos.length > 0) {
-          await VideoModel.insertMany(cleanVideos).catch(() => {});
-        }
-      }
-    } catch (_) {}
-  }
-
-  async purgeLegacyVideos() {
-    if (isMongoConnected()) {
-      const result = await VideoModel.deleteMany({
-        $or: [
-          { provider: 'cloudinary' },
-          { provider: { $ne: 'youtube' } },
-          { secure_url: { $regex: /(sample|elephants|dog|finish_line|ski_jump|football|walking)\.mp4/i } },
-        ],
-      });
-      return { deletedCount: result.deletedCount || 0 };
-    }
-    const initialCount = store.videos.length;
-    store.videos = store.videos.filter(
-      (v) => v.provider === 'youtube' && !/(sample|elephants|dog|finish_line|ski_jump|football|walking)\.mp4/i.test(v.secure_url || '')
-    );
-    return { deletedCount: initialCount - store.videos.length };
-  }
-
   async listPublished({ page = 1, limit = 10, placement, category } = {}) {
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(50, Math.max(1, parseInt(limit, 10) || 10));
@@ -54,8 +23,7 @@ export class VideoRepository {
     const placementFilter = placement ? { placement: { $in: [placement, 'both'] } } : {};
     const categoryFilter = category && category !== 'All' ? { category: new RegExp(`^${category}$`, 'i') } : {};
 
-    if (isMongoConnected()) {
-      await this.syncOrRepairVideos();
+    if (isDatabaseConnected()) {
       const filter = { status: 'published', ...placementFilter, ...categoryFilter };
       const [items, total] = await Promise.all([
         VideoModel.find(filter).sort({ created_at: -1 }).skip(skip).limit(safeLimit).lean(),
@@ -90,8 +58,7 @@ export class VideoRepository {
   async listAdmin({ page = 1, limit = 25 } = {}) {
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
-    if (isMongoConnected()) {
-      await this.syncOrRepairVideos();
+    if (isDatabaseConnected()) {
       const [items, total] = await Promise.all([
         VideoModel.find().sort({ created_at: -1 }).skip((safePage - 1) * safeLimit).limit(safeLimit).lean(),
         VideoModel.countDocuments(),
@@ -108,7 +75,7 @@ export class VideoRepository {
   }
 
   async updateStatus(publicId, status) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return VideoModel.findOneAndUpdate(
         { $or: [{ public_id: publicId }, { youtube_video_id: publicId }, { id: publicId }] },
         { status, updated_at: new Date() },
@@ -154,9 +121,9 @@ export class VideoRepository {
       allowed.secure_url = updates.secure_url;
     }
     if (updates.thumbnail_url) allowed.thumbnail_url = updates.thumbnail_url;
-    allowed.updated_at = isMongoConnected() ? new Date() : new Date().toISOString();
+    allowed.updated_at = isDatabaseConnected() ? new Date() : new Date().toISOString();
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return VideoModel.findOneAndUpdate(
         filter,
         { $set: allowed },
@@ -188,7 +155,7 @@ export class VideoRepository {
         { id: rawId },
       ],
     };
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const result = await VideoModel.deleteOne(filter);
       return result.deletedCount > 0;
     }

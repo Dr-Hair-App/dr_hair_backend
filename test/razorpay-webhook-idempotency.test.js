@@ -167,6 +167,7 @@ test('Razorpay refund and failed-payment events update provider state without do
   assert.equal(order.payment.payment_status, 'Partially refunded');
   assert.equal(order.payment.gateway_status, 'failed_attempt');
   assert.equal(order.payment.last_failure_code, 'BAD_REQUEST_ERROR');
+  assert.equal(notifications.filter((item) => item.title === 'Payment not completed').length, 1);
 });
 
 test('Razorpay appointment refund webhooks persist status and notify after provider confirmation', async (t) => {

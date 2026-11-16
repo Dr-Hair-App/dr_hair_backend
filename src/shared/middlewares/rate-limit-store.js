@@ -1,9 +1,9 @@
-import { isMongoConnected } from '../database/mongodb.js';
-import { MongoRateLimitStore } from './mongo-rate-limit-store.js';
+import { isDatabaseConnected } from '../database/database.js';
+import { D1RateLimitStore } from './d1-rate-limit-store.js';
 
 export const createRateLimitStore = (namespace) => {
   try {
-    return isMongoConnected() ? new MongoRateLimitStore(namespace) : undefined;
+    return isDatabaseConnected() ? new D1RateLimitStore(namespace) : undefined;
   } catch {
     return undefined;
   }

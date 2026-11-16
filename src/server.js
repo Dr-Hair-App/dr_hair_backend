@@ -1,7 +1,7 @@
 import { createApp } from './app.js';
 import { config } from './config/env.js';
 import { logger } from './shared/utils/logger.js';
-import { connectDatabase, disconnectDatabase } from './shared/database/mongodb.js';
+import { connectDatabase, disconnectDatabase } from './shared/database/database.js';
 
 const { app, container } = createApp();
 
@@ -35,7 +35,7 @@ const handleShutdown = (signal) => {
   logger.info(`Received ${signal}. Gracefully shutting down HTTP server...`);
   server.close(() => {
     disconnectDatabase()
-      .catch((error) => logger.error('MongoDB disconnect failed:', error))
+      .catch((error) => logger.error('Database shutdown failed:', error))
       .finally(() => {
         logger.info('HTTP server closed. Exiting process.');
         process.exit(0);

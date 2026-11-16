@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { PatientCareEventModel } from '../../../shared/database/models.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { store } from '../../../shared/database/store.js';
 
 export class PatientCareEventRepository {
@@ -9,7 +9,7 @@ export class PatientCareEventRepository {
       userId: Number(userId),
       ...(from || to ? { event_date: { ...(from ? { $gte: from } : {}), ...(to ? { $lte: to } : {}) } } : {}),
     };
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return PatientCareEventModel.find(filter).sort({ event_date: -1, updated_at: -1 }).lean();
     }
     return store.patientCareEvents
@@ -26,7 +26,7 @@ export class PatientCareEventRepository {
       event_key: data.event_key,
     };
     const now = new Date();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const update = {
         $set: { ...data, userId, updated_at: now },
         $setOnInsert: { id: randomUUID(), created_at: now },

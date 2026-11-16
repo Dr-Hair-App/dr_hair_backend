@@ -1,10 +1,10 @@
 import { FeatureFlagModel } from '../../../shared/database/models.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { store } from '../../../shared/database/store.js';
 
 export class FeatureFlagRepository {
   async list({ platform, enabled } = {}) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const query = {};
       if (typeof enabled === 'boolean') query.enabled = enabled;
       if (platform && platform !== 'all') {
@@ -28,7 +28,7 @@ export class FeatureFlagRepository {
   async findByKey(key) {
     if (!key) return null;
     const cleanKey = String(key).trim();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return FeatureFlagModel.findOne({ key: cleanKey }).lean();
     }
     store.featureFlags = store.featureFlags || [];
@@ -39,7 +39,7 @@ export class FeatureFlagRepository {
     const cleanKey = String(key).trim();
     const now = new Date();
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return FeatureFlagModel.findOneAndUpdate(
         { key: cleanKey },
         {

@@ -12,3 +12,7 @@ coverage/
 dist/
 
 .vercel
+.wrangler
+.dev.vars*
+.cloudflare/
+dist/

@@ -1,10 +1,5 @@
 import { BadRequestError, NotFoundError } from '../../../shared/errors/index.js';
 import { sendSuccess } from '../../../shared/utils/response.js';
-import {
-  createVideoUploadSignature,
-  verifyUploadedVideo,
-} from '../infrastructure/CloudinaryVideoStorage.js';
-import { config } from '../../../config/env.js';
 
 export class VideoController {
   constructor({ videoRepository, listCategoriesUseCase }) {
@@ -22,79 +17,6 @@ export class VideoController {
     } catch (error) {
       next(error);
     }
-  };
-
-  uploadSignature = async (req, res, next) => {
-    try {
-      const publicId = req.body?.public_id;
-      if (
-        publicId !== undefined
-        && (typeof publicId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(publicId))
-      ) {
-        throw new BadRequestError('public_id may contain only letters, numbers, underscores, and hyphens.');
-      }
-      const signature = createVideoUploadSignature({ publicId });
-      return sendSuccess(res, { data: signature });
-    } catch (error) {
-      next(error);
-    }
-  };
-
-  saveUploadedVideo = async (req, res, next) => {
-    try {
-      const { public_id, asset_id, url, title, description = '', category = 'Hair Care', placement = 'reels' } = req.body || {};
-      const uploadedPublicId = public_id || asset_id || (url ? this.getCloudinaryVideoId(url) : null);
-      if (typeof uploadedPublicId !== 'string' || !uploadedPublicId.trim()) {
-        throw new BadRequestError('Send the public_id, asset_id, or URL returned by the media upload API.');
-      }
-      if (typeof title !== 'string' || !title.trim() || title.trim().length > 160) {
-        throw new BadRequestError('Video title is required and must be at most 160 characters.');
-      }
-      if (typeof description !== 'string' || description.length > 2000) {
-        throw new BadRequestError('Video description must be a string of at most 2000 characters.');
-      }
-      if (typeof category !== 'string' || !category.trim() || category.trim().length > 80) throw new BadRequestError('Video category is required and must be at most 80 characters.');
-      if (!['home', 'reels', 'both'].includes(placement)) throw new BadRequestError('placement must be home, reels, or both.');
-      const asset = await verifyUploadedVideo(uploadedPublicId.trim());
-      const saved = await this.videoRepository.create({
-        ...asset,
-        provider: 'cloudinary',
-        title: title.trim(),
-        category: category.trim(),
-        description: description.trim(),
-        placement,
-        status: 'draft',
-        created_by: Number(req.user?.id) || null,
-      });
-      return sendSuccess(res, {
-        message: 'Uploaded video saved as a draft.',
-        data: saved,
-        statusCode: 201,
-      });
-    } catch (error) {
-      next(error);
-    }
-  };
-
-  getCloudinaryVideoId = (input) => {
-    if (typeof input !== 'string' || input.length > 2000) {
-      throw new BadRequestError('A valid Cloudinary video URL is required.');
-    }
-    let url;
-    try {
-      url = new URL(input);
-    } catch {
-      throw new BadRequestError('A valid Cloudinary video URL is required.');
-    }
-    const marker = `/${config.cloudinary.cloudName}/video/upload/`;
-    if (url.protocol !== 'https:' || url.hostname !== 'res.cloudinary.com' || !config.cloudinary.cloudName || !url.pathname.includes(marker)) {
-      throw new BadRequestError('The URL must be a video uploaded to this Cloudinary account.');
-    }
-    const path = (url.pathname.split(marker)[1] || '').split('/').filter(Boolean);
-    if (/^v\d+$/.test(path[0] || '')) path.shift();
-    const publicId = path.join('/').replace(/\.[a-zA-Z0-9]+$/, '');
-    if (!publicId || publicId.includes('..')) throw new BadRequestError('The Cloudinary video URL is invalid.');
-    return publicId;
   };
 
   addYouTubeVideo = async (req, res, next) => {
@@ -142,18 +64,6 @@ export class VideoController {
         message: safeStatus === 'published' ? 'YouTube video published successfully.' : 'YouTube video saved as a draft.',
         data: saved,
         statusCode: 201,
-      });
-    } catch (error) {
-      next(error);
-    }
-  };
-
-  purgeLegacyVideos = async (req, res, next) => {
-    try {
-      const result = await this.videoRepository.purgeLegacyVideos();
-      return sendSuccess(res, {
-        message: `Purged ${result?.deletedCount || 0} legacy/demo video records.`,
-        data: result,
       });
     } catch (error) {
       next(error);

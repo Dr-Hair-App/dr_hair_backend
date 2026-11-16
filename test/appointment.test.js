@@ -223,6 +223,12 @@ test('Appointment Booking & Payment Endpoints', async (t) => {
     assert.equal(responseData.status, 'success');
     assert.equal(responseData.data.status, 'Confirmed');
     assert.equal(responseData.data.paymentStatus, 'Paid');
+    const confirmation = store.notifications.find((notification) =>
+      notification.userId === userId &&
+      notification.title === 'Appointment confirmed' &&
+      notification.data?.appointment_id === secondApt.id,
+    );
+    assert.ok(confirmation, 'patient should receive an inbox confirmation when the clinic confirms an appointment');
   });
 
   await t.test('admin reschedules appointment with custom reason and dispatches notification', async () => {

@@ -1,7 +1,7 @@
 import { IUserRepository } from '../domain/IUserRepository.js';
 import { User } from '../domain/User.js';
 import { store } from '../../../shared/database/store.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import {
   UserModel,
   OtpModel,
@@ -25,7 +25,7 @@ export class UserRepository extends IUserRepository {
   async findById(id) {
     const numericId = resolvePatientId(id);
     if (!numericId) return null;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await UserModel.findOne({ id: numericId }).lean();
       if (!record) return null;
       if (!record.patient_code) {
@@ -46,7 +46,7 @@ export class UserRepository extends IUserRepository {
   async findByLogin(login) {
     if (!login) return null;
     const clean = String(login).trim().toLowerCase();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const filters = [{ email: clean }];
       const digits = clean.includes('@') ? '' : cleanPhone(clean);
       if (digits) filters.push({ phoneNormalized: digits });
@@ -64,7 +64,7 @@ export class UserRepository extends IUserRepository {
   async findByEmail(email) {
     if (!email) return null;
     const clean = cleanEmail(email);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await UserModel.findOne({ email: clean }).select('id').lean();
       return record ? this.findById(record.id) : null;
     }
@@ -75,7 +75,7 @@ export class UserRepository extends IUserRepository {
   async findWithPasswordByEmail(email) {
     if (!email) return null;
     const clean = cleanEmail(email);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await UserModel.findOne({ email: clean })
         .select('+passwordHash')
         .lean();
@@ -92,7 +92,7 @@ export class UserRepository extends IUserRepository {
   async findByGoogleId(googleId) {
     if (!googleId) return null;
     const clean = String(googleId).trim();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await UserModel.findOne({ googleId: clean }).select('id').lean();
       return record ? this.findById(record.id) : null;
     }
@@ -103,7 +103,7 @@ export class UserRepository extends IUserRepository {
   async findByAppleId(appleId) {
     if (!appleId) return null;
     const clean = String(appleId).trim();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await UserModel.findOne({ appleId: clean }).select('id').lean();
       return record ? this.findById(record.id) : null;
     }
@@ -114,7 +114,7 @@ export class UserRepository extends IUserRepository {
   async findByPhone(phone) {
     if (!phone) return null;
     const clean = cleanPhone(phone);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       let record = await UserModel.findOne({ phoneNormalized: clean }).select('id').lean();
       // Older Atlas records predate phoneNormalized. Fall back once, then
       // backfill the normalized value so future lookups use the indexed path.
@@ -144,7 +144,7 @@ export class UserRepository extends IUserRepository {
   async findByIds(ids = []) {
     const numericIds = [...new Set(ids.map((id) => Number(id)).filter(Number.isSafeInteger))];
     if (!numericIds.length) return [];
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const records = await UserModel.find({ id: { $in: numericIds } })
         .select('id patient_code name email phone age gender city occupation platform profile_url role created_at updated_at')
         .lean();
@@ -157,7 +157,7 @@ export class UserRepository extends IUserRepository {
   }
 
   async create(userData) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const id = await nextUserId();
       return toUser(
         await UserModel.create({
@@ -212,7 +212,7 @@ export class UserRepository extends IUserRepository {
   async setPassword(userId, passwordHash) {
     const numericId = resolvePatientId(userId);
     if (!numericId) return false;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await UserModel.updateOne(
         { id: numericId },
         { $set: { passwordHash, updated_at: new Date() }, $addToSet: { authProviders: 'password' } },
@@ -230,7 +230,7 @@ export class UserRepository extends IUserRepository {
   async update(id, updateData) {
     const numericId = resolvePatientId(id);
     if (!numericId) return null;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const normalized = { ...updateData, updated_at: new Date() };
       if ('email' in normalized) normalized.email = cleanEmail(normalized.email) || undefined;
       if ('phone' in normalized) normalized.phoneNormalized = cleanPhone(normalized.phone) || undefined;
@@ -261,7 +261,7 @@ export class UserRepository extends IUserRepository {
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
     const cleanSearch = String(search).trim();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const filter = { role: 'user' };
       if (cleanSearch) {
         const expression = new RegExp(escapeRegex(cleanSearch), 'i');
@@ -330,7 +330,7 @@ export class UserRepository extends IUserRepository {
     const numericId = resolvePatientId(id);
     if (!numericId) return false;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const user = await UserModel.findOne({ id: numericId }).lean();
       if (!user) return false;
 

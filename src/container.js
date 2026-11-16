@@ -12,7 +12,7 @@ import { ProductRepository } from './modules/products/infrastructure/ProductRepo
 import { CartRepository } from './modules/cart/infrastructure/CartRepository.js';
 import { AdminAccountRepository } from './modules/admin/infrastructure/AdminAccountRepository.js';
 import { ClinicalReportRepository } from './modules/admin/infrastructure/ClinicalReportRepository.js';
-import { CloudinaryImageStorage } from './modules/media/infrastructure/CloudinaryImageStorage.js';
+import { R2ImageStorage } from './modules/media/infrastructure/R2ImageStorage.js';
 import { AppointmentRepository } from './modules/appointments/infrastructure/AppointmentRepository.js';
 import { PatientActivityRepository } from './modules/patient/infrastructure/PatientActivityRepository.js';
 import { ProgressCheckInRepository } from './modules/patient/infrastructure/ProgressCheckInRepository.js';
@@ -161,7 +161,7 @@ export const createContainer = (overrides = {}) => {
   const mediaReferenceRepository = overrides.mediaReferenceRepository || new MediaReferenceRepository();
   const patientArchiveService =
     overrides.patientArchiveService || new PatientArchiveService({ clinicalReportRepository });
-  const imageStorage = overrides.imageStorage || new CloudinaryImageStorage();
+  const imageStorage = overrides.imageStorage || new R2ImageStorage();
   const sessionRepository = overrides.sessionRepository || new SessionRepository();
   const auditEventRepository = overrides.auditEventRepository || new AuditEventRepository();
   const campaignRepository = overrides.campaignRepository || new CampaignRepository();
@@ -540,7 +540,6 @@ export const createContainer = (overrides = {}) => {
       providerWebhookEventRepository,
       notificationRepository,
       deviceTokenRepository,
-      couponRepository,
       couponRepository,
       checkoutUseCase,
       getShippingQuoteUseCase,

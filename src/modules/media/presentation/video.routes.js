@@ -10,10 +10,7 @@ export const createVideoRouter = ({ videoController }) => {
   publicRouter.get('/', videoController.listPublished);
 
   adminRouter.use(authenticateToken, requireSuperAdmin);
-  adminRouter.post('/upload-signature', videoController.uploadSignature);
-  adminRouter.post('/', videoController.saveUploadedVideo);
   adminRouter.post('/youtube', videoController.addYouTubeVideo);
-  adminRouter.post('/purge-legacy', videoController.purgeLegacyVideos);
   adminRouter.get('/', videoController.listAdmin);
   adminRouter.patch('/status', videoController.updateStatus);
   adminRouter.put('/:publicId', videoController.updateVideo);

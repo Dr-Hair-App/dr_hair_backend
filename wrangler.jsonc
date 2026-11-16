@@ -1,0 +1,65 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "dr-hair-backend",
+  "main": "cloudflare/index.ts",
+  "compatibility_date": "2026-11-16",
+  "compatibility_flags": ["nodejs_compat", "nodejs_compat_populate_process_env"],
+  "workers_dev": true,
+  "vars": {
+    "NODE_ENV": "development",
+    "DRHAIR_DEPLOYMENT_ENV": "development"
+  },
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.1 }
+  },
+  "triggers": {
+    "crons": ["*/2 * * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_id": "bc8f825e-bf23-49f8-9c11-07c2eb844d97",
+      "database_name": "dr-hair-dev",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA_BUCKET",
+      "bucket_name": "dr-hair-dev-media"
+    }
+  ],
+  "kv_namespaces": [
+    { "binding": "PUBLIC_CONFIG_KV", "id": "b21ca9b2eef140599d8ae82d828f17cb" }
+  ],
+  "env": {
+    "staging": {
+      "name": "dr-hair-backend-staging",
+      "vars": {
+        "NODE_ENV": "production",
+        "DRHAIR_DEPLOYMENT_ENV": "staging",
+        "BASE_URL": "https://dr-hair-backend-staging.drhair-app.workers.dev",
+        "CORS_ORIGINS": "https://dr-hair-admin-staging.drhair-app.workers.dev"
+      },
+      "d1_databases": [{ "binding": "DB", "database_name": "dr-hair-staging", "database_id": "aecd3a3c-8b76-4b32-8d05-62973bd22a8e", "migrations_dir": "migrations" }],
+      "r2_buckets": [{ "binding": "MEDIA_BUCKET", "bucket_name": "dr-hair-staging-media" }],
+      "kv_namespaces": [{ "binding": "PUBLIC_CONFIG_KV", "id": "2c3a928ad7fb46439e6a39d09bf1c78e" }],
+      "triggers": { "crons": ["*/2 * * * *"] }
+    },
+    "production": {
+      "name": "dr-hair-backend-production",
+      "vars": {
+        "NODE_ENV": "production",
+        "DRHAIR_DEPLOYMENT_ENV": "production",
+        "BASE_URL": "https://dr-hair-backend-production.drhair-app.workers.dev",
+        "CORS_ORIGINS": "https://dr-hair-admin.drhair-app.workers.dev"
+      },
+      "d1_databases": [{ "binding": "DB", "database_name": "dr-hair-production", "database_id": "5bc14761-3131-469d-957d-3674564f3e30", "migrations_dir": "migrations" }],
+      "r2_buckets": [{ "binding": "MEDIA_BUCKET", "bucket_name": "dr-hair-production-media" }],
+      "kv_namespaces": [{ "binding": "PUBLIC_CONFIG_KV", "id": "ed114227c83c431cb0e7c8e4c4c5c93f" }],
+      "triggers": { "crons": ["*/2 * * * *"] }
+    }
+  }
+}

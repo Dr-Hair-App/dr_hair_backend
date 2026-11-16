@@ -16,7 +16,7 @@ test('Product Module - Clean Architecture Tests', async (t) => {
   const { app } = createApp({ container });
   const adminToken = TokenService.generateToken({ id: 1, role: 'admin', email: 'admin@drhair.com' });
 
-  await t.test('GET /api/v1/products returns seeded products with Cloudinary images', async () => {
+  await t.test('GET /api/v1/products returns catalog products with image URLs', async () => {
     const { listProductsUseCase } = container.useCases;
     const result = await listProductsUseCase.execute({ page: 1, limit: 10 });
 
@@ -27,10 +27,7 @@ test('Product Module - Clean Architecture Tests', async (t) => {
     assert.ok(follicleSerum, 'Follicle Booster Serum should be in catalog');
     assert.equal(follicleSerum.name, 'Follicle Booster Serum');
     assert.ok(follicleSerum.images.length > 0, 'Product should have images');
-    assert.ok(
-      follicleSerum.images[0].includes('res.cloudinary.com'),
-      'First image should be hosted on Cloudinary'
-    );
+    assert.match(follicleSerum.images[0], /^https:\/\//, 'Product image should use an HTTPS URL');
     assert.ok(follicleSerum.supply_plans.length > 0, 'Product should have supply plans');
   });
 
@@ -87,7 +84,7 @@ test('Product Module - Clean Architecture Tests', async (t) => {
       root_causes: ['Hair', 'Stress'],
       price: 1899,
       compare_at_price: 2499,
-      images: ['https://res.cloudinary.com/demo/image/upload/sample_elixir.jpg'],
+      images: ['https://images.unsplash.com/photo-1608248597359-5509a5665805?q=80&w=800'],
       supply_plans: [
         { id: 'elixir-1m', title: '1 Month', subtitle: '50ml', price: 1899, mrp: 2499, sku: 'DRH-ELX-050', shipping_profile: { weight_kg: 0.15, length_cm: 18, breadth_cm: 6, height_cm: 6 } },
       ],

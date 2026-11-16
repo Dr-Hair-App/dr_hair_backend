@@ -1,30 +1,24 @@
 import { NotFoundError, BadRequestError, UnauthorizedError } from '../../../shared/errors/index.js';
 import { normalizeLogin } from '../../../shared/utils/normalize-login.js';
-import { config } from '../../../config/env.js';
 
 const validateProfileUrl = (profileUrl, userId) => {
   if (profileUrl === null) return null;
   if (typeof profileUrl !== 'string' || !profileUrl.trim()) {
-    throw new BadRequestError('profile_url must be a Cloudinary URL or null.');
+    throw new BadRequestError('profile_url must be an R2 media URL or null.');
   }
 
   let parsed;
   try {
     parsed = new URL(profileUrl);
   } catch {
-    throw new BadRequestError('profile_url must be a valid Cloudinary URL.');
+    throw new BadRequestError('profile_url must be a valid R2 media URL.');
   }
-  const uploadMarker = `/${config.cloudinary.cloudName}/image/upload/`;
-  if (parsed.protocol !== 'https:' || parsed.hostname !== 'res.cloudinary.com' || !config.cloudinary.cloudName || !parsed.pathname.includes(uploadMarker)) {
-    throw new BadRequestError('profile_url must point to a Dr. Hair Cloudinary image.');
+  const marker = '/api/v1/media/assets/';
+  if (parsed.protocol !== 'https:' && parsed.hostname !== 'localhost' || !parsed.pathname.includes(marker)) {
+    throw new BadRequestError('profile_url must point to the Dr. Hair R2 media endpoint.');
   }
-
-  const uploadedPath = parsed.pathname.split(uploadMarker)[1] || '';
-  const pathParts = uploadedPath.split('/').filter(Boolean);
-  if (/^v\d+$/.test(pathParts[0] || '')) pathParts.shift();
-  const publicId = pathParts.join('/').replace(/\.[a-zA-Z0-9]+$/, '');
-  const ownedFolder = `${config.cloudinary.imageFolder}/profiles/user-${userId}/`;
-  if (!publicId.startsWith(ownedFolder)) {
+  const key = parsed.pathname.slice(parsed.pathname.indexOf(marker) + marker.length).split('/').map(decodeURIComponent).join('/');
+  if (!key.startsWith(`drhair/images/profiles/user-${userId}.`)) {
     throw new UnauthorizedError('That uploaded profile image does not belong to this account.');
   }
   return profileUrl.trim();

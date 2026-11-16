@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { BadGatewayError, BadRequestError, ServiceUnavailableError } from '../../../shared/errors/index.js';
+import { isSandboxCommerceDeployment } from './CommerceRuntimeEnvironment.js';
 
 const RAZORPAY_API_URL = 'https://api.razorpay.com/v1';
 
@@ -14,6 +15,13 @@ export class PaymentGatewayService {
   }
 
   assertConfigured() {
+    if (isSandboxCommerceDeployment() && !this.keyId.startsWith('rzp_test_')) {
+      throw new ServiceUnavailableError(
+        'Razorpay Test Mode credentials are required for staging and preview deployments.',
+        null,
+        'RAZORPAY_TEST_MODE_REQUIRED',
+      );
+    }
     if (!this.keyId || !this.keySecret) {
       throw new ServiceUnavailableError(
         'Razorpay online payments are not configured. Add matching Razorpay Test Mode or Live API credentials to the backend environment.',

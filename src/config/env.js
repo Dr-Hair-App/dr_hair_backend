@@ -14,14 +14,10 @@ try {
 }
 
 const environment = (process.env.NODE_ENV || 'production').trim().toLowerCase();
-// Never enable local OTP behavior or expose test codes on a deployed Vercel
-// environment, including Preview deployments.
-const isVercelDeployment = process.env.VERCEL === '1' || Boolean(process.env.VERCEL_ENV);
-const isLocalDevelopment = environment === 'development' && !isVercelDeployment;
-const isProduction = environment === 'production' || isVercelDeployment;
+const isLocalDevelopment = environment === 'development';
+const isProduction = environment === 'production';
 
 const configuredJwtSecret = process.env.JWT_SECRET?.trim() || '';
-const configuredMongoUri = process.env.MONGODB_URI?.trim() || '';
 const configuredSuperAdminId = process.env.SUPER_ADMIN_ID?.trim().toLowerCase() || '';
 const configuredSuperAdminPasswordHash = process.env.SUPER_ADMIN_PASSWORD_HASH?.trim() || '';
 const configuredSuperAdminName = process.env.SUPER_ADMIN_NAME?.trim() || '';
@@ -31,7 +27,6 @@ const configuredSuperAdminName = process.env.SUPER_ADMIN_NAME?.trim() || '';
 if (isProduction) {
   const missing = [];
   if (!configuredJwtSecret) missing.push('JWT_SECRET');
-  if (!configuredMongoUri) missing.push('MONGODB_URI');
   if (!configuredSuperAdminId) missing.push('SUPER_ADMIN_ID');
   if (!configuredSuperAdminPasswordHash) missing.push('SUPER_ADMIN_PASSWORD_HASH');
   if (!configuredSuperAdminName) missing.push('SUPER_ADMIN_NAME');
@@ -73,10 +68,6 @@ export const config = {
     accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '1h',
   },
 
-  mongodb: {
-    uri: process.env.MONGODB_URI?.trim() || '',
-  },
-
   admin: {
     superAdminId,
     superAdminPasswordHash,
@@ -92,16 +83,7 @@ export const config = {
   
   upload: {
     maxFileSize: (parseInt(process.env.MAX_FILE_SIZE_MB, 10) || 10) * 1024 * 1024,
-    maxMediaFileSize: (parseInt(process.env.MAX_MEDIA_FILE_SIZE_MB, 10) || 100) * 1024 * 1024,
     allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'],
-  },
-
-  cloudinary: {
-    cloudName: process.env.CLOUDINARY_CLOUD_NAME?.trim() || '',
-    apiKey: process.env.CLOUDINARY_API_KEY?.trim() || '',
-    apiSecret: process.env.CLOUDINARY_API_SECRET?.trim() || '',
-    imageFolder: process.env.CLOUDINARY_IMAGE_FOLDER?.trim() || 'drhair/images',
-    videoFolder: process.env.CLOUDINARY_VIDEO_FOLDER?.trim() || 'drhair/testing',
   },
 
   firebase: {

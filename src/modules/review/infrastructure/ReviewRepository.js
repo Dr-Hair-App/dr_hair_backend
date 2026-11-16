@@ -1,7 +1,7 @@
 import { IReviewRepository } from '../domain/IReviewRepository.js';
 import { Review } from '../domain/Review.js';
 import { store } from '../../../shared/database/store.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { ReviewModel, nextId } from '../../../shared/database/models.js';
 
 const toReview = (record) => {
@@ -13,7 +13,7 @@ const toReview = (record) => {
 
 export class ReviewRepository extends IReviewRepository {
   async findFiltered({ review_type, status, page } = {}) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const filter = {};
       if (review_type) filter.review_type = review_type;
       if (status) filter.status = status;
@@ -39,7 +39,7 @@ export class ReviewRepository extends IReviewRepository {
   }
 
   async create(reviewData) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return toReview(
         await ReviewModel.create({
           ...reviewData,
@@ -61,7 +61,7 @@ export class ReviewRepository extends IReviewRepository {
 
   async updateStatus(id, status) {
     const numericId = Number(id);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return toReview(
         await ReviewModel.findOneAndUpdate(
           { id: numericId },
@@ -80,7 +80,7 @@ export class ReviewRepository extends IReviewRepository {
   async listAdmin({ page = 1, limit = 25, status } = {}) {
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const filter = status ? { status } : {};
       const [records, total] = await Promise.all([
         ReviewModel.find(filter).sort({ created_at: -1 }).skip((safePage - 1) * safeLimit).limit(safeLimit).lean(),

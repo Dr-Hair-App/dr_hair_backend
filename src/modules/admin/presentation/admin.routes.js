@@ -94,9 +94,6 @@ export const createAdminRouter = ({ adminController, notificationController, vid
   router.get('/notifications/history', requireSuperAdmin, notificationController.listCampaigns);
   router.get('/notifications/audience-count', requireSuperAdmin, notificationController.previewAudience);
   router.post('/notifications/campaigns/:id/cancel', requireSuperAdmin, notificationController.cancelCampaign);
-  router.post('/media/video-upload-signature', requireSuperAdmin, videoController.uploadSignature);
-  router.post('/media/videos/signature', requireSuperAdmin, videoController.uploadSignature);
-  router.post('/media/videos', requireSuperAdmin, videoController.saveUploadedVideo);
   router.post('/media/videos/youtube', requireSuperAdmin, videoController.addYouTubeVideo);
   router.get('/media/videos', requireSuperAdmin, videoController.listAdmin);
   router.put('/media/videos/:publicId', requireSuperAdmin, videoController.updateVideo);

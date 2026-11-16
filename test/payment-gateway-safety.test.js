@@ -5,6 +5,23 @@ import { PaymentGatewayService } from '../src/modules/commerce/infrastructure/Pa
 import { VerifyPaymentUseCase } from '../src/modules/commerce/application/VerifyPaymentUseCase.js';
 import { Order } from '../src/modules/commerce/domain/Order.js';
 
+test('Razorpay staging deployments reject live key IDs', (t) => {
+  const envNames = ['DRHAIR_DEPLOYMENT_ENV'];
+  const before = Object.fromEntries(envNames.map((name) => [name, process.env[name]]));
+  t.after(() => {
+    for (const [name, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+
+  const service = new PaymentGatewayService({ keyId: 'rzp_live_key', keySecret: 'live-secret' });
+  process.env.DRHAIR_DEPLOYMENT_ENV = 'staging';
+  assert.throws(() => service.assertConfigured(), { code: 'RAZORPAY_TEST_MODE_REQUIRED' });
+
+  assert.doesNotThrow(() => new PaymentGatewayService({ keyId: 'rzp_test_key', keySecret: 'test-secret' }).assertConfigured());
+});
+
 test('Razorpay webhooks require a configured secret and the original raw request bytes', () => {
   const rawBody = Buffer.from('{ "event" : "payment.captured", "payload": {} }');
   const signature = crypto.createHmac('sha256', 'test-hook-secret').update(rawBody).digest('hex');

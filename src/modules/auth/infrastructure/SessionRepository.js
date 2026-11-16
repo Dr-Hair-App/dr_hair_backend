@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { isMongoConnected as isDbConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected as isDatabaseConnected } from '../../../shared/database/database.js';
 import { SessionModel } from '../../../shared/database/models.js';
 import { store } from '../../../shared/database/store.js';
 
@@ -39,7 +39,7 @@ export class SessionRepository {
       updated_at: new Date(),
     };
 
-    if (isDbConnected()) {
+    if (isDatabaseConnected()) {
       await SessionModel.create(record);
     } else {
       store.sessions.push({ ...record });
@@ -58,7 +58,7 @@ export class SessionRepository {
     if (!sessionId) return null;
     const now = new Date();
 
-    if (isDbConnected()) {
+    if (isDatabaseConnected()) {
       const doc = await SessionModel.findOne({
         sessionId,
         revokedAt: null,
@@ -81,7 +81,7 @@ export class SessionRepository {
     const newExpiresAt = new Date(Date.now() + newExpiresInMs);
     const now = new Date();
 
-    if (isDbConnected()) {
+    if (isDatabaseConnected()) {
       // Match the current hash in the update itself so concurrent refresh
       // requests cannot both rotate the same refresh token.
       const rotated = await SessionModel.findOneAndUpdate(
@@ -145,7 +145,7 @@ export class SessionRepository {
     if (!sessionId) return false;
     const now = new Date();
 
-    if (isDbConnected()) {
+    if (isDatabaseConnected()) {
       const res = await SessionModel.updateOne(
         { sessionId, revokedAt: null },
         { $set: { revokedAt: now, revokedReason: reason, updated_at: now } },
@@ -168,7 +168,7 @@ export class SessionRepository {
     const now = new Date();
     const uid = String(userId);
 
-    if (isDbConnected()) {
+    if (isDatabaseConnected()) {
       const res = await SessionModel.updateMany(
         { userId: uid, revokedAt: null },
         { $set: { revokedAt: now, revokedReason: reason, updated_at: now } },

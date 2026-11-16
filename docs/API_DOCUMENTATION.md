@@ -1,6 +1,6 @@
 # 📖 Dr. Hair - Complete Backend API Documentation
 
-**Base Production URL:** `https://backend-ten-kappa-69.vercel.app`  
+**Base URL:** Use the backend origin configured for the active deployment (Cloudflare staging or production).
 **Local Development URL:** `http://localhost:5001`  
 **Architecture:** Modular Monolith + Clean Architecture  
 **Authentication Scheme:** Bearer JWT (`Authorization: Bearer <token>`)
@@ -105,7 +105,7 @@ Retrieves the authenticated patient's profile details.
     "gender": "male",
     "city": "Jaipur",
     "occupation": "Software Engineer",
-    "profile_url": "https://res.cloudinary.com/.../profile.jpg"
+    "profile_url": "https://api.example.com/api/v1/media/assets/..."
   }
 }
 ```
@@ -157,8 +157,8 @@ Submits a multi-step hair evaluation questionnaire along with optional scalp pho
   "dandruff": "mild",
   "lifestyle": "high_stress",
   "scalp_photos": [
-    "https://res.cloudinary.com/.../scalp_front.jpg",
-    "https://res.cloudinary.com/.../scalp_crown.jpg"
+    "https://api.example.com/api/v1/media/assets/...",
+    "https://api.example.com/api/v1/media/assets/..."
   ]
 }
 ```
@@ -346,7 +346,7 @@ Fetches published video stories and clinical case demonstrations.
 ## 9. Media & Document Uploads
 
 ### `POST /api/v1/media/upload`
-Shared endpoint for uploading images (scalp photos, profile avatars) to Cloudinary.
+Shared endpoint for uploading images (scalp photos, profile avatars) to the private R2 bucket.
 - **Headers:** `Authorization: Bearer <token>`, `Content-Type: multipart/form-data`
 - **Fields:**
   - `purpose`: `"profile"` | `"assessment"` | `"checkin"`
@@ -357,8 +357,8 @@ Shared endpoint for uploading images (scalp photos, profile avatars) to Cloudina
   "status": "success",
   "data": [
     {
-      "url": "https://res.cloudinary.com/drhair/image/upload/v1/.../photo.jpg",
-      "public_id": "drhair/images/photo_abc",
+      "url": "https://api.example.com/api/v1/media/assets/...",
+      "key": "images/user_123/photo_abc.jpg",
       "format": "jpg",
       "bytes": 245100
     }

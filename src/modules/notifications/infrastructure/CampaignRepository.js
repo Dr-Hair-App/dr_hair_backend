@@ -1,5 +1,5 @@
 import { NotificationCampaignModel } from '../../../shared/database/models.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { store } from '../../../shared/database/store.js';
 
 export class CampaignRepository {
@@ -43,7 +43,7 @@ export class CampaignRepository {
       updated_at: now.toISOString(),
     };
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const doc = await NotificationCampaignModel.create({
         ...record,
         created_at: now,
@@ -59,7 +59,7 @@ export class CampaignRepository {
 
   async findById(id) {
     if (!id) return null;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return NotificationCampaignModel.findOne({ id: String(id) }).lean();
     }
     store.notificationCampaigns = store.notificationCampaigns || [];
@@ -68,7 +68,7 @@ export class CampaignRepository {
 
   async update(id, updates = {}) {
     const now = new Date();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return NotificationCampaignModel.findOneAndUpdate(
         { id: String(id) },
         { $set: { ...updates, updated_at: now } },
@@ -96,7 +96,7 @@ export class CampaignRepository {
 
   async markProcessing(id) {
     const now = new Date();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return NotificationCampaignModel.findOneAndUpdate(
         { id: String(id), status: { $in: ['draft', 'scheduled'] } },
         { $set: { status: 'processing', updated_at: now } },
@@ -123,7 +123,7 @@ export class CampaignRepository {
   }
 
   async listDueScheduled(now = new Date()) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return NotificationCampaignModel.find({
         status: 'scheduled',
         scheduledAt: { $lte: now },
@@ -143,7 +143,7 @@ export class CampaignRepository {
     const parsedLimit = Math.max(1, Math.min(100, parseInt(limit, 10) || 50));
     const skip = (parsedPage - 1) * parsedLimit;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const query = {};
       if (status) query.status = status;
       if (audience) query.audience = audience;

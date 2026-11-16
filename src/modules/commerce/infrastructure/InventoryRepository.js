@@ -1,6 +1,7 @@
 import { IInventoryRepository } from '../domain/IInventoryRepository.js';
-import mongoose from 'mongoose';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { randomUUID } from 'node:crypto';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
+import { getDatabaseBinding } from '../../../shared/database/runtime.js';
 import { InventoryLedgerModel, InventoryOperationModel, ProductModel } from '../../../shared/database/models.js';
 import { store } from '../../../shared/database/store.js';
 import { ConflictError, NotFoundError } from '../../../shared/errors/index.js';
@@ -37,7 +38,7 @@ export class InventoryRepository extends IInventoryRepository {
       created_at: new Date(),
     };
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await InventoryLedgerModel.create(record);
       return record;
     }
@@ -50,7 +51,7 @@ export class InventoryRepository extends IInventoryRepository {
   async reserveStock(items, orderId) {
     if (!Array.isArray(items) || items.length === 0) return true;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const reservedItems = [];
       try {
         for (const item of items) {
@@ -149,39 +150,25 @@ export class InventoryRepository extends IInventoryRepository {
     }
     for (const [pId, qty] of quantitiesByProduct) {
 
-      if (isMongoConnected()) {
-        const session = await mongoose.startSession();
-        try {
-          await session.withTransaction(async () => {
-            const existingOperation = await InventoryOperationModel.findOne({
-              operation_type: 'RELEASE', reference_id: String(orderId), product_id: String(pId),
-            }).session(session).lean();
-            if (existingOperation) return;
+      if (isDatabaseConnected()) {
+        const db = getDatabaseBinding();
+        const existing = await InventoryOperationModel.findOne({
+          operation_type: 'RELEASE', reference_id: String(orderId), product_id: String(pId),
+        }).lean();
+        if (existing) continue;
+        const product = await ProductModel.findOne({ id: pId }).select('_id').lean();
+        if (!product) throw new NotFoundError(`Product not found: ${pId}`);
 
-            await InventoryOperationModel.create([{
-              operation_type: 'RELEASE', reference_id: String(orderId), product_id: String(pId), quantity: Number(qty),
-            }], { session });
-            const updated = await ProductModel.findOneAndUpdate(
-              { id: pId },
-              { $inc: { stock: qty }, $set: { in_stock: true } },
-              { new: true, session },
-            );
-            if (!updated) throw new NotFoundError(`Product not found: ${pId}`);
-            await InventoryLedgerModel.create([{
-              id: `inv_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-              product_id: String(pId),
-              quantity: Number(qty),
-              balance_after: Number(updated.stock) || 0,
-              reference_type: 'RELEASE',
-              reference_id: String(orderId),
-              notes: `Stock released from cancelled order ${orderId}`,
-              created_by: 'system',
-              created_at: new Date(),
-            }], { session });
-          });
-        } finally {
-          await session.endSession();
-        }
+        const now = new Date().toISOString();
+        const operationId = randomUUID();
+        const ledgerId = randomUUID();
+        const operation = JSON.stringify({ _id: operationId, operation_type: 'RELEASE', reference_id: String(orderId), product_id: String(pId), quantity: Number(qty), created_at: now });
+        const ledger = JSON.stringify({ _id: ledgerId, id: `inv_${ledgerId}`, product_id: String(pId), quantity: Number(qty), reference_type: 'RELEASE', reference_id: String(orderId), notes: `Stock released from cancelled order ${orderId}`, created_by: 'system', created_at: now });
+        await db.batch([
+          db.prepare(`INSERT INTO inventory_operations (row_key, payload) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM products WHERE json_extract(payload, '$.id') = ?) ON CONFLICT DO NOTHING`).bind(operationId, operation, pId),
+          db.prepare(`UPDATE products SET payload = json_set(payload, '$.stock', COALESCE(CAST(json_extract(payload, '$.stock') AS INTEGER), 0) + ?, '$.in_stock', json('true'), '$.inStock', json('true'), '$.updated_at', ?) WHERE json_extract(payload, '$.id') = ? AND changes() > 0`).bind(Number(qty), now, pId),
+          db.prepare(`INSERT INTO inventory_ledgers (row_key, payload) SELECT ?, json_set(?, '$.balance_after', json_extract(payload, '$.stock')) FROM products WHERE json_extract(payload, '$.id') = ? AND changes() > 0`).bind(ledgerId, ledger, pId),
+        ]);
       } else {
         if (!Array.isArray(store.products)) store.products = [];
         if (!Array.isArray(store.inventoryOperations)) store.inventoryOperations = [];
@@ -212,7 +199,7 @@ export class InventoryRepository extends IInventoryRepository {
     const cleanProductId = String(productId).trim();
     const qty = Math.max(1, parseInt(quantity, 10) || 1);
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const updated = await ProductModel.findOneAndUpdate(
         { id: cleanProductId },
         { $inc: { stock: qty }, $set: { in_stock: true } },
@@ -250,7 +237,7 @@ export class InventoryRepository extends IInventoryRepository {
 
   async getStock(productId) {
     const cleanProductId = String(productId).trim();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const product = await ProductModel.findOne({ id: cleanProductId }).select('stock in_stock').lean();
       if (!product) return 0;
       return product.stock || 0;
@@ -265,7 +252,7 @@ export class InventoryRepository extends IInventoryRepository {
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
     const skip = (safePage - 1) * safeLimit;
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const query = productId ? { product_id: String(productId).trim() } : {};
       const [items, total] = await Promise.all([
         InventoryLedgerModel.find(query).sort({ created_at: -1 }).skip(skip).limit(safeLimit).lean(),

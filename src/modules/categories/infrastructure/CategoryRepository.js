@@ -1,10 +1,10 @@
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { CategoryModel } from '../../../shared/database/models.js';
 import { store } from '../../../shared/database/store.js';
 
 export class CategoryRepository {
   async list({ type, status = 'active' } = {}) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const filter = {};
       if (type && type !== 'all') {
         filter.type = type;
@@ -43,7 +43,7 @@ export class CategoryRepository {
 
   async findById(id) {
     if (!id) return null;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       let doc = null;
       try {
         doc = await CategoryModel.findById(id).lean();
@@ -112,7 +112,7 @@ export class CategoryRepository {
       updated_at: new Date().toISOString(),
     };
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       // Upsert by slug and type to avoid duplicate index crashes
       const created = await CategoryModel.findOneAndUpdate(
         { slug: record.slug, type: record.type },
@@ -170,7 +170,7 @@ export class CategoryRepository {
     }
     allowed.updated_at = new Date().toISOString();
 
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       let updated = null;
       try {
         updated = await CategoryModel.findByIdAndUpdate(id, { $set: allowed }, { new: true }).lean();
@@ -207,7 +207,7 @@ export class CategoryRepository {
 
   async delete(id) {
     if (!id) return false;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       let res = null;
       try {
         res = await CategoryModel.findByIdAndDelete(id);

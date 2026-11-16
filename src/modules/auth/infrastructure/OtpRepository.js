@@ -1,12 +1,12 @@
 import { IOtpRepository } from '../domain/IOtpRepository.js';
 import { Otp } from '../domain/Otp.js';
 import { store } from '../../../shared/database/store.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { OtpModel } from '../../../shared/database/models.js';
 
 export class OtpRepository extends IOtpRepository {
   async save(otpEntity) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await OtpModel.findOneAndUpdate(
         { login: otpEntity.login },
         {
@@ -33,7 +33,7 @@ export class OtpRepository extends IOtpRepository {
   }
 
   async findByLogin(login) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await OtpModel.findOne({ login }).select('+otpHash').lean();
       return record ? new Otp(record) : null;
     }
@@ -43,7 +43,7 @@ export class OtpRepository extends IOtpRepository {
   }
 
   async delete(login) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const result = await OtpModel.deleteOne({ login });
       return result.deletedCount > 0;
     }
@@ -52,7 +52,7 @@ export class OtpRepository extends IOtpRepository {
 
   async verifyAndConsume(login, codeHash, maxAttempts = 5) {
     const now = new Date();
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await OtpModel.findOne({ login }).select('+otpHash').lean();
       if (!record || record.expiresAt <= now) {
         if (record) await OtpModel.deleteOne({ login, otpHash: record.otpHash });

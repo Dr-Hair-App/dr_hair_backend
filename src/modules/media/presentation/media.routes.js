@@ -25,6 +25,7 @@ export const createMediaRouter = ({ mediaController }) => {
     passOnStoreError: true,
     keyGenerator: (req) => String(req.user?.id || 'unknown'),
   });
+  router.get('/assets/:objectKey(*)', mediaController.serveAsset);
   router.post(
     '/upload',
     authenticateToken,

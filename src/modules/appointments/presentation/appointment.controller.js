@@ -1216,6 +1216,8 @@ export class AppointmentController {
         if (body.consultation_fee != null) patch.consultation_fee = Math.max(0, Number(body.consultation_fee));
         event = event || { action: 'payment details updated', status: appointment.status, changed_by: actor };
       }
+      const previousStatus = appointment.status;
+      const previousPaymentStatus = appointment.payment_status;
       const updated = await this.appointmentRepository.update(appointment.id, patch, event);
       await this.patientActivityRepository.record({ userId: appointment.userId, patientCode: appointment.patient_code, type: 'appointment', title: event.action, summary: patch.starts_at || appointment.starts_at, actor, metadata: { appointment_id: appointment.id } });
       if (this.auditEventRepository?.record) {
@@ -1333,7 +1335,40 @@ export class AppointmentController {
                 }).catch(() => {});
               }
             }
-          } else if (body.payment_status && body.payment_status !== appointment.payment_status &&
+          } else if (updated.status !== previousStatus &&
+              ['Confirmed', 'Completed', 'No show'].includes(updated.status)) {
+            const statusMessages = {
+              Confirmed: {
+                title: 'Appointment confirmed',
+                body: `Your clinic appointment is confirmed for ${new Date(updated.starts_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone })}.`,
+              },
+              Completed: {
+                title: 'Appointment completed',
+                body: 'Your clinic appointment is marked complete. You can review your care plan in the app.',
+              },
+              'No show': {
+                title: 'Appointment update',
+                body: 'The clinic marked this appointment as missed. Please contact the clinic if you need help rebooking.',
+              },
+            };
+            const { title: statusTitle, body: statusBody } = statusMessages[updated.status];
+            const notif = await this.notificationRepository.create({
+              userId: appointment.userId,
+              user_id: appointment.userId,
+              title: statusTitle,
+              body: statusBody,
+              type: 'appointment',
+              destination: { type: 'screen', screen: 'clinic_appointment', entityId: appointment.id },
+              data: { appointment_id: appointment.id, status: updated.status, destination_type: 'screen', screen: 'clinic_appointment' },
+            });
+            const tokens = await this.deviceTokenRepository?.listByUserId(appointment.userId) || [];
+            await Promise.all(tokens.map(({ token }) => sendPushNotification({
+              token,
+              title: statusTitle,
+              body: statusBody,
+              data: { notification_id: notif?.id || '', type: 'appointment', destination_type: 'screen', screen: 'clinic_appointment', entity_id: appointment.id, status: updated.status },
+            }).catch(() => {})));
+          } else if (body.payment_status && body.payment_status !== previousPaymentStatus &&
               ['Paid', 'Refunded'].includes(updated.payment_status)) {
             const paymentTitle = updated.payment_status === 'Paid' ? 'Appointment payment recorded' : 'Appointment refund recorded';
             const paymentBody = updated.payment_status === 'Paid'

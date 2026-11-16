@@ -154,6 +154,7 @@ export class Order {
       refund_pending_amount: Number(payment.refund_pending_amount) || 0,
       refunded_at: payment.refunded_at || null,
       refunds: Array.isArray(payment.refunds) ? payment.refunds : [],
+      payment_attempts: Array.isArray(payment.payment_attempts) ? payment.payment_attempts : [],
       last_failed_at: payment.last_failed_at || null,
       last_failure_code: String(payment.last_failure_code || ''),
     };

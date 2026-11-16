@@ -9,7 +9,7 @@ import { config } from './config/env.js';
 import { createContainer } from './container.js';
 import { errorHandler } from './shared/middlewares/error.middleware.js';
 import { NotFoundError } from './shared/errors/index.js';
-import { databaseStatus } from './shared/database/mongodb.js';
+import { databaseStatus } from './shared/database/database.js';
 import { InventoryOperationModel, OrderModel, ProviderWebhookEventModel } from './shared/database/models.js';
 import { sendError } from './shared/utils/response.js';
 import { requestIdMiddleware } from './shared/middlewares/requestId.middleware.js';
@@ -21,15 +21,12 @@ const __dirname = path.dirname(__filename);
 const isDatabaseReady = (database) => {
   if (database === 'connected') return true;
 
-  // Vercel preview builds may intentionally use seeded in-memory data, but a
-  // production deployment must not report healthy without durable storage.
-  const isPreviewDeployment = process.env.VERCEL_ENV === 'preview';
-  return database === 'memory' && (config.env !== 'production' || isPreviewDeployment);
+  // A deployed environment must not report healthy without durable storage.
+  return database === 'memory' && config.env !== 'production';
 };
 
-// A successful Mongo handshake/ping does not prove the app's database user can
-// access its collections. Probe the collection required by commerce webhooks
-// so staging and production readiness cannot return a false green on authz errors.
+// Probe the domain tables required by commerce so health checks cannot return
+// a false green when D1 bindings or schema access are unavailable.
 const checkDatabaseReadiness = async () => {
   const database = databaseStatus();
   if (database !== 'connected') return { database, ready: isDatabaseReady(database) };
@@ -71,7 +68,7 @@ export const createApp = () => {
           return callback(null, false);
         }
 
-        // Production: strict allowlist matching only (no wildcard .vercel.app)
+        // Deployed environments use a strict origin allowlist.
         if (config.cors.origins.includes(origin)) {
           return callback(null, true);
         }
@@ -155,7 +152,7 @@ export const createApp = () => {
 
   // Never acknowledge API writes in process memory on a production deployment.
   // Keep health/docs reachable so operators can diagnose and restore the DB.
-  const isProductionDeployment = config.env === 'production' && process.env.VERCEL_ENV !== 'preview';
+  const isProductionDeployment = config.env === 'production';
   app.use((req, res, next) => {
     if (isProductionDeployment && databaseStatus() !== 'connected') {
       return sendError(res, {

@@ -1,10 +1,10 @@
 import { ProgressCheckInModel } from '../../../shared/database/models.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { store } from '../../../shared/database/store.js';
 
 export class ProgressCheckInRepository {
   async createOnce(data) {
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const filter = { id: data.id, userId: Number(data.userId) };
       const existing = await ProgressCheckInModel.findOne(filter).lean();
       if (existing) return { item: existing, created: false };
@@ -27,7 +27,7 @@ export class ProgressCheckInRepository {
 
   async listByUserId(userId) {
     const numericId = Number(userId);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return ProgressCheckInModel.find({ userId: numericId }).sort({ date: -1, created_at: -1 }).lean();
     }
     return store.progressCheckIns
@@ -38,7 +38,7 @@ export class ProgressCheckInRepository {
   async findById(userId, checkInId) {
     const numericId = Number(userId);
     if (!Number.isSafeInteger(numericId)) return null;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       return ProgressCheckInModel.findOne({ userId: numericId, id: String(checkInId) }).lean();
     }
     return store.progressCheckIns.find((item) => item.id === String(checkInId) && Number(item.userId) === numericId) || null;
@@ -47,7 +47,7 @@ export class ProgressCheckInRepository {
   async removeCheckIn(userId, checkInId) {
     const numericId = Number(userId);
     if (!Number.isSafeInteger(numericId)) return null;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const record = await ProgressCheckInModel.findOne({ userId: numericId, id: String(checkInId) }).lean();
       if (!record) return null;
       await ProgressCheckInModel.deleteOne({ userId: numericId, id: String(checkInId) });
@@ -60,7 +60,7 @@ export class ProgressCheckInRepository {
 
   async removePhoto(userId, checkInId, angle) {
     const numericId = Number(userId);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const filter = { userId: numericId, id: String(checkInId), 'photos.angle': angle };
       const before = await ProgressCheckInModel.findOne(filter).select('photos').lean();
       const photo = before?.photos?.find((item) => item.angle === angle);
@@ -77,7 +77,7 @@ export class ProgressCheckInRepository {
 
   async restorePhoto(userId, checkInId, photo) {
     const numericId = Number(userId);
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       await ProgressCheckInModel.updateOne(
         { userId: numericId, id: String(checkInId), 'photos.angle': { $ne: photo.angle } },
         { $addToSet: { photos: photo } },
@@ -91,7 +91,7 @@ export class ProgressCheckInRepository {
   async updateReview(userId, checkInId, { doctor_note, is_doctor_reviewed = true } = {}) {
     const numericId = Number(userId);
     if (!Number.isSafeInteger(numericId)) return null;
-    if (isMongoConnected()) {
+    if (isDatabaseConnected()) {
       const updated = await ProgressCheckInModel.findOneAndUpdate(
         { userId: numericId, id: String(checkInId) },
         {

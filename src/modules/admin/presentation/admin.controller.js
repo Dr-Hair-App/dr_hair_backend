@@ -7,7 +7,7 @@ import { getEffectivePermissions } from '../../../shared/utils/admin-permissions
 import { hashPassword } from '../../../shared/utils/password-hasher.js';
 import { sendPushNotification } from '../../notifications/infrastructure/FirebaseAdminMessaging.js';
 import { OrderModel, AppointmentModel } from '../../../shared/database/models.js';
-import { isMongoConnected } from '../../../shared/database/mongodb.js';
+import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { store } from '../../../shared/database/store.js';
 
 const reportResponse = (report) => ({
@@ -498,8 +498,8 @@ export class AdminController {
       if (!photo || typeof photo.url !== 'string' || typeof photo.file_name !== 'string') throw new NotFoundError('Scalp photo not found.');
 
       const allowedFolders = [
-        `${config.cloudinary.imageFolder}/user-${patient.id}/assessment/`,
-        `${config.cloudinary.imageFolder}/scalp/`,
+        `user-${patient.id}/assessment/`,
+        'scalp/',
       ];
       if (!allowedFolders.some((folder) => photo.file_name.startsWith(folder)) || photo.file_name.includes('..')) {
         throw new BadRequestError('This scalp photo is not stored in an approved patient-upload folder.');
@@ -1376,7 +1376,7 @@ export class AdminController {
 
       let orders = [];
       if (typeFilter === 'all' || typeFilter === 'order') {
-        if (isMongoConnected()) {
+        if (isDatabaseConnected()) {
           orders = await OrderModel.find({}).sort({ created_at: -1 }).limit(500).lean();
         } else {
           orders = store.orders || [];
@@ -1385,7 +1385,7 @@ export class AdminController {
 
       let appointments = [];
       if (typeFilter === 'all' || typeFilter === 'appointment') {
-        if (isMongoConnected()) {
+        if (isDatabaseConnected()) {
           appointments = await AppointmentModel.find({}).sort({ created_at: -1 }).limit(500).lean();
         } else {
           appointments = store.appointments || [];

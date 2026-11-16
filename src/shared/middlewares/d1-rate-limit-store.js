@@ -1,7 +1,7 @@
 import { RateLimitCounterModel } from '../database/models.js';
 
 /** Persistent express-rate-limit store shared by all production instances with in-memory fallback. */
-export class MongoRateLimitStore {
+export class D1RateLimitStore {
   constructor(namespace) {
     this.namespace = namespace;
     this.windowMs = 15 * 60 * 1000;
