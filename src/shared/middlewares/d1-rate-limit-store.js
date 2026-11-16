@@ -14,7 +14,7 @@ export class D1RateLimitStore {
   }
 
   key(key) {
-    return `${this.namespace}:${key}`;
+    return `${this.namespace}:${String(key || 'unknown')}`;
   }
 
   _fallbackIncrement(storageKey) {

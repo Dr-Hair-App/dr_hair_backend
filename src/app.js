@@ -41,6 +41,30 @@ export const createApp = () => {
   const container = createContainer();
   if (config.env === 'production') app.set('trust proxy', 1);
 
+  // Normalize client IP for serverless / Cloudflare Worker runtimes so rateLimiters have a valid key
+  app.use((req, _res, next) => {
+    const rawIp = req.headers['cf-connecting-ip'] ||
+                  req.headers['x-real-ip'] ||
+                  (typeof req.headers['x-forwarded-for'] === 'string'
+                    ? req.headers['x-forwarded-for'].split(',')[0]?.trim()
+                    : null) ||
+                  req.ip ||
+                  '127.0.0.1';
+    try {
+      Object.defineProperty(req, 'ip', {
+        value: rawIp,
+        writable: true,
+        configurable: true,
+      });
+    } catch {
+      req.ip = rawIp;
+    }
+    if (req.socket && !req.socket.remoteAddress) {
+      req.socket.remoteAddress = rawIp;
+    }
+    next();
+  });
+
   // 1. Global Middlewares
   app.use(requestIdMiddleware);
   app.use(
