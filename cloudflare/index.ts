@@ -55,7 +55,18 @@ export default {
     return (async () => {
       const cache = caches.default;
       const cached = await cache.match(request);
-      if (cached) return cached;
+      if (cached) {
+        const headers = new Headers(cached.headers);
+        const cacheControl = headers.get("Cache-Control");
+        if (cacheControl) {
+          headers.set("Cache-Control", cacheControl.replace(/max-age=\d+/, "max-age=0"));
+        }
+        return new Response(cached.body, {
+          status: cached.status,
+          statusText: cached.statusText,
+          headers,
+        });
+      }
 
       const response = await respond();
       const cacheControl = response.headers.get("Cache-Control") || "";
