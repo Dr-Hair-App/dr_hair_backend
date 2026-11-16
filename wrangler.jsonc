@@ -53,8 +53,8 @@
       "vars": {
         "NODE_ENV": "production",
         "DRHAIR_DEPLOYMENT_ENV": "production",
-        "BASE_URL": "https://dr-hair-backend-production.drhair-app.workers.dev",
-        "CORS_ORIGINS": "https://dr-hair-admin.drhair-app.workers.dev"
+        "BASE_URL": "https://api.drhairindia.com",
+        "CORS_ORIGINS": "https://admin.drhairindia.com,https://dr-hair-admin.drhair-app.workers.dev"
       },
       "d1_databases": [{ "binding": "DB", "database_name": "dr-hair-production", "database_id": "5bc14761-3131-469d-957d-3674564f3e30", "migrations_dir": "migrations" }],
       "r2_buckets": [{ "binding": "MEDIA_BUCKET", "bucket_name": "dr-hair-production-media" }],

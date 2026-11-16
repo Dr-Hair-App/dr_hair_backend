@@ -1,7 +1,7 @@
 import { httpServerHandler } from "cloudflare:node";
 import { env } from "cloudflare:workers";
 import { createApp } from "../src/app.js";
-import { setWorkerBindings } from "../src/shared/database/runtime.js";
+import { runWithDatabaseBinding, setWorkerBindings } from "../src/shared/database/runtime.js";
 import { setStorageBindings } from "../src/shared/storage/runtime.js";
 import { processExpiredData } from "../src/shared/database/maintenance.js";
 
@@ -21,8 +21,54 @@ app.listen(3000);
 const expressHandler = httpServerHandler({ port: 3000 });
 configureBindings(env);
 
+const publicReadPath = (request: Request): boolean => {
+  if (request.method !== "GET") return false;
+  if (request.headers.has("authorization") || request.headers.has("cookie")) return false;
+  const path = new URL(request.url).pathname;
+  return [
+    "/api/v1/categories",
+    "/api/v1/products",
+    "/api/v1/videos",
+    "/api/v1/content",
+  ].some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+};
+
 export default {
   ...expressHandler,
+
+  fetch(request: Request, requestEnv: typeof env, ctx: ExecutionContext): Promise<Response> {
+    configureBindings(requestEnv);
+    const database = requestEnv.DB;
+    const isPublicRead = publicReadPath(request);
+
+    const respond = () => {
+      if (isPublicRead && database && typeof database.withSession === "function") {
+        return runWithDatabaseBinding(database.withSession("first-unconstrained"), () =>
+          expressHandler.fetch(request, requestEnv, ctx),
+        );
+      }
+      return expressHandler.fetch(request, requestEnv, ctx);
+    };
+
+    if (!isPublicRead) return respond();
+
+    return (async () => {
+      const cache = caches.default;
+      const cached = await cache.match(request);
+      if (cached) return cached;
+
+      const response = await respond();
+      const cacheControl = response.headers.get("Cache-Control") || "";
+      if (
+        response.status === 200 &&
+        cacheControl.includes("public") &&
+        !response.headers.has("Set-Cookie")
+      ) {
+        ctx.waitUntil(cache.put(request, response.clone()));
+      }
+      return response;
+    })();
+  },
 
   scheduled(_controller: ScheduledController, scheduledEnv: typeof env, ctx: ExecutionContext): void {
     configureBindings(scheduledEnv);

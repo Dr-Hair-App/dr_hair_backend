@@ -1,4 +1,7 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 let workerBindings = null;
+const requestDatabaseBinding = new AsyncLocalStorage();
 
 export const setWorkerBindings = (bindings) => {
   if (!bindings?.DB || typeof bindings.DB.prepare !== 'function') {
@@ -9,7 +12,10 @@ export const setWorkerBindings = (bindings) => {
 
 export const setDatabaseBinding = (binding) => setWorkerBindings({ ...workerBindings, DB: binding });
 export const getWorkerBindings = () => workerBindings;
-export const getDatabaseBinding = () => workerBindings?.DB || null;
+export const getDatabaseBinding = () => requestDatabaseBinding.getStore() || workerBindings?.DB || null;
+
+export const runWithDatabaseBinding = (binding, callback) =>
+  requestDatabaseBinding.run(binding, callback);
 
 export const clearDatabaseBinding = () => {
   workerBindings = null;
