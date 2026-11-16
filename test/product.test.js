@@ -89,7 +89,7 @@ test('Product Module - Clean Architecture Tests', async (t) => {
       compare_at_price: 2499,
       images: ['https://res.cloudinary.com/demo/image/upload/sample_elixir.jpg'],
       supply_plans: [
-        { id: 'elixir-1m', title: '1 Month', subtitle: '50ml', price: 1899, mrp: 2499, sku: 'DRH-ELX-050' },
+        { id: 'elixir-1m', title: '1 Month', subtitle: '50ml', price: 1899, mrp: 2499, sku: 'DRH-ELX-050', shipping_profile: { weight_kg: 0.15, length_cm: 18, breadth_cm: 6, height_cm: 6 } },
       ],
       benefits: [{ title: 'Peptide complex', description: 'Supports micro-circulation' }],
     });

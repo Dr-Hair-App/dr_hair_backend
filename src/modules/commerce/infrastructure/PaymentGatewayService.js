@@ -128,6 +128,14 @@ export class PaymentGatewayService {
     return this.request(`/orders/${encodeURIComponent(orderId)}`, { method: 'GET' });
   }
 
+  async getOrderPayments(orderId) {
+    this.assertConfigured();
+    if (!orderId) throw new BadRequestError('A Razorpay order ID is required.');
+    const result = await this.request(`/orders/${encodeURIComponent(orderId)}/payments`, { method: 'GET' });
+    if (!Array.isArray(result?.items)) throw new BadGatewayError('Razorpay returned an invalid order payment list.');
+    return result.items;
+  }
+
   async refundCapturedPayment({ paymentId, amount, currency = 'INR', reason = 'Customer refund', receipt = null }) {
     this.assertConfigured();
     if (!paymentId || !Number.isFinite(Number(amount)) || Number(amount) <= 0) {

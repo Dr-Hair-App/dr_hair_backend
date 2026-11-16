@@ -61,6 +61,36 @@ export class CouponRepository {
     return found ? this._mapDoc(found) : null;
   }
 
+  async consumeUsage(code) {
+    const cleanCode = String(code || '').trim().toUpperCase();
+    if (!cleanCode) return false;
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+
+    if (isMongoConnected()) {
+      const updated = await CouponModel.findOneAndUpdate({
+        code: cleanCode,
+        status: 'Active',
+        $and: [
+          { $expr: { $lt: ['$uses', '$max_uses'] } },
+          { $or: [{ expires_on: '' }, { expires_on: { $gte: today } }] },
+        ],
+      }, { $inc: { uses: 1 }, $set: { updated_at: new Date() } }, { new: true }).lean();
+      return Boolean(updated);
+    }
+
+    store.coupons ||= [];
+    const coupon = store.coupons.find((item) => item.code?.toUpperCase() === cleanCode);
+    if (!coupon || coupon.status !== 'Active') return false;
+    const maxUses = Number(coupon.max_uses);
+    if (Number.isFinite(maxUses) && Number(coupon.uses || 0) >= maxUses) return false;
+    if (coupon.expires_on && coupon.expires_on < today) return false;
+    coupon.uses = Number(coupon.uses || 0) + 1;
+    coupon.updated_at = new Date();
+    return true;
+  }
+
   async findById(id) {
     const cleanId = String(id || '').trim();
     if (!cleanId) return null;

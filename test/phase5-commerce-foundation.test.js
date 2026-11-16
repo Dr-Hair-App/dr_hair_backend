@@ -26,7 +26,10 @@ test('Phase 5: Commerce Foundation & Order Lifecycle Tests', async (t) => {
       return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
     },
   });
-  const container = createContainer({ paymentGatewayService });
+  const container = createContainer({
+    paymentGatewayService,
+    getShippingQuoteUseCase: { execute: async () => ({ quote_id: 'quote_test', shipping_fee: 0, courier: 'Test courier', estimated_delivery: 'Test estimate' }) },
+  });
   const {
     checkoutUseCase,
     verifyPaymentUseCase,
@@ -72,6 +75,7 @@ test('Phase 5: Commerce Foundation & Order Lifecycle Tests', async (t) => {
 
   store.addresses = [];
   store.orders = [];
+  store.coupons = [];
   store.inventoryLedgers = [];
   store.auditEvents = [];
 
@@ -119,6 +123,11 @@ test('Phase 5: Commerce Foundation & Order Lifecycle Tests', async (t) => {
     assert.equal(list[0].id, addr2.id); // default address sorted first
   });
 
+  await container.repositories.couponRepository.create({
+    code: 'FIRSTDR', discount_type: 'percent', discount_value: 15,
+    applies_to: 'All products', minimum_order: 0, max_uses: 10, expires_on: '2099-12-31',
+  });
+
   await t.test('2. Server-Priced Checkout Calculation & Tamper Resistance', async () => {
     const address = (await container.controllers.commerceController.addressRepository.listByUserId(patientId))[0];
 
@@ -136,6 +145,7 @@ test('Phase 5: Commerce Foundation & Order Lifecycle Tests', async (t) => {
       addressId: address.id,
       couponCode: 'FIRSTDR',
       paymentGateway: 'razorpay',
+      shippingQuoteId: 'quote_test',
       idempotencyKey: 'idem-key-checkout-001',
     });
 
@@ -178,6 +188,7 @@ test('Phase 5: Commerce Foundation & Order Lifecycle Tests', async (t) => {
       addressId: address.id,
       couponCode: 'FIRSTDR',
       paymentGateway: 'razorpay',
+      shippingQuoteId: 'quote_test',
       idempotencyKey: 'idem-key-checkout-001',
     });
 
@@ -200,6 +211,7 @@ test('Phase 5: Commerce Foundation & Order Lifecycle Tests', async (t) => {
           userId: patientId,
           items: [{ productId: 'anti-dandruff-shampoo', quantity: 5 }],
           addressId: address.id,
+          shippingQuoteId: 'quote_test',
           idempotencyKey: 'idem-key-insufficient-001',
         });
       },
@@ -224,6 +236,7 @@ test('Phase 5: Commerce Foundation & Order Lifecycle Tests', async (t) => {
       userId: patientId,
       items: [{ productId: 'anti-dandruff-shampoo', quantity: 2 }],
       addressId: address.id,
+      shippingQuoteId: 'quote_test',
       idempotencyKey: 'idem-key-cancel-test-001',
     });
 

@@ -139,6 +139,7 @@ export class TreatmentRepository extends ITreatmentRepository {
       subtitle: String(step.subtitle || '').trim(),
       category: String(step.category || 'Lifestyle').trim(),
       time_of_day: String(step.time_of_day || 'Daily').trim(),
+      created_by: 'patient',
     };
 
     if (isMongoConnected()) {

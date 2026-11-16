@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createApp } from '../src/app.js';
+import { store } from '../src/shared/database/store.js';
 
 describe('Categories Endpoints', () => {
   it('returns all platform categories from /api/v1/categories', async () => {
@@ -60,11 +61,33 @@ describe('Categories Endpoints', () => {
       const body = await res.json();
       assert.equal(body.status, 'success');
       assert(Array.isArray(body.data));
-      assert(body.data.length > 0);
-      const hairCat = body.data.find((c) => c.id === 'hair');
-      assert(hairCat);
-      assert.equal(hairCat.name, 'Hair Fall & Regrowth');
+      assert(body.data.some((category) => category.id === 'all'));
     } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('derives patient product filters from active product concern tags', async () => {
+    const previousProducts = store.products;
+    store.products = [
+      { id: 'prod-1', status: 'active', root_causes: ['Scalp balance', 'Hair density'] },
+      { id: 'prod-2', status: 'active', root_causes: ['Scalp balance'] },
+      { id: 'prod-3', status: 'draft', root_causes: ['Inactive concern'] },
+    ];
+    const { app } = createApp();
+    const server = http.createServer(app);
+    await new Promise((resolve) => server.listen(0, resolve));
+    const port = server.address().port;
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/v1/products/categories`);
+      const body = await res.json();
+      assert.equal(res.status, 200);
+      assert(body.data.some((category) => category.id === 'Scalp balance' && category.item_count === 2));
+      assert(body.data.some((category) => category.id === 'Hair density' && category.item_count === 1));
+      assert.equal(body.data.some((category) => category.id === 'Inactive concern'), false);
+    } finally {
+      store.products = previousProducts;
       await new Promise((resolve) => server.close(resolve));
     }
   });

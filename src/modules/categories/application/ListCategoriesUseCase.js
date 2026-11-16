@@ -11,92 +11,9 @@ export class ListCategoriesUseCase {
   }
 
   async execute({ type } = {}) {
-    const productCounts = await this._getProductCounts();
+    const productCategories = await this._getProductCategories();
     const videoCounts = await this._getVideoCounts();
     const videoCategories = await this._getVideoCategories(videoCounts);
-
-    const productCategories = [
-      {
-        id: 'all',
-        name: 'All',
-        slug: 'all',
-        type: 'product',
-        icon: 'layout-grid',
-        badge: null,
-        description: 'All clinical hair care formulations',
-        item_count: productCounts.total || 0,
-      },
-      {
-        id: 'hair',
-        name: 'Hair Fall & Regrowth',
-        slug: 'hair',
-        type: 'product',
-        icon: 'sparkles',
-        badge: 'Popular',
-        description: 'Active follicular serums and growth complexes',
-        item_count: productCounts.hair || 0,
-      },
-      {
-        id: 'dandruff',
-        name: 'Dandruff & Scalp',
-        slug: 'dandruff',
-        type: 'product',
-        icon: 'shield-check',
-        badge: null,
-        description: 'Antifungal and purifying scalp cleansers',
-        item_count: productCounts.dandruff || 0,
-      },
-      {
-        id: 'gut',
-        name: 'Gut Health',
-        slug: 'gut',
-        type: 'product',
-        icon: 'apple',
-        badge: null,
-        description: 'Probiotics and digestive nutrient absorption',
-        item_count: productCounts.gut || 0,
-      },
-      {
-        id: 'stress',
-        name: 'Stress & Sleep',
-        slug: 'stress',
-        type: 'product',
-        icon: 'brain',
-        badge: null,
-        description: 'Cortisol regulation and calming herbal extracts',
-        item_count: productCounts.stress || 0,
-      },
-      {
-        id: 'thyroid',
-        name: 'Thyroid Care',
-        slug: 'thyroid',
-        type: 'product',
-        icon: 'activity',
-        badge: null,
-        description: 'Metabolic thyroid hormone support',
-        item_count: productCounts.thyroid || 0,
-      },
-      {
-        id: 'pcos',
-        name: 'PCOS & Androgen',
-        slug: 'pcos',
-        type: 'product',
-        icon: 'flower-2',
-        badge: null,
-        description: 'Hormonal balance and DHT control formulations',
-        item_count: productCounts.pcos || 0,
-      },
-      {
-        id: 'hormone',
-        name: 'Hormone Balance',
-        slug: 'hormone',
-        type: 'product',
-        icon: 'dna',
-        badge: null,
-        description: 'Endocrine stabilization for root-cause recovery',
-        item_count: productCounts.hormone || 0,
-      },
-    ];
 
     const serviceCategories = [
       {
@@ -195,61 +112,50 @@ export class ListCategoriesUseCase {
     };
   }
 
-  async _getProductCounts() {
-    const counts = {
-      total: 0,
-      hair: 0,
-      dandruff: 0,
-      gut: 0,
-      stress: 0,
-      thyroid: 0,
-      pcos: 0,
-      hormone: 0,
-    };
+  async _getProductCategories() {
+    let products = [];
+    if (isMongoConnected()) {
+      products = await ProductModel.find({ status: 'active' })
+        .select('root_cause root_causes')
+        .lean();
+    } else {
+      products = Array.isArray(store.products)
+        ? store.products.filter((product) => product.status === 'active')
+        : [];
+    }
 
-    try {
-      if (isMongoConnected()) {
-        const activeProducts = await ProductModel.find({ status: 'active' }).select('root_cause root_causes category name').lean();
-        counts.total = activeProducts.length;
-
-        for (const p of activeProducts) {
-          const root = (p.root_cause || '').toLowerCase();
-          const roots = Array.isArray(p.root_causes) ? p.root_causes.map((r) => String(r).toLowerCase()) : [];
-          const cat = (p.category || '').toLowerCase();
-          const name = (p.name || '').toLowerCase();
-
-          if (root.includes('hair') || roots.some((r) => r.includes('hair')) || cat.includes('hair') || name.includes('serum')) counts.hair++;
-          if (root.includes('dandruff') || roots.some((r) => r.includes('dandruff')) || cat.includes('dandruff') || cat.includes('cleanser')) counts.dandruff++;
-          if (root.includes('gut') || roots.some((r) => r.includes('gut')) || cat.includes('gut') || cat.includes('digest')) counts.gut++;
-          if (root.includes('stress') || roots.some((r) => r.includes('stress')) || cat.includes('stress') || cat.includes('calm')) counts.stress++;
-          if (root.includes('thyroid') || roots.some((r) => r.includes('thyroid')) || cat.includes('thyroid') || cat.includes('metabol')) counts.thyroid++;
-          if (root.includes('pcos') || roots.some((r) => r.includes('pcos')) || cat.includes('pcos')) counts.pcos++;
-          if (root.includes('hormone') || roots.some((r) => r.includes('hormone')) || cat.includes('androgen') || cat.includes('dht')) counts.hormone++;
-        }
-        return counts;
+    const counts = new Map();
+    for (const product of products) {
+      const causes = Array.isArray(product.root_causes || product.rootCauses)
+        ? product.root_causes || product.rootCauses
+        : [product.root_cause || product.rootCause];
+      for (const value of causes) {
+        const name = String(value || '').trim();
+        if (!name) continue;
+        const key = name.toLocaleLowerCase();
+        const current = counts.get(key) || { name, count: 0 };
+        current.count += 1;
+        counts.set(key, current);
       }
+    }
 
-      // Memory store fallback
-      const products = Array.isArray(store.products) ? store.products.filter((p) => p.status !== 'archived') : [];
-      counts.total = products.length;
-
-      for (const p of products) {
-        const root = (p.root_cause || p.rootCause || '').toLowerCase();
-        const roots = Array.isArray(p.root_causes) ? p.root_causes.map((r) => String(r).toLowerCase()) : [];
-        const cat = (p.category || '').toLowerCase();
-        const name = (p.name || '').toLowerCase();
-
-        if (root.includes('hair') || roots.some((r) => r.includes('hair')) || cat.includes('hair') || name.includes('serum')) counts.hair++;
-        if (root.includes('dandruff') || roots.some((r) => r.includes('dandruff')) || cat.includes('dandruff') || cat.includes('cleanser')) counts.dandruff++;
-        if (root.includes('gut') || roots.some((r) => r.includes('gut')) || cat.includes('gut') || cat.includes('digest')) counts.gut++;
-        if (root.includes('stress') || roots.some((r) => r.includes('stress')) || cat.includes('stress') || cat.includes('calm')) counts.stress++;
-        if (root.includes('thyroid') || roots.some((r) => r.includes('thyroid')) || cat.includes('thyroid') || cat.includes('metabol')) counts.thyroid++;
-        if (root.includes('pcos') || roots.some((r) => r.includes('pcos')) || cat.includes('pcos')) counts.pcos++;
-        if (root.includes('hormone') || roots.some((r) => r.includes('hormone')) || cat.includes('androgen') || cat.includes('dht')) counts.hormone++;
-      }
-    } catch (_) {}
-
-    return counts;
+    return [
+      {
+        id: 'all', name: 'All', slug: 'all', type: 'product', icon: 'layout-grid',
+        description: '', item_count: products.length,
+      },
+      ...[...counts.entries()]
+        .sort(([, a], [, b]) => a.name.localeCompare(b.name))
+        .map(([key, item]) => ({
+          id: item.name,
+          name: item.name,
+          slug: key.replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
+          type: 'product',
+          icon: 'layout-grid',
+          description: '',
+          item_count: item.count,
+        })),
+    ];
   }
 
   async _getVideoCounts() {

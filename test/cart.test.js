@@ -50,6 +50,14 @@ test('Cart Module - Clean Architecture Tests', async (t) => {
 
   await t.test('applyCouponUseCase applies FIRSTDR coupon discount', async () => {
     const { applyCouponUseCase } = container.useCases;
+    await container.repositories.couponRepository.create({
+      code: 'FIRSTDR',
+      discount_type: 'fixed',
+      discount_value: 200,
+      minimum_order: 999,
+      max_uses: 10,
+      expires_on: '2099-12-31',
+    });
     const cart = await applyCouponUseCase.execute({
       userId: testUserId,
       code: 'FIRSTDR',

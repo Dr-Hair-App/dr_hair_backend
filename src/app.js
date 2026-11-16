@@ -10,6 +10,7 @@ import { createContainer } from './container.js';
 import { errorHandler } from './shared/middlewares/error.middleware.js';
 import { NotFoundError } from './shared/errors/index.js';
 import { databaseStatus } from './shared/database/mongodb.js';
+import { InventoryOperationModel, OrderModel, ProviderWebhookEventModel } from './shared/database/models.js';
 import { sendError } from './shared/utils/response.js';
 import { requestIdMiddleware } from './shared/middlewares/requestId.middleware.js';
 import { cacheControl } from './shared/middlewares/cache.middleware.js';
@@ -24,6 +25,24 @@ const isDatabaseReady = (database) => {
   // production deployment must not report healthy without durable storage.
   const isPreviewDeployment = process.env.VERCEL_ENV === 'preview';
   return database === 'memory' && (config.env !== 'production' || isPreviewDeployment);
+};
+
+// A successful Mongo handshake/ping does not prove the app's database user can
+// access its collections. Probe the collection required by commerce webhooks
+// so staging and production readiness cannot return a false green on authz errors.
+const checkDatabaseReadiness = async () => {
+  const database = databaseStatus();
+  if (database !== 'connected') return { database, ready: isDatabaseReady(database) };
+  try {
+    await Promise.all([
+      OrderModel.findOne().select('_id').maxTimeMS(1500).lean(),
+      ProviderWebhookEventModel.findOne().select('_id').maxTimeMS(1500).lean(),
+      InventoryOperationModel.findOne().select('_id').maxTimeMS(1500).lean(),
+    ]);
+    return { database: 'connected', ready: true };
+  } catch {
+    return { database: 'unavailable', ready: false };
+  }
 };
 
 export const createApp = () => {
@@ -77,9 +96,8 @@ export const createApp = () => {
   }
 
   // 2. System & Health Check Endpoints
-  app.get('/', (req, res) => {
-    const db = databaseStatus();
-    const healthy = isDatabaseReady(db);
+  app.get('/', async (req, res) => {
+    const { database: db, ready: healthy } = await checkDatabaseReadiness();
     res.status(healthy ? 200 : 503).json({
       name: 'Dr. Hair Backend API',
       version: '1.0.0',
@@ -104,9 +122,8 @@ export const createApp = () => {
     });
   });
 
-  app.get('/health', (req, res) => {
-    const db = databaseStatus();
-    const healthy = isDatabaseReady(db);
+  app.get('/health', async (req, res) => {
+    const { database: db, ready: healthy } = await checkDatabaseReadiness();
     res.status(healthy ? 200 : 503).json({
       status: healthy ? 'ok' : 'unavailable',
       database: db,

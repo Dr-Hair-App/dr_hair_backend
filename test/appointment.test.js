@@ -6,6 +6,17 @@ import { store } from '../src/shared/database/store.js';
 test('Appointment Booking & Payment Endpoints', async (t) => {
   const container = createContainer();
   const { appointmentController } = container.controllers;
+  await container.repositories.featureFlagRepository.setFlag('clinic_appointment_schedule', {
+    group: 'Appointments', enabled: true,
+    metadata: { booking_window_days: 90, weekly_closed_weekdays: [7], slot_interval_minutes: 30, appointment_duration_minutes: 30, appointment_services: ['Consultation'], sessions: [
+      { label: 'Morning Session', opens_at: '10:00', closes_at: '12:30' },
+      { label: 'Evening Session', opens_at: '15:30', closes_at: '18:30' },
+    ] },
+  });
+  await container.repositories.featureFlagRepository.setFlag('clinic_appointment_billing', {
+    group: 'Appointments', enabled: false,
+    metadata: { consultation_fee: 500, currency: 'INR', first_appointment_free: false },
+  });
 
   // Setup test user in store
   const userId = 7712;

@@ -7,12 +7,9 @@ describe('Dynamic Coupons & Commerce Promotions', () => {
   const { couponRepository, cartRepository } = container.repositories;
   const { applyCouponUseCase } = container.useCases;
 
-  it('lists seeded coupons', async () => {
+  it('starts without synthetic seeded coupons', async () => {
     const result = await couponRepository.list();
-    assert.ok(result.items.length >= 3);
-    const firstDr = result.items.find((c) => c.code === 'FIRSTDR');
-    assert.ok(firstDr);
-    assert.equal(firstDr.discountValue, 200);
+    assert.deepEqual(result.items, []);
   });
 
   it('admin creates a new coupon and finds by code', async () => {

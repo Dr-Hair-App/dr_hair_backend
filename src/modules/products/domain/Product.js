@@ -6,8 +6,8 @@ export class Product {
     name,
     subtitle = '',
     category,
-    root_cause = 'Hair',
-    root_causes = ['Hair'],
+    root_cause = '',
+    root_causes = [],
     sku = '',
     rating = 0,
     reviews_count = 0,
@@ -32,7 +32,7 @@ export class Product {
     this.subtitle = subtitle;
     this.category = category;
     this.root_cause = root_cause;
-    this.root_causes = Array.isArray(root_causes) && root_causes.length ? root_causes : [root_cause];
+    this.root_causes = Array.isArray(root_causes) ? root_causes : [];
     this.sku = sku;
     const parsedRating = Number(rating);
     this.rating = Number.isFinite(parsedRating) ? parsedRating : 0;
@@ -77,36 +77,40 @@ export class Product {
       ? payload.root_causes
       : Array.isArray(payload.rootCauses)
       ? payload.rootCauses
-      : [payload.root_cause || payload.rootCause || 'Hair'];
+      : [payload.root_cause || payload.rootCause].filter(Boolean);
 
-    const primaryRootCause = rootCauses[0] || 'Hair';
+    const primaryRootCause = rootCauses[0] || '';
 
     const autoSku = payload.sku && payload.sku !== 'DRH-NEW'
       ? payload.sku.trim().toUpperCase()
       : `DRH-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const rawPlans = payload.supply_plans || payload.supplyPlans || [];
-    const supplyPlans = Array.isArray(rawPlans) && rawPlans.length > 0
-      ? rawPlans.map((plan, idx) => ({
-          id: plan.id || `plan_${idx + 1}`,
-          title: plan.title || `${idx + 1} Month`,
-          subtitle: plan.subtitle || '',
-          price: Number(plan.price) || price,
-          mrp: Number(plan.mrp || plan.compareAtPrice) || Number(payload.compare_at_price || payload.compareAtPrice) || price,
-          badge: plan.badge || '',
-          sku: (plan.sku && plan.sku !== 'DRH-NEW' ? plan.sku : `${autoSku}-${idx + 1}`).trim().toUpperCase(),
-        }))
-      : [
-          {
-            id: 'plan_1',
-            title: '1 Month',
-            subtitle: 'Standard Supply',
-            price,
-            mrp: Number(payload.compare_at_price || payload.compareAtPrice) || price,
-            badge: '',
-            sku: autoSku,
-          },
-        ];
+    if (!Array.isArray(rawPlans) || rawPlans.length === 0) {
+      throw new BadRequestError('At least one supply plan must be configured for the product.');
+    }
+    const supplyPlans = rawPlans.map((plan, idx) => {
+      const planPrice = Number(plan.price);
+      const planMrp = Number(plan.mrp ?? plan.compareAtPrice);
+      const title = String(plan.title || '').trim();
+      const shippingProfile = normalizeShippingProfile(plan.shipping_profile || plan.shippingProfile);
+      if (!title || !Number.isFinite(planPrice) || planPrice <= 0 || !Number.isFinite(planMrp) || planMrp < planPrice) {
+        throw new BadRequestError(`Supply plan ${idx + 1} needs a name, positive price, and MRP equal to or above its price.`);
+      }
+      if ([shippingProfile.weight_kg, shippingProfile.length_cm, shippingProfile.breadth_cm, shippingProfile.height_cm].some((value) => value == null)) {
+        throw new BadRequestError(`Supply plan ${idx + 1} needs parcel weight and dimensions for shipping quotes.`);
+      }
+      return {
+        id: plan.id || `plan_${idx + 1}`,
+        title,
+        subtitle: String(plan.subtitle || '').trim(),
+        price: planPrice,
+        mrp: planMrp,
+        badge: plan.badge || '',
+        sku: (plan.sku && plan.sku !== 'DRH-NEW' ? plan.sku : `${autoSku}-${idx + 1}`).trim().toUpperCase(),
+        shipping_profile: shippingProfile,
+      };
+    });
 
     const extractedImages = [];
     if (Array.isArray(payload.images)) {
@@ -124,9 +128,8 @@ export class Product {
         }
       }
     }
-    const images = extractedImages.length > 0
-      ? extractedImages
-      : ['https://res.cloudinary.com/demo/image/upload/sample.jpg'];
+    const images = extractedImages;
+    const stock = Number(payload.stock ?? 0);
 
     return new Product({
       id: existingId || payload.id || `prd-${Date.now()}`,
@@ -138,8 +141,8 @@ export class Product {
       sku: (payload.sku && payload.sku !== 'DRH-NEW') ? payload.sku.trim().toUpperCase() : autoSku,
       rating: payload.rating == null ? 0 : Number(payload.rating),
       reviews_count: Number(payload.reviews_count || payload.reviewsCount) || 0,
-      in_stock: payload.in_stock !== false && payload.inStock !== false && payload.status !== 'Draft',
-      stock: Number(payload.stock ?? 100),
+      in_stock: Number.isFinite(stock) && stock > 0 && payload.in_stock !== false && payload.inStock !== false && payload.status !== 'Draft',
+      stock: Number.isFinite(stock) ? Math.max(0, stock) : 0,
       price,
       compare_at_price: Number(payload.compare_at_price || payload.compareAtPrice) || supplyPlans[0]?.mrp || price,
       unit_cost: Number(payload.unit_cost || payload.unitCost) || 0,
@@ -190,4 +193,19 @@ export class Product {
       updated_at: this.updated_at,
     };
   }
+}
+
+function normalizeShippingProfile(profile = {}) {
+  const source = profile && typeof profile === 'object' ? profile : {};
+  const read = (snake, camel) => Number(source[snake] ?? source[camel]);
+  const positive = (snake, camel) => {
+    const value = read(snake, camel);
+    return Number.isFinite(value) && value > 0 ? value : null;
+  };
+  return {
+    weight_kg: positive('weight_kg', 'weightKg'),
+    length_cm: positive('length_cm', 'lengthCm'),
+    breadth_cm: positive('breadth_cm', 'breadthCm'),
+    height_cm: positive('height_cm', 'heightCm'),
+  };
 }

@@ -27,6 +27,7 @@ import { ContentRepository } from './modules/content/infrastructure/ContentRepos
 import { AddressRepository } from './modules/commerce/infrastructure/AddressRepository.js';
 import { InventoryRepository } from './modules/commerce/infrastructure/InventoryRepository.js';
 import { OrderRepository } from './modules/commerce/infrastructure/OrderRepository.js';
+import { ProviderWebhookEventRepository } from './modules/commerce/infrastructure/ProviderWebhookEventRepository.js';
 import { CouponRepository } from './modules/commerce/infrastructure/CouponRepository.js';
 import { PaymentGatewayService } from './modules/commerce/infrastructure/PaymentGatewayService.js';
 import { FeatureFlagRepository } from './modules/admin/infrastructure/FeatureFlagRepository.js';
@@ -80,11 +81,14 @@ import { ApplyCouponUseCase } from './modules/cart/application/ApplyCouponUseCas
 import { AdminAuthUseCase } from './modules/admin/application/AdminAuthUseCase.js';
 import { CreateAdminAccountUseCase } from './modules/admin/application/CreateAdminAccountUseCase.js';
 import { CheckoutUseCase } from './modules/commerce/application/CheckoutUseCase.js';
+import { GetShippingQuoteUseCase } from './modules/commerce/application/GetShippingQuoteUseCase.js';
 import { VerifyPaymentUseCase } from './modules/commerce/application/VerifyPaymentUseCase.js';
 import { CancelOrderUseCase } from './modules/commerce/application/CancelOrderUseCase.js';
 import { RefundOrderUseCase } from './modules/commerce/application/RefundOrderUseCase.js';
 import { UpdateFulfillmentUseCase } from './modules/commerce/application/UpdateFulfillmentUseCase.js';
 import { CreateShiprocketShipmentUseCase } from './modules/commerce/application/CreateShiprocketShipmentUseCase.js';
+import { RetryShiprocketPickupUseCase } from './modules/commerce/application/RetryShiprocketPickupUseCase.js';
+import { CreateShiprocketReturnUseCase } from './modules/commerce/application/CreateShiprocketReturnUseCase.js';
 import { ShiprocketService } from './modules/commerce/infrastructure/ShiprocketService.js';
 
 // Controllers
@@ -165,6 +169,7 @@ export const createContainer = (overrides = {}) => {
   const addressRepository = overrides.addressRepository || new AddressRepository();
   const inventoryRepository = overrides.inventoryRepository || new InventoryRepository();
   const orderRepository = overrides.orderRepository || new OrderRepository();
+  const providerWebhookEventRepository = overrides.providerWebhookEventRepository || new ProviderWebhookEventRepository();
   const couponRepository = overrides.couponRepository || new CouponRepository();
   const paymentGatewayService = overrides.paymentGatewayService || new PaymentGatewayService();
   const featureFlagRepository = overrides.featureFlagRepository || new FeatureFlagRepository();
@@ -271,7 +276,12 @@ export const createContainer = (overrides = {}) => {
 
   const geminiAiService = overrides.geminiAiService || new GeminiAiService({ imageStorage });
   const streamPatientAssistantReplyUseCase = new StreamPatientAssistantReplyUseCase({ geminiAiService });
-  const patientAssistantController = new PatientAssistantController({ streamPatientAssistantReplyUseCase });
+  const patientAssistantController = new PatientAssistantController({
+    streamPatientAssistantReplyUseCase,
+    userRepository,
+    hairTestRepository,
+    treatmentRepository,
+  });
   const assessmentProductAvailabilityService = overrides.assessmentProductAvailabilityService ||
     new AssessmentProductAvailabilityService({ productRepository, featureFlagRepository });
 
@@ -344,6 +354,10 @@ export const createContainer = (overrides = {}) => {
   const clearCartUseCase = new ClearCartUseCase({ cartRepository });
   const applyCouponUseCase = new ApplyCouponUseCase({ cartRepository, couponRepository });
 
+  const shiprocketService = overrides.shiprocketService || new ShiprocketService();
+  const getShippingQuoteUseCase =
+    overrides.getShippingQuoteUseCase ||
+    new GetShippingQuoteUseCase({ productRepository, addressRepository, shiprocketService });
   const checkoutUseCase =
     overrides.checkoutUseCase ||
     new CheckoutUseCase({
@@ -353,6 +367,8 @@ export const createContainer = (overrides = {}) => {
       inventoryRepository,
       cartRepository,
       paymentGatewayService,
+      getShippingQuoteUseCase,
+      couponRepository,
       auditEventRepository,
     });
   const verifyPaymentUseCase =
@@ -367,6 +383,7 @@ export const createContainer = (overrides = {}) => {
     new CancelOrderUseCase({
       orderRepository,
       inventoryRepository,
+      shiprocketService,
       auditEventRepository,
     });
   const refundOrderUseCase =
@@ -383,10 +400,11 @@ export const createContainer = (overrides = {}) => {
       orderRepository,
       auditEventRepository,
     });
-  const shiprocketService = overrides.shiprocketService || new ShiprocketService();
   const createShiprocketShipmentUseCase =
     overrides.createShiprocketShipmentUseCase ||
-    new CreateShiprocketShipmentUseCase({ orderRepository, shiprocketService, auditEventRepository });
+    new CreateShiprocketShipmentUseCase({ orderRepository, shiprocketService, getShippingQuoteUseCase, auditEventRepository });
+  const retryShiprocketPickupUseCase = new RetryShiprocketPickupUseCase({ orderRepository, shiprocketService, auditEventRepository });
+  const createShiprocketReturnUseCase = new CreateShiprocketReturnUseCase({ orderRepository, shiprocketService, auditEventRepository });
 
   // 3. Presentation Layer (Controllers)
   const authController = new AuthController({
@@ -519,14 +537,21 @@ export const createContainer = (overrides = {}) => {
       addressRepository,
       inventoryRepository,
       orderRepository,
+      providerWebhookEventRepository,
+      notificationRepository,
+      deviceTokenRepository,
       couponRepository,
       couponRepository,
       checkoutUseCase,
+      getShippingQuoteUseCase,
       verifyPaymentUseCase,
       cancelOrderUseCase,
       refundOrderUseCase,
       updateFulfillmentUseCase,
       createShiprocketShipmentUseCase,
+      retryShiprocketPickupUseCase,
+      createShiprocketReturnUseCase,
+      appointmentController,
       shiprocketService,
       paymentGatewayService,
     });

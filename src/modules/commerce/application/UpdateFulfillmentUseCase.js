@@ -6,7 +6,7 @@ export class UpdateFulfillmentUseCase {
     this.auditEventRepository = auditEventRepository;
   }
 
-  async execute({ orderId, status, courier = null, trackingNumber = null, actor = null }) {
+  async execute({ orderId, status, courier = null, trackingNumber = null, trackingUrl = null, returnReason = null, actor = null }) {
     const cleanOrderId = String(orderId).trim();
     const order = await this.orderRepository.findById(cleanOrderId);
     if (!order) {
@@ -37,6 +37,13 @@ export class UpdateFulfillmentUseCase {
       patch.fulfillment.status = 'Shipped';
       patch.fulfillment.courier = courierName || 'Blue Dart Express';
       patch.fulfillment.tracking_number = tracking.trim();
+      const suppliedUrl = trackingUrl == null ? order.fulfillment.tracking_url : String(trackingUrl).trim();
+      if (suppliedUrl) {
+        let parsedUrl;
+        try { parsedUrl = new URL(suppliedUrl); } catch { throw new BadRequestError('Tracking URL must be a valid HTTPS link.'); }
+        if (parsedUrl.protocol !== 'https:') throw new BadRequestError('Tracking URL must use HTTPS.');
+        patch.fulfillment.tracking_url = parsedUrl.toString();
+      }
       patch.fulfillment.shipped_at = new Date().toISOString();
       timelineLabel = `Dispatched with ${patch.fulfillment.courier} (Tracking: ${patch.fulfillment.tracking_number})`;
     } else if (target === 'Delivered') {
@@ -46,6 +53,13 @@ export class UpdateFulfillmentUseCase {
     } else if (target === 'Needs attention') {
       patch.fulfillment.status = 'Needs attention';
       timelineLabel = 'Order flagged for clinical or fulfillment review';
+    } else if (target === 'Return requested') {
+      if (current !== 'Delivered') throw new BadRequestError('A return can only be requested after delivery.');
+      const reason = String(returnReason || '').trim();
+      if (!reason) throw new BadRequestError('A return reason is required.');
+      patch.fulfillment.status = 'Return requested';
+      patch.fulfillment.return_reason = reason.slice(0, 300);
+      timelineLabel = `Return requested: ${patch.fulfillment.return_reason}`;
     } else {
       throw new BadRequestError(`Unsupported fulfillment status transition: ${target}`);
     }

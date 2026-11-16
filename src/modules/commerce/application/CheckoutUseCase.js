@@ -1,5 +1,6 @@
 import { Order, OrderItem } from '../domain/Order.js';
-import { BadRequestError, NotFoundError } from '../../../shared/errors/index.js';
+import { BadRequestError, NotFoundError, ConflictError } from '../../../shared/errors/index.js';
+import { calculateCouponDiscount } from '../domain/CouponRules.js';
 
 export class CheckoutUseCase {
   constructor({
@@ -9,6 +10,8 @@ export class CheckoutUseCase {
     inventoryRepository,
     cartRepository,
     paymentGatewayService,
+    getShippingQuoteUseCase,
+    couponRepository,
     auditEventRepository,
   }) {
     this.orderRepository = orderRepository;
@@ -17,6 +20,8 @@ export class CheckoutUseCase {
     this.inventoryRepository = inventoryRepository;
     this.cartRepository = cartRepository;
     this.paymentGatewayService = paymentGatewayService;
+    this.getShippingQuoteUseCase = getShippingQuoteUseCase;
+    this.couponRepository = couponRepository;
     this.auditEventRepository = auditEventRepository;
   }
 
@@ -28,6 +33,7 @@ export class CheckoutUseCase {
     shippingAddress,
     couponCode = null,
     paymentGateway = 'cod',
+    shippingQuoteId = null,
     idempotencyKey = null,
     actor = null,
   }) {
@@ -170,17 +176,39 @@ export class CheckoutUseCase {
     let discount = 0;
     let validatedCoupon = null;
     const cleanCoupon = couponCode ? String(couponCode).trim().toUpperCase() : null;
-
-    if (cleanCoupon === 'FIRSTDR') {
-      // 15% discount up to ₹500
-      discount = Math.min(500, Math.round(subtotal * 0.15));
-      validatedCoupon = 'FIRSTDR';
-    } else if (cleanCoupon === 'FLAT100' && subtotal >= 499) {
-      discount = 100;
-      validatedCoupon = 'FLAT100';
+    if (cleanCoupon) {
+      if (!this.couponRepository) throw new BadRequestError('Coupon service is not configured.');
+      const coupon = await this.couponRepository.findByCode(cleanCoupon);
+      const priorOrders = await this.orderRepository.listByUserId(cleanUserId, { page: 1, limit: 1 });
+      discount = calculateCouponDiscount(coupon, {
+        subtotal,
+        items: orderItems,
+        hasPriorOrders: Number(priorOrders.total) > 0,
+      });
+      validatedCoupon = coupon.code;
     }
 
-    const deliveryFee = subtotal >= 499 ? 0 : 50;
+    if (!shippingQuoteId || !this.getShippingQuoteUseCase) {
+      throw new BadRequestError('Refresh the live delivery quote before placing this order.');
+    }
+    const shippingQuote = await this.getShippingQuoteUseCase.execute({
+      userId: cleanUserId,
+      deliveryPincode: resolvedAddress.pincode || resolvedAddress.pinCode,
+      paymentGateway,
+      items: items.map((item) => ({
+        productId: item.productId || item.product_id,
+        plan: item.plan || item.plan_id,
+        quantity: Number(item.quantity) || 1,
+      })),
+    });
+    if (shippingQuote.quote_id !== String(shippingQuoteId)) {
+      throw new ConflictError(
+        'Courier price or availability changed. Refresh the delivery quote and confirm the updated total.',
+        { code: 'SHIPPING_QUOTE_CHANGED', quote: shippingQuote },
+        'SHIPPING_QUOTE_CHANGED',
+      );
+    }
+    const deliveryFee = shippingQuote.shipping_fee;
     const tax = 0; // Included in MRP in India
     const total = Math.max(0, subtotal - discount + deliveryFee + tax);
 
@@ -218,6 +246,13 @@ export class CheckoutUseCase {
       },
       fulfillment: {
         status: 'New',
+        ...(shippingQuote ? {
+          shiprocket_quote_id: shippingQuote.quote_id,
+          shiprocket_courier_id: shippingQuote.courier_id,
+          shiprocket_rate: shippingQuote.shipping_fee,
+          shiprocket_eta: shippingQuote.estimated_delivery,
+          shiprocket_package: shippingQuote.package,
+        } : {}),
       },
       timeline: [
         {
@@ -259,6 +294,18 @@ export class CheckoutUseCase {
           payment: { payment_intent_id: paymentIntent.intentId },
         })
       : savedOrder;
+
+    if (validatedCoupon && !(await this.couponRepository.consumeUsage(validatedCoupon))) {
+      await this.inventoryRepository.releaseStock(savedOrder.items, savedOrder.order_id);
+      await this.orderRepository.update(savedOrder.order_id, {
+        fulfillment: {
+          status: 'Cancelled',
+          cancellation_reason: 'Coupon usage limit was reached',
+          cancelled_at: new Date().toISOString(),
+        },
+      });
+      throw new ConflictError('This coupon has just reached its usage limit. Remove it and retry checkout.');
+    }
 
     // 10. Clear Cart only after the gateway order was created successfully.
     await this.cartRepository.clearCart(cleanUserId);

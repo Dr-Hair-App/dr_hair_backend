@@ -26,6 +26,14 @@ test('Appointment Razorpay Billing & Admin Received Payments', async (t) => {
   const { userRepository } = container.repositories;
   const { paymentGatewayService } = container.services;
 
+  await container.repositories.featureFlagRepository.setFlag('clinic_appointment_schedule', {
+    group: 'Appointments', enabled: true,
+    metadata: { booking_window_days: 90, weekly_closed_weekdays: [7], slot_interval_minutes: 30, appointment_duration_minutes: 30, appointment_services: ['Consultation'], sessions: [
+      { label: 'Morning Session', opens_at: '10:00', closes_at: '12:30' },
+      { label: 'Evening Session', opens_at: '15:30', closes_at: '18:30' },
+    ] },
+  });
+
   if (!paymentGatewayService.keyId) paymentGatewayService.keyId = 'rzp_test_mock_123';
   if (!paymentGatewayService.keySecret) paymentGatewayService.keySecret = 'mock_secret_key_456';
 
@@ -58,11 +66,12 @@ test('Appointment Razorpay Billing & Admin Received Payments', async (t) => {
     role: 'user',
   });
 
-  await t.test('1. Reads default appointment billing settings (Free by default, fee ₹500)', async () => {
+  await t.test('1. Reports appointment billing as unconfigured until an admin saves it', async () => {
     const res = createMockRes();
     await appointmentController.getBillingConfigPatient({}, res, (err) => { if (err) throw err; });
     assert.equal(res.data.data.payment_required, false);
-    assert.equal(res.data.data.consultation_fee, 500);
+    assert.equal(res.data.data.configured, false);
+    assert.equal(res.data.data.consultation_fee, null);
   });
 
   await t.test('2. Admin updates appointment billing to require payment (ON) and fee to ₹650', async () => {
@@ -113,6 +122,7 @@ test('Appointment Razorpay Billing & Admin Received Payments', async (t) => {
       user: { id: patient.id },
       body: {
         starts_at: futureDate.toISOString(),
+        reason: 'General hair & scalp consultation',
       },
     };
     const res = createMockRes();

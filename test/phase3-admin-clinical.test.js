@@ -401,6 +401,14 @@ describe('Phase 3: Admin Clinical Operations & Concurrency', () => {
 
   describe('6. Comprehensive Clinical Audit Trail', () => {
     it('verifies audit event creation for appointment mutations and closed dates', async () => {
+      await container.repositories.featureFlagRepository.setFlag('clinic_appointment_schedule', {
+        group: 'Appointments', enabled: true,
+        metadata: {
+          timezone: 'Asia/Kolkata', booking_window_days: 90, weekly_closed_weekdays: [7],
+          slot_interval_minutes: 30, appointment_duration_minutes: 30, appointment_services: ['Consultation'],
+          sessions: [{ label: 'Clinic', opens_at: '09:00', closes_at: '18:00' }],
+        },
+      });
       const slot = getFutureSlot(18, '10:00:00');
       const res = mockResponse();
 

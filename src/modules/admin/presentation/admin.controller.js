@@ -1406,6 +1406,10 @@ export class AdminController {
         status: o.payment?.payment_status || 'Pending',
         transaction_id: o.payment?.transaction_id || null,
         intent_id: o.payment?.payment_intent_id || null,
+        refund_status: o.payment?.refund_status || '',
+        refund_amount: Number(o.payment?.refund_amount) || 0,
+        refund_pending_amount: Number(o.payment?.refund_pending_amount) || 0,
+        refunds: o.payment?.refunds || [],
         created_at: o.payment?.paid_at || o.created_at || new Date(),
       }));
 
@@ -1418,11 +1422,15 @@ export class AdminController {
         customer_phone: '',
         customer_email: '',
         amount: a.consultation_fee != null ? Number(a.consultation_fee) : 500,
-        gateway: a.payment_transaction_id ? 'razorpay' : 'pay_at_clinic',
+        gateway: String(a.payment_method || '').toLowerCase() === 'razorpay' ? 'razorpay' : 'offline',
         method: a.payment_method || (a.payment_transaction_id ? 'Razorpay' : 'Pay at clinic'),
         status: a.payment_status || 'Pending',
         transaction_id: a.payment_transaction_id || null,
         intent_id: null,
+        refund_status: a.refund_status || '',
+        refund_amount: Number(a.refund_amount) || 0,
+        refund_pending_amount: Number(a.refund_pending_amount) || 0,
+        refunds: a.refunds || [],
         created_at: a.payment_time || a.created_at || new Date(),
       }));
 
@@ -1464,15 +1472,15 @@ export class AdminController {
 
       allPayments.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-      const total_collected = allPayments
-        .filter((p) => p.status === 'Paid')
-        .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-      const order_revenue = allPayments
-        .filter((p) => p.status === 'Paid' && p.type === 'Order')
-        .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-      const appointment_revenue = allPayments
-        .filter((p) => p.status === 'Paid' && p.type === 'Appointment')
-        .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+      const netAmount = (payment) => Math.max(0, (Number(payment.amount) || 0) - (Number(payment.refund_amount) || 0));
+      const collected = allPayments.filter((p) => ['Paid', 'Partially refunded'].includes(p.status));
+      const total_collected = collected.reduce((sum, p) => sum + netAmount(p), 0);
+      const order_revenue = collected
+        .filter((p) => p.type === 'Order')
+        .reduce((sum, p) => sum + netAmount(p), 0);
+      const appointment_revenue = collected
+        .filter((p) => p.type === 'Appointment')
+        .reduce((sum, p) => sum + netAmount(p), 0);
       const paid_count = allPayments.filter((p) => p.status === 'Paid').length;
 
       const total = allPayments.length;

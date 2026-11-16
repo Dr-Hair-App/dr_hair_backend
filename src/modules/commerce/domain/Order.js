@@ -118,9 +118,17 @@ export class Order {
     const subtotal = Number(pricing.subtotal) || calculatedSubtotal;
     const discount = Math.max(0, Number(pricing.discount) || 0);
     const coupon_code = pricing.coupon_code || pricing.couponCode || null;
-    const delivery_fee = Number(pricing.delivery_fee ?? pricing.deliveryFee ?? (subtotal >= 499 ? 0 : 50));
     const tax = Number(pricing.tax) || 0;
-    const total = Math.max(0, subtotal - discount + delivery_fee + tax);
+    const storedTotal = Number(pricing.total);
+    const suppliedDeliveryFee = pricing.delivery_fee ?? pricing.deliveryFee;
+    const delivery_fee = suppliedDeliveryFee != null && Number.isFinite(Number(suppliedDeliveryFee))
+      ? Number(suppliedDeliveryFee)
+      : Number.isFinite(storedTotal) && storedTotal > 0
+        ? Math.max(0, storedTotal - subtotal + discount - tax)
+        : 0;
+    const total = Number.isFinite(storedTotal) && storedTotal > 0
+      ? storedTotal
+      : Math.max(0, subtotal - discount + delivery_fee + tax);
 
     this.pricing = {
       subtotal,
@@ -135,6 +143,7 @@ export class Order {
     this.payment = {
       gateway: payment.gateway || 'razorpay',
       payment_status: ORDER_PAYMENT_STATUSES.includes(paymentStatus) ? paymentStatus : 'Pending',
+      gateway_status: String(payment.gateway_status || ''),
       payment_intent_id: payment.payment_intent_id || payment.paymentIntentId || null,
       transaction_id: payment.transaction_id || payment.transactionId || null,
       payment_signature: payment.payment_signature || null,
@@ -144,13 +153,18 @@ export class Order {
       refund_status: payment.refund_status || '',
       refund_pending_amount: Number(payment.refund_pending_amount) || 0,
       refunded_at: payment.refunded_at || null,
+      refunds: Array.isArray(payment.refunds) ? payment.refunds : [],
+      last_failed_at: payment.last_failed_at || null,
+      last_failure_code: String(payment.last_failure_code || ''),
     };
 
     const fulfillmentStatus = fulfillment.status || 'New';
     this.fulfillment = {
       status: ORDER_FULFILLMENT_STATUSES.includes(fulfillmentStatus) ? fulfillmentStatus : 'New',
+      inventory_release_status: ['pending', 'completed'].includes(fulfillment.inventory_release_status) ? fulfillment.inventory_release_status : '',
       courier: fulfillment.courier || '',
       tracking_number: fulfillment.tracking_number || fulfillment.trackingNumber || '',
+      tracking_url: fulfillment.tracking_url || fulfillment.trackingUrl || '',
       shipped_at: fulfillment.shipped_at || null,
       delivered_at: fulfillment.delivered_at || null,
       shiprocket_status: fulfillment.shiprocket_status || '',
@@ -158,6 +172,18 @@ export class Order {
       shiprocket_shipment_id: fulfillment.shiprocket_shipment_id || '',
       awb_code: fulfillment.awb_code || '',
       shiprocket_pickup_scheduled_at: fulfillment.shiprocket_pickup_scheduled_at || '',
+      shiprocket_courier_id: fulfillment.shiprocket_courier_id || '',
+      shiprocket_rate: Number(fulfillment.shiprocket_rate) || 0,
+      shiprocket_eta: fulfillment.shiprocket_eta || '',
+      shiprocket_pickup_status: fulfillment.shiprocket_pickup_status || '',
+      shiprocket_label_url: fulfillment.shiprocket_label_url || '',
+      shiprocket_manifest_url: fulfillment.shiprocket_manifest_url || '',
+      shiprocket_package: fulfillment.shiprocket_package || null,
+      shiprocket_quote_id: fulfillment.shiprocket_quote_id || '',
+      shiprocket_events: Array.isArray(fulfillment.shiprocket_events) ? fulfillment.shiprocket_events : [],
+      shiprocket_return_shipment_id: fulfillment.shiprocket_return_shipment_id || '',
+      shiprocket_return_awb: fulfillment.shiprocket_return_awb || '',
+      shiprocket_return_status: fulfillment.shiprocket_return_status || '',
       cancellation_reason: fulfillment.cancellation_reason || null,
       cancelled_at: fulfillment.cancelled_at || null,
       return_reason: fulfillment.return_reason || null,

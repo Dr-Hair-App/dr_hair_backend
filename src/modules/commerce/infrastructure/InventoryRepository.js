@@ -1,6 +1,7 @@
 import { IInventoryRepository } from '../domain/IInventoryRepository.js';
+import mongoose from 'mongoose';
 import { isMongoConnected } from '../../../shared/database/mongodb.js';
-import { InventoryLedgerModel, ProductModel } from '../../../shared/database/models.js';
+import { InventoryLedgerModel, InventoryOperationModel, ProductModel } from '../../../shared/database/models.js';
 import { store } from '../../../shared/database/store.js';
 import { ConflictError, NotFoundError } from '../../../shared/errors/index.js';
 
@@ -140,32 +141,59 @@ export class InventoryRepository extends IInventoryRepository {
   async releaseStock(items, orderId) {
     if (!Array.isArray(items) || items.length === 0) return true;
 
+    const quantitiesByProduct = new Map();
     for (const item of items) {
-      const pId = item.productId || item.product_id;
-      const qty = item.quantity || 1;
+      const pId = String(item.productId || item.product_id || '').trim();
+      if (!pId) continue;
+      quantitiesByProduct.set(pId, (quantitiesByProduct.get(pId) || 0) + (Number(item.quantity) || 1));
+    }
+    for (const [pId, qty] of quantitiesByProduct) {
 
       if (isMongoConnected()) {
-        const updated = await ProductModel.findOneAndUpdate(
-          { id: pId },
-          { $inc: { stock: qty }, $set: { in_stock: true } },
-          { new: true },
-        );
-        const balance = updated ? updated.stock : 0;
-        await this.recordMovement({
-          productId: pId,
-          quantity: qty,
-          balanceAfter: balance,
-          referenceType: 'RELEASE',
-          referenceId: orderId,
-          notes: `Stock released from cancelled order ${orderId}`,
-        });
+        const session = await mongoose.startSession();
+        try {
+          await session.withTransaction(async () => {
+            const existingOperation = await InventoryOperationModel.findOne({
+              operation_type: 'RELEASE', reference_id: String(orderId), product_id: String(pId),
+            }).session(session).lean();
+            if (existingOperation) return;
+
+            await InventoryOperationModel.create([{
+              operation_type: 'RELEASE', reference_id: String(orderId), product_id: String(pId), quantity: Number(qty),
+            }], { session });
+            const updated = await ProductModel.findOneAndUpdate(
+              { id: pId },
+              { $inc: { stock: qty }, $set: { in_stock: true } },
+              { new: true, session },
+            );
+            if (!updated) throw new NotFoundError(`Product not found: ${pId}`);
+            await InventoryLedgerModel.create([{
+              id: `inv_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              product_id: String(pId),
+              quantity: Number(qty),
+              balance_after: Number(updated.stock) || 0,
+              reference_type: 'RELEASE',
+              reference_id: String(orderId),
+              notes: `Stock released from cancelled order ${orderId}`,
+              created_by: 'system',
+              created_at: new Date(),
+            }], { session });
+          });
+        } finally {
+          await session.endSession();
+        }
       } else {
         if (!Array.isArray(store.products)) store.products = [];
+        if (!Array.isArray(store.inventoryOperations)) store.inventoryOperations = [];
+        const operationExists = store.inventoryOperations.some((operation) =>
+          operation.operation_type === 'RELEASE' && operation.reference_id === String(orderId) && operation.product_id === String(pId));
+        if (operationExists) continue;
         const product = store.products.find((p) => p.id === pId);
         if (product) {
           product.stock = (product.stock || 0) + qty;
           product.in_stock = true;
           product.inStock = true;
+          store.inventoryOperations.push({ operation_type: 'RELEASE', reference_id: String(orderId), product_id: String(pId), quantity: Number(qty), created_at: new Date().toISOString() });
           await this.recordMovement({
             productId: pId,
             quantity: qty,

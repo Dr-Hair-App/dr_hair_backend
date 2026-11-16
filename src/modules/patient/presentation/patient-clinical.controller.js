@@ -625,6 +625,7 @@ export class PatientClinicalController {
         subtitle: typeof subtitle === 'string' ? subtitle.trim().slice(0, 300) : '',
         category: typeof category === 'string' ? category.trim().slice(0, 80) : 'Lifestyle',
         time_of_day: typeof time_of_day === 'string' ? time_of_day.trim().slice(0, 50) : 'Daily',
+        created_by: 'patient',
       };
 
       const updated = this.treatmentRepository?.addRoutineStep

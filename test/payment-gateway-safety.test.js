@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { PaymentGatewayService } from '../src/modules/commerce/infrastructure/PaymentGatewayService.js';
+import { VerifyPaymentUseCase } from '../src/modules/commerce/application/VerifyPaymentUseCase.js';
+import { Order } from '../src/modules/commerce/domain/Order.js';
 
 test('Razorpay webhooks require a configured secret and the original raw request bytes', () => {
   const rawBody = Buffer.from('{ "event" : "payment.captured", "payload": {} }');
@@ -55,4 +57,45 @@ test('Razorpay order refund fails closed when there is no captured payment refer
     service.processRefund({ orderId: 'ORD-TEST-123', amount: 100 }),
     /captured Razorpay payment ID is required/i,
   );
+});
+
+test('late captured payment for a cancelled order is refunded instead of reopening fulfillment', async () => {
+  let order = new Order({
+    order_id: 'ORD-LATE-CAPTURE', user_id: '42',
+    customer: { name: 'Test', phone: '9000000000' },
+    items: [{ product_id: 'product-1', title: 'Product', price: 100, quantity: 1 }],
+    shipping_address: { name: 'Test', phone: '9000000000', house_number: '1', street: 'Road', city: 'Jaipur', state: 'Rajasthan', pincode: '302001' },
+    pricing: { subtotal: 100, total: 100 },
+    payment: { gateway: 'razorpay', payment_status: 'Pending', payment_intent_id: 'order_late' },
+    fulfillment: { status: 'Cancelled', inventory_release_status: 'completed' },
+  });
+  let refundRequest;
+  const orderRepository = {
+    async findById() { return order; },
+    async markPaymentCaptured() { return null; },
+    async update(_id, patch) {
+      const data = order.toJSON();
+      for (const [key, value] of Object.entries(patch)) {
+        data[key] = value && typeof value === 'object' && !Array.isArray(value) ? { ...data[key], ...value } : value;
+      }
+      order = new Order(data);
+      return order;
+    },
+  };
+  const useCase = new VerifyPaymentUseCase({
+    orderRepository,
+    paymentGatewayService: {
+      async verifyCapturedPayment() { return { id: 'pay_late', status: 'captured' }; },
+      async refundCapturedPayment(input) { refundRequest = input; return { id: 'refund_late', status: 'pending' }; },
+    },
+  });
+
+  const result = await useCase.execute({ orderId: order.order_id, paymentId: 'pay_late', isWebhook: true });
+  assert.equal(refundRequest.paymentId, 'pay_late');
+  assert.equal(refundRequest.amount, 100);
+  assert.match(refundRequest.receipt, /^drh_late_/);
+  assert.equal(result.fulfillment.status, 'Cancelled');
+  assert.equal(result.payment.payment_status, 'Paid');
+  assert.equal(result.payment.refund_status, 'pending');
+  assert.equal(result.payment.refund_pending_amount, 100);
 });

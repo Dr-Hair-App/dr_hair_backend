@@ -1,5 +1,3 @@
-import { BadRequestError } from '../../../shared/errors/index.js';
-
 export class CartItem {
   constructor({
     id,
@@ -133,34 +131,6 @@ export class Cart {
     this.updated_at = new Date().toISOString();
   }
 
-  applyCoupon(code) {
-    const cleanCode = String(code || '').trim().toUpperCase();
-    if (!cleanCode) {
-      throw new BadRequestError('Coupon code is required.');
-    }
-
-    if (this.subtotal < 999 && (cleanCode === 'FIRSTDR' || cleanCode === 'GROW15')) {
-      throw new BadRequestError('Add items worth ₹999 to use this coupon.');
-    }
-
-    if (cleanCode === 'FIRSTDR') {
-      this.coupon_code = 'FIRSTDR';
-      this.discount = 200;
-    } else if (cleanCode === 'GROW15') {
-      this.coupon_code = 'GROW15';
-      this.discount = Math.round(this.subtotal * 0.15);
-    } else if (cleanCode === 'SERUM300') {
-      if (this.subtotal < 2000) {
-        throw new BadRequestError('Add items worth ₹2000 to use this coupon.');
-      }
-      this.coupon_code = 'SERUM300';
-      this.discount = 300;
-    } else {
-      throw new BadRequestError('Invalid or expired coupon code.');
-    }
-    this.updated_at = new Date().toISOString();
-  }
-
   removeCoupon() {
     this.coupon_code = null;
     this.discount = 0;
@@ -169,13 +139,9 @@ export class Cart {
 
   _revalidateCoupon() {
     if (!this.coupon_code) return;
-    if (this.subtotal < 999 && (this.coupon_code === 'FIRSTDR' || this.coupon_code === 'GROW15')) {
-      this.removeCoupon();
-    } else if (this.subtotal < 2000 && this.coupon_code === 'SERUM300') {
-      this.removeCoupon();
-    } else if (this.coupon_code === 'GROW15') {
-      this.discount = Math.round(this.subtotal * 0.15);
-    }
+    // Coupon eligibility rules are owned by CouponRepository. Cart contents
+    // changing invalidates the old preview until the user reapplies a coupon.
+    this.removeCoupon();
   }
 
   toJSON() {

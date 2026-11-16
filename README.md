@@ -62,10 +62,14 @@ Assessment submission now saves the patient record and queues AI analysis withou
 | `SHIPROCKET_API_ENV` | Shiprocket target: `sandbox` for test requests, `production` for live requests; defaults to `sandbox` in development and `production` in production |
 | `SHIPROCKET_API_EMAIL`, `SHIPROCKET_API_PASSWORD` | Production Shiprocket API user credentials |
 | `SHIPROCKET_SANDBOX_API_EMAIL`, `SHIPROCKET_SANDBOX_API_PASSWORD` | Sandbox Shiprocket API user credentials |
-| `SHIPROCKET_PICKUP_LOCATION`, `SHIPROCKET_PACKAGE_LENGTH_CM`, `SHIPROCKET_PACKAGE_BREADTH_CM`, `SHIPROCKET_PACKAGE_HEIGHT_CM`, `SHIPROCKET_PACKAGE_WEIGHT_KG` | Pickup location and parcel measurements required to create shipments |
+| `SHIPROCKET_PICKUP_LOCATION` | Exact pickup location name from the Shiprocket account; pickup PIN is resolved from its API settings |
+| `SHIPROCKET_WEBHOOK_SECRET` | Secret token configured in Shiprocket webhook settings and sent in the `x-api-key` header |
+| `SHIPROCKET_PACKAGE_LENGTH_CM`, `SHIPROCKET_PACKAGE_BREADTH_CM`, `SHIPROCKET_PACKAGE_HEIGHT_CM`, `SHIPROCKET_PACKAGE_WEIGHT_KG` | Legacy defaults. New checkout quotes require weight and dimensions on each product supply plan in Admin |
 | `OTP_EXPIRY_MINUTES` | OTP validity window |
 
 For local Shiprocket integration testing, use the sandbox API user's credentials. The backend defaults to sandbox in development and production in production. The sandbox endpoint keeps test calls separate from live orders and wallet activity. Set `SHIPROCKET_API_ENV=production` only when live shipping is intended; production shipment creation may incur courier charges.
+
+Checkout delivery quotes are requested from Shiprocket using the selected delivery PIN, payment mode, declared item value, and combined supply-plan parcel profile. Orders retain the selected quote, package dimensions, courier, rate, and ETA for fulfilment. Shiprocket webhook callbacks should be configured at `/api/v1/commerce/webhooks/carrier-updates`; set the same security token in `SHIPROCKET_WEBHOOK_SECRET`. Product package profiles must reflect the actual packed parcel; mixed items are estimated as a stacked parcel and may need a packaging rule update if actual packing differs.
 
 ## API routes
 
@@ -96,4 +100,4 @@ The Atlas cluster and Cloudinary/Firebase projects are separate services; Render
 
 ## Not wired end to end yet
 
-Some Flutter screens and the admin panel still use mock/demo data. Their API base URLs and calls need to be connected after the test backend has a live URL. FCM registration is implemented on the server but still needs app-side API wiring. iOS notifications need APNs credentials and web notifications need VAPID setup. A real OTP delivery API is also needed before public use.
+Some Flutter screens and the admin panel still use mock/demo data. Their API base URLs and calls need to be connected after the test backend has a live URL. Patient inbox APIs and Flutter FCM token registration, foreground display, and notification tap routing are implemented. Real iOS push delivery still requires APNs credentials in Firebase; web push requires a VAPID key. A real OTP delivery API is also needed before public use.

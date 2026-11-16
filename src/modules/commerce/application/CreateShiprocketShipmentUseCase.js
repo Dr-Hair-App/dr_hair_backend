@@ -1,9 +1,10 @@
 import { BadRequestError, ConflictError, NotFoundError } from '../../../shared/errors/index.js';
 
 export class CreateShiprocketShipmentUseCase {
-  constructor({ orderRepository, shiprocketService, auditEventRepository }) {
+  constructor({ orderRepository, shiprocketService, getShippingQuoteUseCase = null, auditEventRepository }) {
     this.orderRepository = orderRepository;
     this.shiprocketService = shiprocketService;
+    this.getShippingQuoteUseCase = getShippingQuoteUseCase;
     this.auditEventRepository = auditEventRepository;
   }
 
@@ -12,7 +13,7 @@ export class CreateShiprocketShipmentUseCase {
     if (!cleanOrderId) throw new BadRequestError('Order ID is required');
 
     this.shiprocketService.assertConfigured();
-    const order = await this.orderRepository.findById(cleanOrderId);
+    let order = await this.orderRepository.findById(cleanOrderId);
     if (!order) throw new NotFoundError('Order not found');
 
     if (['Cancelled', 'Refunded', 'Return requested'].includes(order.fulfillment.status)) {
@@ -24,6 +25,24 @@ export class CreateShiprocketShipmentUseCase {
     const isCod = order.payment?.gateway === 'cod';
     if (order.payment?.payment_status !== 'Paid' && !isCod) {
       throw new BadRequestError('Order must be paid or confirmed as Cash on Delivery before shipping');
+    }
+
+    if (!order.fulfillment.shiprocket_package && this.getShippingQuoteUseCase) {
+      const quote = await this.getShippingQuoteUseCase.execute({
+        userId: order.user_id,
+        deliveryPincode: order.shipping_address?.pincode,
+        paymentGateway: isCod ? 'cod' : 'razorpay',
+        items: order.items.map((item) => ({ productId: item.product_id, plan: item.plan, quantity: item.quantity })),
+      });
+      order = await this.orderRepository.update(cleanOrderId, {
+        fulfillment: {
+          shiprocket_quote_id: quote.quote_id,
+          shiprocket_courier_id: quote.courier_id,
+          shiprocket_rate: quote.shipping_fee,
+          shiprocket_eta: quote.estimated_delivery,
+          shiprocket_package: quote.package,
+        },
+      });
     }
 
     const existingShipment = order.fulfillment.shiprocket_shipment_id || order.fulfillment.awb_code;
@@ -72,6 +91,9 @@ export class CreateShiprocketShipmentUseCase {
         shiprocket_shipment_id: shipment.shipmentId,
         awb_code: shipment.awbCode,
         shiprocket_pickup_scheduled_at: shipment.pickupScheduledAt,
+        shiprocket_pickup_status: shipment.pickupStatus,
+        shiprocket_label_url: shipment.labelUrl,
+        shiprocket_manifest_url: shipment.manifestUrl,
       },
     });
     updated.addTimelineEvent(

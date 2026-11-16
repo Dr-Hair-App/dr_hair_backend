@@ -2,8 +2,14 @@ import { AppointmentModel, ClinicClosedDateModel, nextId } from '../../../shared
 import { isMongoConnected } from '../../../shared/database/mongodb.js';
 import { store } from '../../../shared/database/store.js';
 import { ConflictError } from '../../../shared/errors/index.js';
+import { clinicDateBoundary } from '../domain/clinic-time.js';
 
 const plain = (value) => value && typeof value.toObject === 'function' ? value.toObject() : value;
+const addCalendarDay = (dateKey) => {
+  const date = new Date(`${dateKey}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+};
 
 export class AppointmentRepository {
   async create(data) {
@@ -13,7 +19,7 @@ export class AppointmentRepository {
     const year = new Date(data.starts_at).getUTCFullYear();
     const now = new Date();
     const record = {
-      consultation_fee: data.consultation_fee != null ? Number(data.consultation_fee) : 500,
+      consultation_fee: data.consultation_fee != null ? Number(data.consultation_fee) : null,
       payment_status: data.payment_status || 'Pending',
       payment_method: data.payment_method || 'UPI',
       payment_transaction_id: data.payment_transaction_id || '',
@@ -130,9 +136,9 @@ export class AppointmentRepository {
     return record;
   }
 
-  async listActiveByClinicDate(date) {
-    const startsAt = new Date(`${date}T00:00:00+05:30`).toISOString();
-    const endsAt = new Date(new Date(startsAt).getTime() + 24 * 60 * 60 * 1000).toISOString();
+  async listActiveByClinicDate(date, timeZone = 'UTC') {
+    const startsAt = clinicDateBoundary(date, timeZone);
+    const endsAt = clinicDateBoundary(addCalendarDay(date), timeZone);
     if (isMongoConnected()) {
       return AppointmentModel.find({
         starts_at: { $gte: startsAt, $lt: endsAt },
@@ -142,9 +148,9 @@ export class AppointmentRepository {
     return store.appointments.filter((item) => item.starts_at >= startsAt && item.starts_at < endsAt && item.status !== 'Cancelled');
   }
 
-  async listActiveSlotTimesInRange(from, to) {
-    const startsAt = new Date(`${from}T00:00:00+05:30`).toISOString();
-    const endsAt = new Date(new Date(`${to}T00:00:00+05:30`).getTime() + 24 * 60 * 60 * 1000).toISOString();
+  async listActiveSlotTimesInRange(from, to, timeZone = 'UTC') {
+    const startsAt = clinicDateBoundary(from, timeZone);
+    const endsAt = clinicDateBoundary(addCalendarDay(to), timeZone);
     if (isMongoConnected()) {
       return AppointmentModel.find({
         starts_at: { $gte: startsAt, $lt: endsAt },

@@ -123,6 +123,7 @@ const careRoutineStepSchema = new Schema(
     subtitle: { type: String, default: '', trim: true },
     category: { type: String, default: '', trim: true },
     time_of_day: { type: String, default: '', trim: true },
+    created_by: { type: String, enum: ['patient', 'clinician'], default: 'clinician' },
   },
   { _id: false, strict: true },
 );
@@ -225,25 +226,42 @@ const appointmentHistorySchema = new Schema(
   { _id: false, strict: true },
 );
 
+const appointmentRefundSchema = new Schema(
+  {
+    id: { type: String, required: true, trim: true },
+    amount: { type: Number, required: true, min: 0 },
+    currency: { type: String, default: 'INR', uppercase: true },
+    status: { type: String, enum: ['pending', 'processed', 'failed'], required: true },
+    updated_at: { type: Date, default: Date.now },
+  },
+  { _id: false, strict: true },
+);
+
 const appointmentSchema = new Schema(
   {
     id: { type: String, required: true, unique: true, index: true },
     userId: { type: Number, required: true, index: true },
     patient_code: { type: String, default: '' },
     starts_at: { type: String, required: true, index: true },
+    timezone: { type: String, default: 'Asia/Kolkata' },
     slot_key: { type: String, sparse: true, unique: true },
     reason: { type: String, default: '' },
     source: { type: String, enum: ['App', 'Phone', 'WhatsApp', 'Reception'], default: 'App' },
     status: { type: String, enum: ['Requested', 'Confirmed', 'Arrived', 'In Consultation', 'Completed', 'Cancelled', 'No show'], default: 'Requested', index: true },
     type: { type: String, default: 'Physical Clinic Visit' },
-    doctor_name: { type: String, default: 'Dr. Jai Bansal' },
-    room: { type: String, default: 'Room 101 - Chamber A' },
+    doctor_name: { type: String, default: '' },
+    room: { type: String, default: '' },
     opd_token: { type: String, default: '' },
-    consultation_fee: { type: Number, default: 500 },
+    consultation_fee: { type: Number, default: null },
     payment_status: { type: String, enum: ['Pending', 'Paid', 'Refunded', 'Waived'], default: 'Pending', index: true },
     payment_method: { type: String, default: 'UPI' },
     payment_transaction_id: { type: String, default: '' },
     payment_time: { type: Date, default: null },
+    refund_id: { type: String, default: '' },
+    refund_status: { type: String, enum: ['pending', 'processed', 'failed', ''], default: '' },
+    refund_amount: { type: Number, min: 0, default: 0 },
+    refund_pending_amount: { type: Number, min: 0, default: 0 },
+    refunds: { type: [appointmentRefundSchema], default: [] },
     cancellation_reason: { type: String, default: '' },
     cancelled_by: { type: String, default: '' },
     cancelled_at: { type: Date, default: null },
@@ -528,6 +546,18 @@ const inventoryLedgerSchema = new Schema(
 );
 inventoryLedgerSchema.index({ product_id: 1, created_at: -1 });
 
+const inventoryOperationSchema = new Schema(
+  {
+    operation_type: { type: String, enum: ['RELEASE'], required: true },
+    reference_id: { type: String, required: true },
+    product_id: { type: String, required: true },
+    quantity: { type: Number, required: true },
+    created_at: { type: Date, default: Date.now },
+  },
+  { collection: 'inventory_operations', versionKey: false },
+);
+inventoryOperationSchema.index({ operation_type: 1, reference_id: 1, product_id: 1 }, { unique: true });
+
 const orderItemSnapshotSchema = new Schema(
   {
     product_id: { type: String, required: true },
@@ -586,6 +616,7 @@ const orderSchema = new Schema(
         default: 'Pending',
         index: true,
       },
+      gateway_status: { type: String, default: '' },
       payment_intent_id: { type: String, default: null, index: true },
       transaction_id: { type: String, default: null },
       payment_signature: { type: String, default: null },
@@ -595,6 +626,9 @@ const orderSchema = new Schema(
       refund_status: { type: String, enum: ['', 'pending', 'processed', 'failed'], default: '' },
       refund_pending_amount: { type: Number, default: 0 },
       refunded_at: { type: Date, default: null },
+      refunds: { type: [Schema.Types.Mixed], default: [] },
+      last_failed_at: { type: Date, default: null },
+      last_failure_code: { type: String, default: '' },
     },
     fulfillment: {
       status: {
@@ -603,8 +637,10 @@ const orderSchema = new Schema(
         default: 'New',
         index: true,
       },
+      inventory_release_status: { type: String, enum: ['', 'pending', 'completed'], default: '' },
       courier: { type: String, default: '' },
       tracking_number: { type: String, default: '' },
+      tracking_url: { type: String, default: '' },
       shipped_at: { type: Date, default: null },
       delivered_at: { type: Date, default: null },
       shiprocket_status: { type: String, default: '' },
@@ -612,6 +648,18 @@ const orderSchema = new Schema(
       shiprocket_shipment_id: { type: String, default: '' },
       awb_code: { type: String, default: '' },
       shiprocket_pickup_scheduled_at: { type: String, default: '' },
+      shiprocket_courier_id: { type: String, default: '' },
+      shiprocket_rate: { type: Number, default: 0 },
+      shiprocket_eta: { type: String, default: '' },
+      shiprocket_pickup_status: { type: String, default: '' },
+      shiprocket_label_url: { type: String, default: '' },
+      shiprocket_manifest_url: { type: String, default: '' },
+      shiprocket_package: { type: Schema.Types.Mixed, default: null },
+      shiprocket_quote_id: { type: String, default: '' },
+      shiprocket_events: { type: [Schema.Types.Mixed], default: [] },
+      shiprocket_return_shipment_id: { type: String, default: '' },
+      shiprocket_return_awb: { type: String, default: '' },
+      shiprocket_return_status: { type: String, default: '' },
       cancellation_reason: { type: String, default: null },
       cancelled_at: { type: Date, default: null },
       return_reason: { type: String, default: null },
@@ -635,6 +683,22 @@ const orderSchema = new Schema(
 orderSchema.index({ user_id: 1, created_at: -1 });
 orderSchema.index({ 'fulfillment.status': 1, created_at: -1 });
 orderSchema.index({ 'payment.payment_status': 1, created_at: -1 });
+
+const providerWebhookEventSchema = new Schema(
+  {
+    provider: { type: String, enum: ['razorpay'], required: true },
+    event_id: { type: String, required: true },
+    event_type: { type: String, required: true },
+    status: { type: String, enum: ['processing', 'processed', 'failed'], default: 'processing' },
+    payload_hash: { type: String, required: true },
+    last_error_code: { type: String, default: '' },
+    created_at: { type: Date, default: Date.now },
+    updated_at: { type: Date, default: Date.now },
+  },
+  { collection: 'provider_webhook_events', versionKey: false },
+);
+providerWebhookEventSchema.index({ provider: 1, event_id: 1 }, { unique: true });
+providerWebhookEventSchema.index({ status: 1, updated_at: 1 });
 
 const sessionSchema = new Schema(
   {
@@ -871,7 +935,9 @@ export const ProductModel = mongoose.models.DrHairProduct || mongoose.model('DrH
 export const CartModel = mongoose.models.DrHairCart || mongoose.model('DrHairCart', cartSchema);
 export const AddressModel = mongoose.models.DrHairAddress || mongoose.model('DrHairAddress', addressSchema);
 export const InventoryLedgerModel = mongoose.models.DrHairInventoryLedger || mongoose.model('DrHairInventoryLedger', inventoryLedgerSchema);
+export const InventoryOperationModel = mongoose.models.DrHairInventoryOperation || mongoose.model('DrHairInventoryOperation', inventoryOperationSchema);
 export const OrderModel = mongoose.models.DrHairOrder || mongoose.model('DrHairOrder', orderSchema);
+export const ProviderWebhookEventModel = mongoose.models.DrHairProviderWebhookEvent || mongoose.model('DrHairProviderWebhookEvent', providerWebhookEventSchema);
 export const SessionModel = mongoose.models.DrHairSession || mongoose.model('DrHairSession', sessionSchema);
 export const AuditEventModel = mongoose.models.DrHairAuditEvent || mongoose.model('DrHairAuditEvent', auditEventSchema);
 export const RateLimitCounterModel = mongoose.models.DrHairRateLimitCounter || mongoose.model('DrHairRateLimitCounter', rateLimitCounterSchema);

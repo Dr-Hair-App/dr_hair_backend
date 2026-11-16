@@ -63,6 +63,24 @@ export class RefundOrderUseCase {
     const nextFulfillmentStatus = isProcessed && refundedTotal >= Number(order.pricing.total)
       ? 'Refunded'
       : order.fulfillment.status;
+    const refundHistory = [...(order.payment.refunds || [])];
+    if (refundHistory.length === 0 && order.payment.refund_id && previouslyRefunded > 0) {
+      refundHistory.push({
+        id: order.payment.refund_id,
+        amount: previouslyRefunded,
+        status: order.payment.refund_status || 'processed',
+      });
+    }
+    const refundRecord = {
+      id: refundResult.id,
+      amount: refundAmount,
+      currency: 'INR',
+      status: refundResult.status,
+      updated_at: new Date().toISOString(),
+    };
+    const refundIndex = refundHistory.findIndex((item) => String(item.id) === String(refundResult.id));
+    if (refundIndex >= 0) refundHistory[refundIndex] = { ...refundHistory[refundIndex], ...refundRecord };
+    else refundHistory.push(refundRecord);
 
     const updated = await this.orderRepository.update(cleanOrderId, {
       payment: {
@@ -72,6 +90,7 @@ export class RefundOrderUseCase {
         refund_pending_amount: isProcessed ? 0 : refundAmount,
         refund_amount: refundedTotal,
         ...(isProcessed ? { refunded_at: new Date().toISOString() } : {}),
+        refunds: refundHistory,
       },
       fulfillment: {
         status: nextFulfillmentStatus,

@@ -79,6 +79,7 @@ describe('Phase 7: Release Hardening & Staging Smoke Suite', () => {
     container = createContainer({
       smsService: mockSmsService,
       paymentGatewayService: new PaymentGatewayService({ webhookSecret: 'local-test-webhook-secret' }),
+      getShippingQuoteUseCase: { execute: async () => ({ quote_id: 'quote_test', shipping_fee: 0, courier: 'Test courier', estimated_delivery: 'Test estimate' }) },
     });
     container.capturedOtpRef = () => capturedOtp;
   });
@@ -131,6 +132,7 @@ describe('Phase 7: Release Hardening & Staging Smoke Suite', () => {
         pincode: '302001',
       },
       items: [{ productId: 'clinical-shampoo-7', quantity: 1, plan: 'Single Bottle' }],
+      shippingQuoteId: 'quote_test',
       idempotencyKey: 'idem-idor-alpha-1',
     });
 
@@ -342,6 +344,7 @@ describe('Phase 7: Release Hardening & Staging Smoke Suite', () => {
         pincode: '302015',
       },
       items: [{ productId: 'clinical-shampoo-7', quantity: 2, plan: 'Single Bottle' }],
+      shippingQuoteId: 'quote_test',
       idempotencyKey: 'idem-smoke-checkout-7',
     });
 

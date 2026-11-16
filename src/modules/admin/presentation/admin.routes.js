@@ -36,6 +36,9 @@ export const createAdminRouter = ({ adminController, notificationController, vid
   router.get('/appointments', requirePermission('bookings.manage'), appointmentController.listAdmin);
   router.post('/appointments', requirePermission('bookings.manage'), appointmentController.createAdmin);
   router.patch('/appointments/:appointmentId', requirePermission('bookings.manage'), appointmentController.updateAdmin);
+  router.post('/appointments/:appointmentId/refund', requirePermission('bookings.manage'), appointmentController.refundAdmin);
+  router.get('/appointments/schedule', requirePermission('bookings.manage'), appointmentController.getScheduleConfigAdmin);
+  router.put('/appointments/schedule', requirePermission('bookings.manage'), appointmentController.updateScheduleConfigAdmin);
   router.get('/appointments/closed-dates', requirePermission('bookings.manage'), appointmentController.listClosedDates);
   router.post('/appointments/closed-dates', requirePermission('bookings.manage'), appointmentController.createClosedDate);
   router.delete('/appointments/closed-dates/:date', requirePermission('bookings.manage'), appointmentController.deleteClosedDate);
@@ -44,6 +47,9 @@ export const createAdminRouter = ({ adminController, notificationController, vid
 
   // Payments & Received Financials
   router.get('/payments', requireAnyPermission('bookings.manage', 'orders.manage', 'analytics.view'), adminController.listReceivedPayments);
+  if (commerceController) {
+    router.get('/commerce/sales-report', requireAnyPermission('orders.manage', 'analytics.view'), (req, res, next) => commerceController.getSalesReport(req, res, next));
+  }
 
   // Patients and clinical directory
   router.get('/users', requireAnyPermission('patients.view', 'patients.lookup'), adminController.listUsers);
