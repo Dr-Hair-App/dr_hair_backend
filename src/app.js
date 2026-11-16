@@ -86,7 +86,7 @@ export const createApp = () => {
   }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-  if (config.env !== 'test') {
+  if (config.env !== 'test' && !process.env.DRHAIR_DEPLOYMENT_ENV) {
     app.use(morgan('dev'));
   }
 

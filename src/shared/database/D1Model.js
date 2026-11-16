@@ -128,7 +128,7 @@ const comparisonSql = (field, condition) => {
   const nestedArray = parts.length > 1;
   const path = jsonPath(field);
   const rootPath = jsonPath(parts[0]);
-  const tailPath = jsonPath(parts.slice(1).join('.'));
+  const tailPath = nestedArray ? jsonPath(parts.slice(1).join('.')) : null;
   const column = nestedArray ? `json_extract(nested.value, '${tailPath}')` : `json_extract(payload, '${path}')`;
   const type = nestedArray ? `json_type(nested.value, '${tailPath}')` : `json_type(payload, '${path}')`;
   const wrap = (sql) => nestedArray ? `json_type(payload, '${rootPath}') = 'array' AND EXISTS (SELECT 1 FROM json_each(payload, '${rootPath}') AS nested WHERE ${sql})` : sql;
@@ -198,8 +198,10 @@ const filterSql = (filter = {}) => {
 
 const attachDocumentMethods = (document, model = null) => {
   if (!document || typeof document !== 'object') return document;
-  Object.defineProperty(document, 'toObject', { enumerable: false, value: () => ({ ...document }) });
-  if (model) Object.defineProperty(document, 'save', { enumerable: false, value: async () => {
+  if (!Object.hasOwn(document, 'toObject')) {
+    Object.defineProperty(document, 'toObject', { enumerable: false, value: () => ({ ...document }) });
+  }
+  if (model && !Object.hasOwn(document, 'save')) Object.defineProperty(document, 'save', { enumerable: false, value: async () => {
     const saved = await model.findOneAndUpdate({ _id: String(document._id) }, { $set: document }, { new: true });
     return attachDocumentMethods(saved || document, model);
   } });
@@ -305,6 +307,19 @@ class D1Query {
   finally(callback) { return this.exec().finally(callback); }
 }
 
+class D1MutationQuery {
+  constructor(operation) {
+    this.operation = operation;
+    this.promise = null;
+  }
+
+  lean() { return this; }
+  exec() { this.promise ||= Promise.resolve().then(this.operation); return this.promise; }
+  then(resolve, reject) { return this.exec().then(resolve, reject); }
+  catch(reject) { return this.exec().catch(reject); }
+  finally(callback) { return this.exec().finally(callback); }
+}
+
 export class D1Model {
   constructor(table, { hidden = [] } = {}) {
     if (!/^[a-z][a-z0-9_]*$/.test(table)) throw new TypeError(`Invalid D1 table: ${table}`);
@@ -385,7 +400,11 @@ export class D1Model {
 
   async insertMany(values = []) { return Promise.all(values.map((document) => this._insert(document))); }
 
-  async findOneAndUpdate(filter, update, options = {}) {
+  findOneAndUpdate(filter, update, options = {}) {
+    return new D1MutationQuery(() => this._findOneAndUpdate(filter, update, options));
+  }
+
+  async _findOneAndUpdate(filter, update, options = {}) {
     const database = getDatabaseBinding();
     for (let attempt = 0; attempt < 6; attempt += 1) {
       const current = await this.findOne(filter).select(this.hidden.map((field) => `+${field}`).join(' ')).lean();
@@ -418,7 +437,7 @@ export class D1Model {
     throw new Error(`Concurrent D1 update could not complete for ${this.table}.`);
   }
 
-  async findByIdAndUpdate(id, update, options = {}) {
+  findByIdAndUpdate(id, update, options = {}) {
     return this.findOneAndUpdate({ $or: [{ _id: String(id) }, { id }, { id: String(id) }] }, update, options);
   }
 
@@ -433,7 +452,11 @@ export class D1Model {
     return { acknowledged: true, matchedCount: records.length, modifiedCount: records.length };
   }
 
-  async findOneAndDelete(filter) {
+  findOneAndDelete(filter) {
+    return new D1MutationQuery(() => this._findOneAndDelete(filter));
+  }
+
+  async _findOneAndDelete(filter) {
     const record = await this.findOne(filter).select(this.hidden.map((field) => `+${field}`).join(' ')).lean();
     if (!record) return null;
     const database = getDatabaseBinding();
