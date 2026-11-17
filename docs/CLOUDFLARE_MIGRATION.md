@@ -2,9 +2,9 @@
 
 The backend runs as an Express-compatible Cloudflare Worker. D1 is the authoritative database, R2 stores uploaded images and private clinical documents, and video content uses YouTube streaming. There is no MongoDB, Cloudinary, Docker image, or Containers runtime in this setup. The initial D1 schema is empty; no MongoDB records or media are copied.
 
-## Development resources
+## Single production Worker and local development
 
-`wrangler.jsonc` declares separate local/development, staging, and production bindings. The default Worker is `dr-hair-backend` with D1 `dr-hair-dev` and R2 `dr-hair-dev-media`. Staging and production use separate database and bucket names. Apply SQL migrations only to the selected environment. Do not configure production credentials in the development Worker.
+`wrangler.jsonc` targets one Cloudflare Worker named `dr-hair-backend`, with custom domain `api.drhairindia.com`, D1 `dr-hair-production`, R2 `dr-hair-production-media`, and the production public-config KV namespace. No persistent staging Worker or staging database is used. Local `wrangler dev` runs locally with isolated local bindings and development-only variables.
 
 For local development:
 
@@ -27,28 +27,16 @@ Local D1, R2, and KV state is isolated under Wrangler's local state directory. N
 
 ## Secrets and integrations
 
-Add secrets to the selected Worker environment with Wrangler/GitHub Environment secrets. Required values include `JWT_SECRET`, Super Admin credentials, exact admin origin in `CORS_ORIGINS`, SMS/OTP provider configuration, Razorpay test credentials and webhook secret, Shiprocket live credentials and webhook secret only in production, and optional Gemini/Firebase credentials. Shiprocket documents a live API endpoint rather than a separate sandbox: staging must use `DRHAIR_DEPLOYMENT_ENV=staging` and `SHIPROCKET_STAGING_MODE=mock`, with no Shiprocket live credentials configured.
+Add secrets to the production Worker with Wrangler or the Cloudflare dashboard. Required values include `JWT_SECRET`, Super Admin credentials, exact admin origin in `CORS_ORIGINS`, SMS/OTP provider configuration, Razorpay credentials and webhook secret, Shiprocket credentials and webhook secret, and optional Gemini/Firebase credentials. Local development uses local environment files and must not connect to production payment or shipping credentials.
 
 Never put secrets in `wrangler.jsonc`, source control, the mobile app, or committed `.dev.vars`. The admin Worker must use its configured backend URL and keep API responses dynamic. No shared caching or image optimization is enabled for the admin panel.
 
 ## CI/CD and rollout
 
-GitHub Actions runs backend tests and a Wrangler dry-run for pull requests and `main` pushes. Deployment is a separate manual dispatch from `main`:
+GitHub Actions runs backend checks and a Wrangler dry-run for pull requests and `main` pushes. Backend production deployment is explicit through `npm run deploy`; admin production deployment is a manual workflow dispatch from `main`:
 
 ```sh
-gh workflow run cloudflare.yml --repo sunil2037/dr_hair_backend --ref main -f target=staging
+gh workflow run cloudflare.yml --repo Dr-Hair-App/dr_hair_admin --ref main
 ```
 
-Production deploy remains gated by the explicit `CLOUDFLARE_PRODUCTION_DEPLOY_ENABLED=true` environment variable. Do not bypass the gate with a manual production upload.
-
-### Staging verification (2026-11-17)
-
-- Backend: `https://dr-hair-backend-staging.drhair-app.workers.dev`; `/health` returned HTTP 200 with D1 connected.
-- Admin: `https://dr-hair-admin-staging.drhair-app.workers.dev`; the root returned HTTP 200, and the admin login/session proxy completed successfully.
-- Staging D1 is fresh: `users`, `orders`, and `clinic_appointments` each contain zero rows. No production records or media were imported.
-- Razorpay test credentials authenticated successfully against the Razorpay test API. Shiprocket has no separate supported API sandbox, so staging uses `SHIPROCKET_STAGING_MODE=mock` and contains no Shiprocket credentials. The simulator covers quotes, pickup, tracking, and shipment actions without reaching Shiprocket.
-- Verification passed: backend tests (346), backend Wrangler dry-run, Admin lint/build, Flutter analyze and tests (282). Staging login/session, app-config, feature/release reads, and health checks were also verified over HTTP.
-
-### Production readiness
-
-The current production backend and Admin URLs responded with HTTP 200 on 2026-11-17, but they still run the previous deployment. Production is not updated by the staging rollout. The production Worker is missing `SUPER_ADMIN_PASSWORD_HASH`, `SHIPROCKET_API_EMAIL`, and `SHIPROCKET_API_PASSWORD`; set the intended Super Admin password hash before deploying the new backend. Configure a Shiprocket API user only when live shipping is approved; valid Shiprocket API calls affect the real account. Keep the production GitHub deployment gate disabled until credentials and live-payment/shipping behavior have been reviewed.
+Production custom domains are `https://api.drhairindia.com` and `https://admin.drhairindia.com`. Preserve the single production D1, R2, and KV resources. Do not apply D1 migrations or change payment/shipping mode as part of resource cleanup; review those separately.
