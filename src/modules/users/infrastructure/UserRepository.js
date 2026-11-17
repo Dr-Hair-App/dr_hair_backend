@@ -11,7 +11,8 @@ import {
   nextUserId,
 } from '../../../shared/database/models.js';
 import { formatPatientCode, resolvePatientId } from '../../../shared/utils/patient-code.js';
-import { ConflictError } from '../../../shared/errors/index.js';
+import { BadRequestError, ConflictError } from '../../../shared/errors/index.js';
+import { getPatientSegmentSummary, getPatientSegmentUserIds, PATIENT_SEGMENTS } from './patient-segments.js';
 
 const toUser = (record) => {
   if (!record) return null;
@@ -257,12 +258,16 @@ export class UserRepository extends IUserRepository {
     return this.update(id, { profile_url: avatarUrl });
   }
 
-  async list({ page = 1, limit = 25, search = '' } = {}) {
+  async list({ page = 1, limit = 25, search = '', segment = PATIENT_SEGMENTS.accounts_assessments } = {}) {
     const safePage = Math.max(1, parseInt(page, 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
     const cleanSearch = String(search).trim();
+    const cleanSegment = String(segment || PATIENT_SEGMENTS.accounts_assessments);
+    if (!Object.values(PATIENT_SEGMENTS).includes(cleanSegment)) throw new BadRequestError('Choose a valid patient segment.');
+    const segmentUserIds = cleanSegment === PATIENT_SEGMENTS.accounts_assessments ? null : await getPatientSegmentUserIds(cleanSegment);
     if (isDatabaseConnected()) {
       const filter = { role: 'user' };
+      if (segmentUserIds !== null) filter.id = { $in: segmentUserIds };
       if (cleanSearch) {
         const expression = new RegExp(escapeRegex(cleanSearch), 'i');
         const exactPatientId = resolvePatientId(cleanSearch);
@@ -293,22 +298,45 @@ export class UserRepository extends IUserRepository {
         })));
         withoutCode.forEach((record) => { record.patient_code = formatPatientCode(record.id); });
       }
-      return { items: records.map(toUser), total, page: safePage, limit: safeLimit };
+      const assessedIds = new Set(await getPatientSegmentUserIds('assessed'));
+      return {
+        items: records.map((record) => {
+          const user = toUser(record);
+          user.has_completed_assessment = assessedIds.has(Number(record.id));
+          return user;
+        }),
+        total,
+        page: safePage,
+        limit: safeLimit,
+        segment: cleanSegment,
+      };
     }
     const query = cleanSearch.toLowerCase();
+    const segmentIds = segmentUserIds === null ? null : new Set(segmentUserIds);
     const matched = store.users.filter((user) =>
       (user.role || 'user') === 'user'
+      && (segmentIds === null || segmentIds.has(Number(user.id)))
       && (!query || [user.name, user.email, user.phone, user.patient_code || formatPatientCode(user.id)].some((value) => String(value || '').toLowerCase().includes(query))
         || resolvePatientId(cleanSearch) === user.id),
     );
     const start = (safePage - 1) * safeLimit;
     matched.forEach((user) => { user.patient_code ||= formatPatientCode(user.id); });
+    const assessedIds = new Set(await getPatientSegmentUserIds('assessed'));
     return {
-      items: matched.slice(start, start + safeLimit).map((record) => new User(record)),
+      items: matched.slice(start, start + safeLimit).map((record) => {
+        const user = new User(record);
+        user.has_completed_assessment = assessedIds.has(Number(record.id));
+        return user;
+      }),
       total: matched.length,
       page: safePage,
       limit: safeLimit,
+      segment: cleanSegment,
     };
+  }
+
+  async getSegmentSummary() {
+    return getPatientSegmentSummary();
   }
 
   async setStatus(id, { is_blocked, status, blocked_reason = null } = {}) {

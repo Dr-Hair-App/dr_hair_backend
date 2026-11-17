@@ -19,7 +19,7 @@ export const createAdminRouter = ({ adminController, notificationController, vid
   router.delete('/accounts/:id', requireSuperAdmin, adminController.deleteAdminAccount);
 
   // Feature Flags & Releases
-  router.get('/features', requireSuperAdmin, adminController.listFeatureFlags);
+  router.get('/features', adminController.listFeatureFlags);
   router.patch('/features/:key', requireSuperAdmin, adminController.updateFeatureFlag);
   router.get('/releases', requireSuperAdmin, adminController.listReleasePolicies);
   router.put('/releases/:platform', requireSuperAdmin, adminController.updateReleasePolicy);
@@ -52,6 +52,7 @@ export const createAdminRouter = ({ adminController, notificationController, vid
   }
 
   // Patients and clinical directory
+  router.get('/users/segments', requireAnyPermission('patients.view', 'patients.lookup'), adminController.getPatientSegments);
   router.get('/users', requireAnyPermission('patients.view', 'patients.lookup'), adminController.listUsers);
   router.get('/users/:userId', requireAnyPermission('patients.view', 'patients.lookup'), adminController.getPatient);
   router.get('/users/:userId/archive', requireSuperAdmin, adminController.getPatientArchive);

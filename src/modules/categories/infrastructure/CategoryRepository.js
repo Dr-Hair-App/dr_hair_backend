@@ -2,12 +2,24 @@ import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { CategoryModel } from '../../../shared/database/models.js';
 import { store } from '../../../shared/database/store.js';
 
+const escapeRegexLiteral = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 export class CategoryRepository {
+  _typeAliases(type) {
+    return ({
+      products: ['products', 'product'],
+      videos: ['videos', 'video'],
+      services: ['services', 'service'],
+      concerns: ['concerns', 'concern'],
+    })[type] || [type];
+  }
+
   async list({ type, status = 'active' } = {}) {
     if (isDatabaseConnected()) {
       const filter = {};
       if (type && type !== 'all') {
-        filter.type = type;
+        const values = this._typeAliases(type);
+        filter.type = values.length > 1 ? { $in: values } : values[0];
       }
       if (status && status !== 'all') {
         filter.status = status;
@@ -20,6 +32,8 @@ export class CategoryRepository {
         slug: doc.slug,
         type: doc.type,
         icon: doc.icon || 'film',
+        imageUrl: doc.imageUrl || doc.image_url || '',
+        price: doc.price ?? '',
         badge: doc.badge || null,
         description: doc.description || '',
         status: doc.status || 'active',
@@ -34,7 +48,7 @@ export class CategoryRepository {
     }
     return store.categories
       .filter((c) => {
-        if (type && type !== 'all' && c.type !== type) return false;
+        if (type && type !== 'all' && !this._typeAliases(type).includes(c.type)) return false;
         if (status && status !== 'all' && c.status !== status) return false;
         return true;
       })
@@ -50,7 +64,7 @@ export class CategoryRepository {
       } catch (_) {}
       if (!doc) {
         doc = await CategoryModel.findOne({
-          $or: [{ slug: String(id).toLowerCase() }, { name: new RegExp(`^${id}$`, 'i') }],
+          $or: [{ slug: String(id).toLowerCase() }, { name: new RegExp(`^${escapeRegexLiteral(id)}$`, 'i') }],
         }).lean();
       }
       if (doc) {
@@ -61,6 +75,8 @@ export class CategoryRepository {
           slug: doc.slug,
           type: doc.type,
           icon: doc.icon,
+          imageUrl: doc.imageUrl || doc.image_url || '',
+          price: doc.price ?? '',
           badge: doc.badge,
           description: doc.description,
           status: doc.status,
@@ -88,6 +104,8 @@ export class CategoryRepository {
     slug,
     type = 'video',
     icon = 'film',
+    imageUrl = '',
+    price = '',
     badge = null,
     description = '',
     status = 'active',
@@ -104,6 +122,8 @@ export class CategoryRepository {
       slug: computedSlug || `cat-${Date.now()}`,
       type,
       icon: icon || (type === 'video' ? 'film' : 'sparkles'),
+      imageUrl: typeof imageUrl === 'string' ? imageUrl.trim() : '',
+      price: String(price ?? '').trim(),
       badge,
       description,
       status: status || 'active',
@@ -160,6 +180,8 @@ export class CategoryRepository {
       allowed.slug = updates.slug.trim().toLowerCase();
     }
     if (updates.icon && typeof updates.icon === 'string') allowed.icon = updates.icon.trim();
+    if (updates.imageUrl !== undefined) allowed.imageUrl = String(updates.imageUrl).trim();
+    if (updates.price !== undefined) allowed.price = String(updates.price).trim();
     if (updates.badge !== undefined) allowed.badge = updates.badge;
     if (updates.description !== undefined) allowed.description = String(updates.description).trim();
     if (updates.status && (updates.status === 'active' || updates.status === 'inactive')) {
@@ -177,7 +199,7 @@ export class CategoryRepository {
       } catch (_) {}
       if (!updated) {
         updated = await CategoryModel.findOneAndUpdate(
-          { $or: [{ slug: String(id).toLowerCase() }, { name: new RegExp(`^${id}$`, 'i') }] },
+          { $or: [{ slug: String(id).toLowerCase() }, { name: new RegExp(`^${escapeRegexLiteral(id)}$`, 'i') }] },
           { $set: allowed },
           { new: true },
         ).lean();
@@ -214,7 +236,7 @@ export class CategoryRepository {
       } catch (_) {}
       if (!res) {
         res = await CategoryModel.findOneAndDelete({
-          $or: [{ slug: String(id).toLowerCase() }, { name: new RegExp(`^${id}$`, 'i') }],
+          $or: [{ slug: String(id).toLowerCase() }, { name: new RegExp(`^${escapeRegexLiteral(id)}$`, 'i') }],
         });
       }
       return Boolean(res);

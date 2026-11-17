@@ -580,6 +580,19 @@ export class CommerceController {
         return res.status(401).json({ success: false, message: 'Job authentication failed.' });
       }
 
+      const summary = await this._reconcilePendingCheckouts();
+      return sendSuccess(res, { ...summary, pending_limit: 50 }, 'Pending Razorpay checkouts reconciled');
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  async reconcilePendingCheckoutsScheduled() {
+    return this._reconcilePendingCheckouts();
+  }
+
+  async _reconcilePendingCheckouts() {
+
       const rawTtl = Number(process.env.PENDING_CHECKOUT_EXPIRY_MINUTES);
       const ttlMinutes = Number.isFinite(rawTtl) ? Math.min(240, Math.max(15, Math.floor(rawTtl))) : 45;
       const olderThan = new Date(Date.now() - ttlMinutes * 60 * 1000);
@@ -644,10 +657,7 @@ export class CommerceController {
           this.logger?.warn?.(`Checkout reconciliation deferred for an order (${error?.code || error?.name || 'provider_error'}).`);
         }
       }
-      return sendSuccess(res, { ...summary, pending_limit: 50, expiry_minutes: ttlMinutes }, 'Pending Razorpay checkouts reconciled');
-    } catch (err) {
-      next(err);
-    }
+      return { ...summary, pending_limit: 50, expiry_minutes: ttlMinutes };
   }
 
   // --- PATIENT ORDERS ---

@@ -16,6 +16,8 @@ const SENSITIVE_KEYS = new Set([
   'privatekey',
 ]);
 
+const escapeRegexLiteral = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 export function redactSensitiveData(obj) {
   if (!obj || typeof obj !== 'object') return obj;
   if (Array.isArray(obj)) return obj.map(redactSensitiveData);
@@ -110,10 +112,10 @@ export class AuditEventRepository {
       const filter = {};
       if (action) filter.action = action;
       if (actorId) filter.actorId = String(actorId);
-      if (target) filter.target = new RegExp(target, 'i');
+      if (target) filter.target = new RegExp(escapeRegexLiteral(target), 'i');
 
       if (query) {
-        const regex = new RegExp(query, 'i');
+        const regex = new RegExp(escapeRegexLiteral(query), 'i');
         filter.$or = [{ action: regex }, { actor: regex }, { target: regex }];
       }
 

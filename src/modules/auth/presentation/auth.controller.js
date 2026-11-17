@@ -242,7 +242,7 @@ export class AuthController {
 
   sendLoginOtp = async (req, res, next) => {
     try {
-      const login = req.body.login || req.body.mobile || req.body.email;
+      const login = req.body.login || req.body.mobile || req.body.phone || req.body.email;
       const result = await this.sendOtpUseCase.execute({ login });
 
       return sendSuccess(res, {
@@ -255,7 +255,7 @@ export class AuthController {
 
   verifyLoginOtp = async (req, res, next) => {
     try {
-      const login = req.body.login || req.body.mobile || req.body.email;
+      const login = req.body.login || req.body.mobile || req.body.phone || req.body.email;
       const otp = req.body.otp;
       const deviceMetadata = {
         platform: req.headers?.['x-platform'] || req.body?.platform || 'app',

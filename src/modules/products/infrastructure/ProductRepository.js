@@ -24,7 +24,9 @@ export class ProductRepository extends IProductRepository {
     if (isDatabaseConnected()) {
       const andClauses = [];
       if (status && status !== 'all') {
-        andClauses.push({ status: new RegExp(`^${escapeRegex(status)}$`, 'i') });
+        // Product writes normalize status to lowercase. Equality keeps this
+        // predicate indexable by idx_products_status_created_at_2.
+        andClauses.push({ status: String(status).trim().toLowerCase() });
       }
       if (category && category !== 'All' && category !== 'all') {
         andClauses.push({ category: new RegExp(escapeRegex(category), 'i') });

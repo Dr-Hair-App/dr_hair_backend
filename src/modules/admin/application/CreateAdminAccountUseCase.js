@@ -10,7 +10,7 @@ export class CreateAdminAccountUseCase {
     this.adminAccountRepository = adminAccountRepository;
   }
 
-  async execute({ name, email, password, roleTemplate = 'clinical-admin', permissions = [], permissionOverrides = {} }) {
+  async execute({ name, email, password, role = 'admin', roleTemplate = 'clinical-admin', permissions = [], permissionOverrides = {} }) {
     const cleanName = typeof name === 'string' ? name.trim() : '';
     const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
     if (!cleanName || cleanName.length > 100 || !EMAIL_PATTERN.test(cleanEmail) || cleanEmail.length > 254) {
@@ -31,10 +31,13 @@ export class CreateAdminAccountUseCase {
       ? password
       : randomBytes(18).toString('base64url');
 
+    const finalRole = (role === 'super_admin' || roleTemplate === 'super-admin') ? 'super_admin' : (role || 'admin');
+
     const account = await this.adminAccountRepository.create({
       name: cleanName,
       email: cleanEmail,
       passwordHash: await hashPassword(finalPassword),
+      role: finalRole,
       roleTemplate,
       permissions,
       permissionOverrides,

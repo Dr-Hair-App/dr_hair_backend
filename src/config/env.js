@@ -38,7 +38,7 @@ const superAdminId = configuredSuperAdminId || (isLocalDevelopment || environmen
   ? 'dr.hair@admin'
   : '');
 const superAdminPasswordHash = configuredSuperAdminPasswordHash || (isLocalDevelopment || environment === 'test'
-  ? 'scrypt$16384$8$1$L1HToB6BXk92naHi-DiXEQ$FmjhFE_je15CM3_sJ8XmwI-NABF0KpNR34o5hQVNWeXxp9d1IFsI-UrV3Q1bfUwduxV_i98uh_ZDhmsjbflv9w'
+  ? ''
   : '');
 const superAdminName = configuredSuperAdminName || (isLocalDevelopment || environment === 'test'
   ? 'Dr. Hair Super Admin'
@@ -67,7 +67,7 @@ export const config = {
       return (process.env.SUPER_ADMIN_ID?.trim().toLowerCase() || superAdminId || 'dr.hair@admin');
     },
     get superAdminPasswordHash() {
-      return (process.env.SUPER_ADMIN_PASSWORD_HASH?.trim() || superAdminPasswordHash || 'scrypt$16384$8$1$L1HToB6BXk92naHi-DiXEQ$FmjhFE_je15CM3_sJ8XmwI-NABF0KpNR34o5hQVNWeXxp9d1IFsI-UrV3Q1bfUwduxV_i98uh_ZDhmsjbflv9w');
+      return process.env.SUPER_ADMIN_PASSWORD_HASH?.trim() || superAdminPasswordHash;
     },
     get superAdminName() {
       return (process.env.SUPER_ADMIN_NAME?.trim() || superAdminName || 'Dr. Jai Bansal');

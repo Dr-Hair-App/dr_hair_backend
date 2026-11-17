@@ -85,7 +85,7 @@ describe('Phase 7: Release Hardening & Staging Smoke Suite', () => {
   });
 
   // --- 1. HEALTH, TELEMETRY & REQUEST ID TRACING ---
-  test('1. Request ID middleware generates UUID and preserves incoming trace headers', () => {
+  test('1. Request ID middleware generates UUID and accepts only bounded safe trace IDs', () => {
     // Case A: Missing request ID -> generates new req_ UUID
     const reqA = { headers: {} };
     const resA = createMockRes();
@@ -112,6 +112,17 @@ describe('Phase 7: Release Hardening & Staging Smoke Suite', () => {
     assert.ok(nextCalledB);
     assert.equal(reqB.id, incomingTrace);
     assert.equal(resB.getHeader('x-request-id'), incomingTrace);
+
+    const reqC = { headers: { 'x-request-id': 'trace\r\nforged-header' } };
+    const resC = createMockRes();
+    requestIdMiddleware(reqC, resC, () => {});
+    assert.match(reqC.id, /^req_[0-9a-f-]{36}$/);
+    assert.equal(resC.getHeader('x-request-id'), reqC.id);
+
+    const reqD = { headers: { 'x-request-id': 'x'.repeat(512) } };
+    const resD = createMockRes();
+    requestIdMiddleware(reqD, resD, () => {});
+    assert.match(reqD.id, /^req_[0-9a-f-]{36}$/);
   });
 
   // --- 2. OBJECT-LEVEL AUTHORIZATION & IDOR ISOLATION ---

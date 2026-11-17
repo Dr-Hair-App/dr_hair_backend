@@ -5,7 +5,17 @@ import { runWithDatabaseBinding, setWorkerBindings } from "../src/shared/databas
 import { setStorageBindings } from "../src/shared/storage/runtime.js";
 import { processExpiredData } from "../src/shared/database/maintenance.js";
 
+export { DailyUsageQuota } from "./DailyUsageQuota";
+
 const configureBindings = (runtimeEnv: typeof env): void => {
+  // Populate process.env with runtimeEnv secrets and variables so express modules can access them
+  if (runtimeEnv && typeof runtimeEnv === "object") {
+    for (const [key, val] of Object.entries(runtimeEnv)) {
+      if (typeof val === "string") {
+        process.env[key] = val;
+      }
+    }
+  }
   // Cloudflare's deployment validator evaluates the module without resource
   // bindings. Attach bindings at request time, when the live Worker env exists.
   if (runtimeEnv.DB && typeof runtimeEnv.DB.prepare === "function") {
@@ -16,10 +26,12 @@ const configureBindings = (runtimeEnv: typeof env): void => {
   }
 };
 
+// Attach module bindings before route construction so shared D1-backed stores
+// (including rate-limit stores) are initialized against the Worker database.
+configureBindings(env);
 const { app, container } = createApp();
 app.listen(3000);
 const expressHandler = httpServerHandler({ port: 3000 });
-configureBindings(env);
 
 const publicReadPath = (request: Request): boolean => {
   if (request.method !== "GET") return false;
@@ -83,9 +95,22 @@ export default {
 
   scheduled(_controller: ScheduledController, scheduledEnv: typeof env, ctx: ExecutionContext): void {
     configureBindings(scheduledEnv);
-    ctx.waitUntil(Promise.all([
+    const cronSecret = (scheduledEnv as typeof env & { CRON_SECRET?: string }).CRON_SECRET;
+    const jobs = [
       container.useCases.processQueuedAiAssessmentUseCase.processOne(),
       processExpiredData(scheduledEnv.DB),
-    ]).then(() => undefined));
+      container.services.campaignSchedulerService.processDueCampaigns(),
+      cronSecret
+        ? container.controllers.commerceController.reconcilePendingCheckoutsScheduled()
+        : Promise.resolve(),
+    ];
+    ctx.waitUntil(Promise.allSettled(jobs).then((results) => {
+      for (const result of results) {
+        if (result.status === "rejected") {
+          const error = result.reason as { name?: string; code?: string };
+          console.error("Scheduled maintenance job failed", error?.code || error?.name || "unknown_error");
+        }
+      }
+    }));
   },
 };

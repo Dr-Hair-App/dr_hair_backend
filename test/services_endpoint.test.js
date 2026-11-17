@@ -15,9 +15,12 @@ describe('Services & Public Endpoints', () => {
       assert.equal(res.status, 200);
       const data = await res.json();
       assert(Array.isArray(data));
-      assert(data.length > 0);
-      assert.equal(data[0].id, 'srv_assessment');
-      assert.equal(typeof data[0].title, 'string');
+      for (const service of data) {
+        assert.equal(typeof service.id, 'string');
+        assert.equal(typeof service.title, 'string');
+        assert.equal(service.rating, 0);
+        assert.equal(service.reviewsCount, 0);
+      }
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }

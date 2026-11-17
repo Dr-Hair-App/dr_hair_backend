@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { ipKeyGenerator, rateLimit } from 'express-rate-limit';
 import { authenticateToken } from '../../../shared/middlewares/auth.middleware.js';
 import { requirePermission } from '../../../shared/middlewares/admin.middleware.js';
-import { createRateLimitStore } from '../../../shared/middlewares/rate-limit-store.js';
+import { cloudflareRateLimit, createRateLimitStore } from '../../../shared/middlewares/rate-limit-store.js';
+import { dailyUsageLimit } from '../../../shared/middlewares/daily-usage-limit.js';
 import { sendError } from '../../../shared/utils/response.js';
 
 function optionalAuthentication(req, res, next) {
@@ -12,7 +13,7 @@ function optionalAuthentication(req, res, next) {
 
 export function createCommerceRouter({ commerceController }) {
   const router = Router();
-  const shippingQuoteLimiter = rateLimit({
+  const shippingQuoteD1Limiter = rateLimit({
     windowMs: 60 * 1000,
     limit: 20,
     keyGenerator: (req) => req.user?.id
@@ -24,10 +25,20 @@ export function createCommerceRouter({ commerceController }) {
     passOnStoreError: true,
     handler: (_req, res) => sendError(res, { message: 'Please wait before checking delivery again.', statusCode: 429 }),
   });
+  const shippingQuoteLimiter = cloudflareRateLimit('SHIPPING_QUOTE_RATE_LIMIT', shippingQuoteD1Limiter, {
+    key: (req) => req.user?.id ? `patient:${req.user.id}` : `guest:${ipKeyGenerator(req.ip || 'unknown')}`,
+    message: 'Please wait before checking delivery again.',
+  });
+  const shippingDailyLimit = dailyUsageLimit({
+    feature: 'shipping_quote',
+    defaultLimit: 100,
+    subject: (req) => req.user?.id ? `patient:${req.user.id}` : null,
+    allowAnonymous: true,
+  });
 
   // Checkout (Patient authenticated)
   router.post('/checkout', authenticateToken, (req, res, next) => commerceController.checkout(req, res, next));
-  router.post('/shipping/quote', optionalAuthentication, shippingQuoteLimiter, (req, res, next) => commerceController.getShippingQuote(req, res, next));
+  router.post('/shipping/quote', optionalAuthentication, shippingQuoteLimiter, shippingDailyLimit, (req, res, next) => commerceController.getShippingQuote(req, res, next));
 
   // Payment Verification (Authenticated or token-bearing)
   router.post('/verify-payment', authenticateToken, (req, res, next) => commerceController.verifyPayment(req, res, next));

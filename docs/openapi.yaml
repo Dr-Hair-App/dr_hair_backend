@@ -72,7 +72,7 @@ paths:
     post:
       tags: [Authentication]
       summary: Request a sign-in or registration OTP
-      description: Returns a generic response without revealing whether the identity belongs to an account. OTPs are delivered by Fast2SMS in every environment, expire after the configured period, allow up to five wrong guesses, and request limits are persisted in D1. The API never returns the OTP; provider failures are returned as delivery errors.
+      description: Returns a generic response without revealing whether the identity belongs to an account. OTPs are delivered by 2Factor SMS gateway in every environment, expire after the configured period, allow up to five wrong guesses, and request limits are persisted in D1. The API never returns the OTP; provider failures are returned as delivery errors.
       x-legacy-path: /auth/send_login_otp
       requestBody:
         required: true
@@ -860,45 +860,6 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
-  /api/v1/patient/assistant/chat:
-    post:
-      tags: [Patient app]
-      summary: Stream a hair and scalp wellness assistant reply
-      description: >-
-        Sends the latest bounded conversation history and relevant patient context to Gemini and returns SSE text deltas. The stream may include a validated app-action proposal. The endpoint does not store conversation messages; the app stores completed threads locally per patient. App actions are proposals and require explicit patient confirmation.
-        The authenticated patient's bearer token is required.
-        Responses are general wellness information, not a diagnosis or prescription.
-      security: [{ bearerAuth: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [messages]
-              properties:
-                messages:
-                  type: array
-                  minItems: 1
-                  maxItems: 12
-                  items:
-                    type: object
-                    required: [role, content]
-                    properties:
-                      role: { type: string, enum: [user, assistant] }
-                      content: { type: string, minLength: 1, maxLength: 1200 }
-      responses:
-        '200':
-          description: Server-sent events containing incremental response text, optional confirmed-by-user action proposals, completion, or error.
-          content:
-            text/event-stream:
-              schema: { type: string, example: 'data: {"type":"action","action":{"kind":"navigate","screen":"routine","message":"Open your routine"}}' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '429': { description: Per-patient chat rate limit exceeded }
-        '503': { description: AI provider is not configured or temporarily unavailable }
-
   /api/v1/patient/diet-plan:
     get:
       tags: [Patient app]
@@ -1289,6 +1250,113 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Success' }
 
+  /api/v1/services:
+    get:
+      tags: [Content]
+      summary: List active clinic services configured by administrators
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+
+  /api/v1/admin/categories:
+    post:
+      tags: [Admin]
+      summary: Create a category
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 80 }
+                type: { type: string, enum: [products, videos, services, concerns, video, product, service, concern] }
+                icon: { type: string, maxLength: 80 }
+                imageUrl: { type: string, maxLength: 2048 }
+                price:
+                  oneOf:
+                    - { type: string, maxLength: 50 }
+                    - { type: number, minimum: 0 }
+                badge: { type: string, nullable: true, maxLength: 80 }
+                description: { type: string, maxLength: 500 }
+                status: { type: string, enum: [active, inactive] }
+                display_order: { type: integer, minimum: 0, maximum: 100000 }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/admin/categories/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [Admin]
+      summary: Update a category
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, minLength: 1, maxLength: 80 }
+                slug: { type: string, maxLength: 100, pattern: '^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$' }
+                icon: { type: string, maxLength: 80 }
+                imageUrl: { type: string, maxLength: 2048 }
+                price:
+                  oneOf:
+                    - { type: string, maxLength: 50 }
+                    - { type: number, minimum: 0 }
+                badge: { type: string, nullable: true, maxLength: 80 }
+                description: { type: string, maxLength: 500 }
+                status: { type: string, enum: [active, inactive] }
+                display_order: { type: integer, minimum: 0, maximum: 100000 }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    patch:
+      tags: [Admin]
+      summary: Partially update a category
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, minLength: 1, maxLength: 80 }
+                slug: { type: string, maxLength: 100, pattern: '^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$' }
+                icon: { type: string, maxLength: 80 }
+                imageUrl: { type: string, maxLength: 2048 }
+                price:
+                  oneOf:
+                    - { type: string, maxLength: 50 }
+                    - { type: number, minimum: 0 }
+                badge: { type: string, nullable: true, maxLength: 80 }
+                description: { type: string, maxLength: 500 }
+                status: { type: string, enum: [active, inactive] }
+                display_order: { type: integer, minimum: 0, maximum: 100000 }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [Admin]
+      summary: Delete a category
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /api/v1/products/categories:
     get:
       tags: [Commerce]
@@ -1341,6 +1409,19 @@ paths:
       summary: Get active shopping cart with item lines, discounts, and order totals
       responses:
         '200': { $ref: '#/components/responses/Success' }
+
+  /api/v1/cart/checkout:
+    post:
+      tags: [Commerce]
+      deprecated: true
+      summary: Retired legacy checkout endpoint
+      description: Use the authenticated `/api/v1/commerce/checkout` endpoint to create an order and payment intent.
+      responses:
+        '410':
+          description: Checkout has moved to the commerce flow.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
     delete:
       tags: [Commerce]
       summary: Clear all items from active cart
@@ -2000,6 +2081,17 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/v1/admin/users/segments:
+    get:
+      tags: [Admin]
+      summary: Get live patient segment counts
+      description: Counts registered accounts, completed assessments, paid product customers with an app login in the last 30 days, and patients who have both a non-cancelled appointment and a treatment record.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /api/v1/admin/users:
     get:
       tags: [Admin]
@@ -2016,6 +2108,9 @@ paths:
         - name: search
           in: query
           schema: { type: string }
+        - name: segment
+          in: query
+          schema: { type: string, enum: [accounts_assessments, product_customers, appointment_treatment], default: accounts_assessments }
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -2581,6 +2676,11 @@ paths:
       tags: [Admin]
       summary: List all feature flags
       security: [{ bearerAuth: [] }]
+      parameters:
+        - name: platform
+          in: query
+          description: Filter flags by platform, including admin navigation availability.
+          schema: { type: string, enum: [android, ios, web, admin, all] }
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -2605,7 +2705,7 @@ paths:
               properties:
                 enabled: { type: boolean }
                 rolloutPercentage: { type: integer, minimum: 0, maximum: 100 }
-                platform: { type: string, enum: [all, ios, android, web] }
+                platform: { type: string, enum: [all, ios, android, web, admin] }
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -2641,10 +2741,16 @@ paths:
               type: object
               properties:
                 minVersion: { type: string }
+                minBuild: { type: string }
                 latestVersion: { type: string }
+                latestBuild: { type: string }
                 forceUpdate: { type: boolean }
+                enabled: { type: boolean }
+                scheduledAt: { type: string, format: date-time, nullable: true }
                 maintenanceMode: { type: boolean }
+                maintenanceMessage: { type: string, maxLength: 200 }
                 downloadUrl: { type: string }
+                updateMessage: { type: string, minLength: 8, maxLength: 160 }
                 releaseNotes: { type: string }
       responses:
         '200': { $ref: '#/components/responses/Success' }
@@ -2718,6 +2824,15 @@ paths:
           schema: { type: string, enum: [ios, android, web] }
         - name: version
           in: query
+          schema: { type: string }
+        - name: build
+          in: query
+          schema: { type: string }
+        - name: X-App-Version
+          in: header
+          schema: { type: string }
+        - name: X-App-Build
+          in: header
           schema: { type: string }
       responses:
         '200': { $ref: '#/components/responses/Success' }
@@ -2902,7 +3017,7 @@ paths:
     post:
       tags: [Admin, Notifications]
       summary: Send or schedule a broadcast notification campaign
-      description: Dispatches push notifications to targeted audience ('All app users', 'Active patients', 'Patients with a shared report') or schedules for future dispatch.
+      description: Dispatches push notifications to one or more patient audiences or schedules them for future dispatch. Multiple audiences are unioned and duplicate device tokens are removed.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -2915,6 +3030,14 @@ paths:
                 title: { type: string, maxLength: 120 }
                 body: { type: string, maxLength: 1000 }
                 audience: { type: string, enum: ['All app users', 'Active patients', 'Patients with a shared report'], default: 'All app users' }
+                audiences:
+                  type: array
+                  minItems: 1
+                  maxItems: 6
+                  uniqueItems: true
+                  items:
+                    type: string
+                    enum: ['All app users', 'Active patients', 'Patients with a shared report', 'Accounts & assessments', 'Product customers', 'Appointment & treatment patients']
                 scheduled_at: { type: string, format: date-time, nullable: true }
                 destination:
                   type: object
@@ -2936,215 +3059,7 @@ paths:
       parameters:
         - name: audience
           in: query
-          schema: { type: string, default: 'All app users' }
-      responses:
-        '200': { $ref: '#/components/responses/Success' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-
-  /api/v1/admin/notifications/campaigns:
-    get:
-      tags: [Admin, Notifications]
-      summary: List notification campaigns
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - name: page
-          in: query
-          schema: { type: integer, default: 1 }
-        - name: limit
-          in: query
-          schema: { type: integer, default: 50 }
-        - name: status
-          in: query
-          schema: { type: string, enum: [draft, scheduled, processing, sent, partial, failed, cancelled] }
-        - name: audience
-          in: query
-          schema: { type: string }
-      responses:
-        '200': { $ref: '#/components/responses/Success' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-
-  /api/v1/admin/notifications/campaigns/{id}/cancel:
-    post:
-      tags: [Admin, Notifications]
-      summary: Cancel a scheduled or draft notification campaign
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        '200': { $ref: '#/components/responses/Success' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-
-  /api/v1/content:
-    get:
-      tags: [Patient app]
-      summary: List published managed content items
-      parameters:
-        - name: type
-          in: query
-          schema: { type: string, enum: [banner, faq, tip, story, home_placement] }
-        - name: placement
-          in: query
-          schema: { type: string, enum: [home, reels, care, explore, all] }
-        - name: limit
-          in: query
-          schema: { type: integer, default: 50 }
-      responses:
-        '200': { $ref: '#/components/responses/Success' }
-
-  /api/v1/content/faqs:
-    get:
-      tags: [Patient app]
-      summary: List published frequently asked questions
-      responses:
-        '200': { $ref: '#/components/responses/Success' }
-
-  /api/v1/content/stories:
-    get:
-      tags: [Patient app]
-      summary: List published patient stories with verified consent
-      responses:
-        '200': { $ref: '#/components/responses/Success' }
-
-  /api/v1/content/tips:
-    get:
-      tags: [Patient app]
-      summary: List published clinical tips
-      responses:
-        '200': { $ref: '#/components/responses/Success' }
-
-  /api/v1/admin/content:
-    get:
-      tags: [Admin]
-      summary: List content items with admin metadata
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - name: type
-          in: query
-          schema: { type: string }
-        - name: status
-          in: query
-          schema: { type: string, enum: [draft, review, published, hidden, archived] }
-        - name: placement
-          in: query
-          schema: { type: string }
-        - name: page
-          in: query
-          schema: { type: integer, default: 1 }
-        - name: limit
-          in: query
-          schema: { type: integer, default: 50 }
-      responses:
-        '200': { $ref: '#/components/responses/Success' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-    post:
-      tags: [Admin]
-      summary: Create a managed content item
-      security: [{ bearerAuth: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [type, title]
-              properties:
-                type: { type: string, enum: [banner, faq, tip, story, home_placement] }
-                title: { type: string }
-                subtitle: { type: string }
-                content: { type: string }
-                imageUrl: { type: string }
-                actionUrl: { type: string }
-                placement: { type: string, enum: [home, reels, care, explore, all], default: 'home' }
-                status: { type: string, enum: [draft, review, published, hidden, archived], default: 'draft' }
-                sortOrder: { type: integer, default: 0 }
-                provenance:
-                  type: object
-                  properties:
-                    consent_verified: { type: boolean }
-                    consent_reference: { type: string }
-                    source: { type: string }
-                    approved_by: { type: string }
-                    evidence_note: { type: string }
-      responses:
-        '201': { $ref: '#/components/responses/Success' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-
-  /api/v1/admin/content/{id}/status:
-    patch:
-      tags: [Admin]
-      summary: Transition content item lifecycle state with approval provenance
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [status]
-              properties:
-                status: { type: string, enum: [draft, review, published, hidden, archived] }
-                note: { type: string }
-      responses:
-        '200': { $ref: '#/components/responses/Success' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-
-  /api/v1/admin/notifications/broadcast:
-    post:
-      tags: [Admin, Notifications]
-      summary: Send or schedule a broadcast notification campaign
-      description: Dispatches push notifications to targeted audience ('All app users', 'Active patients', 'Patients with a shared report') or schedules for future dispatch.
-      security: [{ bearerAuth: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [title, body]
-              properties:
-                title: { type: string, maxLength: 120 }
-                body: { type: string, maxLength: 1000 }
-                audience: { type: string, enum: ['All app users', 'Active patients', 'Patients with a shared report'], default: 'All app users' }
-                scheduled_at: { type: string, format: date-time, nullable: true }
-                destination:
-                  type: object
-                  properties:
-                    type: { type: string, default: 'screen' }
-                    screen: { type: string, default: 'home' }
-                    entityId: { type: string, nullable: true }
-      responses:
-        '200': { $ref: '#/components/responses/Success' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-
-  /api/v1/admin/notifications/audience-count:
-    get:
-      tags: [Admin, Notifications]
-      summary: Preview targeted recipient count for an audience segment
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - name: audience
-          in: query
+          description: One audience name or multiple names joined with a vertical bar.
           schema: { type: string, default: 'All app users' }
       responses:
         '200': { $ref: '#/components/responses/Success' }

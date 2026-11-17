@@ -27,12 +27,28 @@ Local D1, R2, and KV state is isolated under Wrangler's local state directory. N
 
 ## Secrets and integrations
 
-Add secrets to the selected Worker environment with Wrangler/GitHub Environment secrets. Required values include `JWT_SECRET`, Super Admin credentials, exact admin origin in `CORS_ORIGINS`, SMS/OTP provider configuration, Razorpay test credentials and webhook secret, Shiprocket sandbox credentials and webhook secret, and optional Gemini/Firebase credentials. Use `DRHAIR_DEPLOYMENT_ENV=staging` for staging so payment and shipping integrations remain in test/sandbox mode.
+Add secrets to the selected Worker environment with Wrangler/GitHub Environment secrets. Required values include `JWT_SECRET`, Super Admin credentials, exact admin origin in `CORS_ORIGINS`, SMS/OTP provider configuration, Razorpay test credentials and webhook secret, Shiprocket live credentials and webhook secret only in production, and optional Gemini/Firebase credentials. Shiprocket documents a live API endpoint rather than a separate sandbox: staging must use `DRHAIR_DEPLOYMENT_ENV=staging` and `SHIPROCKET_STAGING_MODE=mock`, with no Shiprocket live credentials configured.
 
 Never put secrets in `wrangler.jsonc`, source control, the mobile app, or committed `.dev.vars`. The admin Worker must use its configured backend URL and keep API responses dynamic. No shared caching or image optimization is enabled for the admin panel.
 
 ## CI/CD and rollout
 
-GitHub Actions runs backend tests and a Wrangler dry-run for pull requests and `main` pushes. Deployment is a separate manual dispatch. Staging deploys to `dr-hair-backend-staging` only. Production deploy remains gated by the explicit `CLOUDFLARE_PRODUCTION_DEPLOY_ENABLED=true` environment variable.
+GitHub Actions runs backend tests and a Wrangler dry-run for pull requests and `main` pushes. Deployment is a separate manual dispatch from `main`:
 
-The Cloudflare account has isolated dev and staging D1, R2 and KV resources. The initial schema has been applied to the empty dev and staging databases; no legacy records or media were imported. The `drhair-admin` Pages project exists, but its production configuration currently has no Git source, environment variables, or successful deployment. Wrangler CLI is not authenticated in this workspace, so a Worker deployment still needs an authenticated Cloudflare CI/CD run. Production backend bindings intentionally remain unprovisioned.
+```sh
+gh workflow run cloudflare.yml --repo sunil2037/dr_hair_backend --ref main -f target=staging
+```
+
+Production deploy remains gated by the explicit `CLOUDFLARE_PRODUCTION_DEPLOY_ENABLED=true` environment variable. Do not bypass the gate with a manual production upload.
+
+### Staging verification (2026-11-17)
+
+- Backend: `https://dr-hair-backend-staging.drhair-app.workers.dev`; `/health` returned HTTP 200 with D1 connected.
+- Admin: `https://dr-hair-admin-staging.drhair-app.workers.dev`; the root returned HTTP 200, and the admin login/session proxy completed successfully.
+- Staging D1 is fresh: `users`, `orders`, and `clinic_appointments` each contain zero rows. No production records or media were imported.
+- Razorpay test credentials authenticated successfully against the Razorpay test API. Shiprocket has no separate supported API sandbox, so staging uses `SHIPROCKET_STAGING_MODE=mock` and contains no Shiprocket credentials. The simulator covers quotes, pickup, tracking, and shipment actions without reaching Shiprocket.
+- Verification passed: backend tests (346), backend Wrangler dry-run, Admin lint/build, Flutter analyze and tests (282). Staging login/session, app-config, feature/release reads, and health checks were also verified over HTTP.
+
+### Production readiness
+
+The current production backend and Admin URLs responded with HTTP 200 on 2026-11-17, but they still run the previous deployment. Production is not updated by the staging rollout. The production Worker is missing `SUPER_ADMIN_PASSWORD_HASH`, `SHIPROCKET_API_EMAIL`, and `SHIPROCKET_API_PASSWORD`; set the intended Super Admin password hash before deploying the new backend. Configure a Shiprocket API user only when live shipping is approved; valid Shiprocket API calls affect the real account. Keep the production GitHub deployment gate disabled until credentials and live-payment/shipping behavior have been reviewed.

@@ -15,79 +15,9 @@ export class ListCategoriesUseCase {
     const videoCounts = await this._getVideoCounts();
     const videoCategories = await this._getVideoCategories(videoCounts);
 
-    const serviceCategories = [
-      {
-        id: 'srv_assessment',
-        name: 'AI Hair & Scalp Assessment',
-        slug: 'assessment',
-        type: 'service',
-        icon: 'camera',
-        price: 'Free',
-        description: 'Evaluation of hair loss pattern and scalp health',
-      },
-      {
-        id: 'srv_consultation',
-        name: 'Trichologist Consultation',
-        slug: 'consultation',
-        type: 'service',
-        icon: 'user-check',
-        price: '₹500',
-        description: 'One-on-one video or clinic consultation with certified specialists',
-      },
-      {
-        id: 'srv_prp',
-        name: 'PRP Hair Therapy',
-        slug: 'prp',
-        type: 'service',
-        icon: 'syringe',
-        price: '₹4,500',
-        description: 'Platelet-Rich Plasma therapy designed to stimulate active and dormant follicles',
-      },
-      {
-        id: 'srv_laser',
-        name: 'Low-Level Light Therapy (LLLT)',
-        slug: 'laser',
-        type: 'service',
-        icon: 'zap',
-        price: '₹2,500',
-        description: 'Clinical-grade light stimulation therapy for cellular repair',
-      },
-    ];
+    const serviceCategories = await this.categoryRepository.list({ type: 'services', status: 'active' });
 
-    const clinicalConcerns = [
-      {
-        id: 'thinning',
-        name: 'Crown & Overall Thinning',
-        slug: 'thinning',
-        type: 'concern',
-        icon: 'user',
-        description: 'Progressive thinning with increased scalp visibility',
-      },
-      {
-        id: 'receding',
-        name: 'Receding Hairline & Temples',
-        slug: 'receding',
-        type: 'concern',
-        icon: 'arrow-up-right',
-        description: 'M-shaped hairline shift and temporal recession',
-      },
-      {
-        id: 'dandruff_flakes',
-        name: 'Flakes, Dandruff & Scalp Itch',
-        slug: 'dandruff-flakes',
-        type: 'concern',
-        icon: 'shield-alert',
-        description: 'Stubborn flakes, redness, or oily scalp build-up',
-      },
-      {
-        id: 'patchy',
-        name: 'Patchy Hair Loss',
-        slug: 'patchy',
-        type: 'concern',
-        icon: 'circle-dot',
-        description: 'Coin-shaped smooth patches (Alopecia Areata)',
-      },
-    ];
+    const clinicalConcerns = await this.categoryRepository.list({ type: 'concerns', status: 'active' });
 
     const normalizedType = typeof type === 'string' ? type.trim().toLowerCase() : '';
 
@@ -159,44 +89,28 @@ export class ListCategoriesUseCase {
   }
 
   async _getVideoCounts() {
-    const counts = {
-      total: 0,
-      hair_fall: 0,
-      regrowth: 0,
-      dandruff: 0,
-      doctor_advice: 0,
+    const counts = { total: 0 };
+
+    const countVideos = (videos) => {
+      counts.total = videos.length;
+      for (const video of videos) {
+        const category = String(video.category || '').trim();
+        if (!category) continue;
+        const key = category.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+        if (key) counts[key] = (counts[key] || 0) + 1;
+      }
     };
 
     try {
       if (isDatabaseConnected()) {
         const publishedVideos = await VideoModel.find({ status: 'published' }).select('category tag author_name').lean();
-        counts.total = publishedVideos.length;
-
-        for (const v of publishedVideos) {
-          const cat = `${v.category || ''} ${v.tag || ''}`.toLowerCase();
-          const author = (v.author_name || '').toLowerCase();
-
-          if (cat.includes('hair fall')) counts.hair_fall++;
-          if (cat.includes('regrowth')) counts.regrowth++;
-          if (cat.includes('dandruff')) counts.dandruff++;
-          if (cat.includes('doctor') || author.includes('dr.')) counts.doctor_advice++;
-        }
+        countVideos(publishedVideos);
         return counts;
       }
 
       // Memory store fallback
       const videos = Array.isArray(store.videos) ? store.videos.filter((v) => v.status === 'published') : [];
-      counts.total = videos.length;
-
-      for (const v of videos) {
-        const cat = `${v.category || ''} ${v.tag || ''}`.toLowerCase();
-        const author = (v.author_name || '').toLowerCase();
-
-        if (cat.includes('hair fall')) counts.hair_fall++;
-        if (cat.includes('regrowth')) counts.regrowth++;
-        if (cat.includes('dandruff')) counts.dandruff++;
-        if (cat.includes('doctor') || author.includes('dr.')) counts.doctor_advice++;
-      }
+      countVideos(videos);
     } catch (_) {}
 
     return counts;
@@ -207,22 +121,6 @@ export class ListCategoriesUseCase {
     try {
       storedCategories = await this.categoryRepository.list({ type: 'video', status: 'active' });
     } catch (_) {}
-
-    if (!storedCategories || storedCategories.length === 0) {
-      const defaults = [
-        { name: 'Hair Fall', slug: 'hair-fall', icon: 'sparkles' },
-        { name: 'Regrowth', slug: 'regrowth', icon: 'trending-up' },
-        { name: 'Dandruff', slug: 'dandruff', icon: 'shield-check' },
-        { name: 'Doctor Advice', slug: 'doctor-advice', icon: 'stethoscope' },
-        { name: 'Scalp Care', slug: 'scalp-care', icon: 'sparkles' },
-      ];
-      for (const def of defaults) {
-        try {
-          const created = await this.categoryRepository.create({ ...def, type: 'video' });
-          if (created) storedCategories.push(created);
-        } catch (_) {}
-      }
-    }
 
     let publishedVideos = [];
     try {

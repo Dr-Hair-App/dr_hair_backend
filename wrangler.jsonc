@@ -10,11 +10,15 @@
   },
   "migrations": [{ "tag": "daily-usage-quota-v1", "new_sqlite_classes": ["DailyUsageQuota"] }],
   "ratelimits": [
-    { "name": "SHIPPING_QUOTE_RATE_LIMIT", "namespace_id": "8173311", "simple": { "limit": 20, "period": 60 } }
+    { "name": "SHIPPING_QUOTE_RATE_LIMIT", "namespace_id": "8173313", "simple": { "limit": 20, "period": 60 } }
   ],
   "vars": {
-    "NODE_ENV": "development",
-    "DRHAIR_DEPLOYMENT_ENV": "development"
+    "NODE_ENV": "production",
+    "DRHAIR_DEPLOYMENT_ENV": "production",
+    "BASE_URL": "https://api.drhairindia.com",
+    "CORS_ORIGINS": "https://admin.drhairindia.com",
+    "SUPER_ADMIN_ID": "dr.hair@admin",
+    "SUPER_ADMIN_NAME": "Dr. Jai Bansal"
   },
   "observability": {
     "enabled": true,
@@ -27,64 +31,21 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_id": "bc8f825e-bf23-49f8-9c11-07c2eb844d97",
-      "database_name": "dr-hair-dev",
+      "database_id": "5bc14761-3131-469d-957d-3674564f3e30",
+      "database_name": "dr-hair-production",
       "migrations_dir": "migrations"
     }
   ],
   "r2_buckets": [
     {
       "binding": "MEDIA_BUCKET",
-      "bucket_name": "dr-hair-dev-media"
+      "bucket_name": "dr-hair-production-media"
     }
   ],
   "kv_namespaces": [
-    { "binding": "PUBLIC_CONFIG_KV", "id": "b21ca9b2eef140599d8ae82d828f17cb" }
+    { "binding": "PUBLIC_CONFIG_KV", "id": "ed114227c83c431cb0e7c8e4c4c5c93f" }
   ],
-  "env": {
-    "staging": {
-      "name": "dr-hair-backend-staging",
-      "durable_objects": {
-        "bindings": [{ "name": "DAILY_USAGE_QUOTA", "class_name": "DailyUsageQuota" }]
-      },
-      "ratelimits": [
-        { "name": "SHIPPING_QUOTE_RATE_LIMIT", "namespace_id": "8173312", "simple": { "limit": 20, "period": 60 } }
-      ],
-      "vars": {
-        "NODE_ENV": "production",
-        "DRHAIR_DEPLOYMENT_ENV": "staging",
-        "BASE_URL": "https://dr-hair-backend-staging.drhair-app.workers.dev",
-        "CORS_ORIGINS": "https://dr-hair-admin-staging.drhair-app.workers.dev"
-      },
-      "d1_databases": [{ "binding": "DB", "database_name": "dr-hair-staging", "database_id": "aecd3a3c-8b76-4b32-8d05-62973bd22a8e", "migrations_dir": "migrations" }],
-      "r2_buckets": [{ "binding": "MEDIA_BUCKET", "bucket_name": "dr-hair-staging-media" }],
-      "kv_namespaces": [{ "binding": "PUBLIC_CONFIG_KV", "id": "2c3a928ad7fb46439e6a39d09bf1c78e" }],
-      "triggers": { "crons": ["*/2 * * * *"] }
-    },
-    "production": {
-      "name": "dr-hair-backend-production",
-      "routes": [
-        { "pattern": "api.drhairindia.com", "custom_domain": true }
-      ],
-      "durable_objects": {
-        "bindings": [{ "name": "DAILY_USAGE_QUOTA", "class_name": "DailyUsageQuota" }]
-      },
-      "ratelimits": [
-        { "name": "SHIPPING_QUOTE_RATE_LIMIT", "namespace_id": "8173313", "simple": { "limit": 20, "period": 60 } }
-      ],
-      "vars": {
-        "NODE_ENV": "production",
-        "DRHAIR_DEPLOYMENT_ENV": "production",
-        "BASE_URL": "https://api.drhairindia.com",
-        "CORS_ORIGINS": "https://admin.drhairindia.com,https://dr-hair-admin.drhair-app.workers.dev",
-        "SUPER_ADMIN_ID": "dr.hair@admin",
-        "SUPER_ADMIN_NAME": "Dr. Jai Bansal",
-        "SUPER_ADMIN_PASSWORD_HASH": "scrypt$16384$8$1$L1HToB6BXk92naHi-DiXEQ$FmjhFE_je15CM3_sJ8XmwI-NABF0KpNR34o5hQVNWeXxp9d1IFsI-UrV3Q1bfUwduxV_i98uh_ZDhmsjbflv9w"
-      },
-      "d1_databases": [{ "binding": "DB", "database_name": "dr-hair-production", "database_id": "5bc14761-3131-469d-957d-3674564f3e30", "migrations_dir": "migrations" }],
-      "r2_buckets": [{ "binding": "MEDIA_BUCKET", "bucket_name": "dr-hair-production-media" }],
-      "kv_namespaces": [{ "binding": "PUBLIC_CONFIG_KV", "id": "ed114227c83c431cb0e7c8e4c4c5c93f" }],
-      "triggers": { "crons": ["*/2 * * * *"] }
-    }
-  }
+  "routes": [
+    { "pattern": "api.drhairindia.com", "custom_domain": true }
+  ]
 }

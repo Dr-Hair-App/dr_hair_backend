@@ -8,10 +8,10 @@
 | Durable records | D1, with per-domain tables, JSON payloads for nested records, and indexed lookup fields |
 | Images and clinical documents | Private R2 bucket, accessed through authenticated API routes |
 | Video content | YouTube URLs and streaming; video files are not uploaded |
-| Expiring public configuration | KV binding is reserved; no shared cache is used for patient/admin data |
+| Public reads | Worker Cache API is used only for selected public catalog/content GETs; patient/admin data is not shared-cached |
 | Notifications | Firebase Cloud Messaging, with device tokens and inbox records in D1 |
 
-The dev and staging D1 databases are fresh and empty. The initial schema has been applied to both. No MongoDB documents or media have been imported. The production Worker and production storage/database resources are intentionally not provisioned as part of this development setup.
+Dev and staging D1 databases are fresh; no MongoDB documents or media were imported. The production backend Worker and admin Worker respond on their `workers.dev` URLs. The custom `api.drhairindia.com` and `admin.drhairindia.com` hostnames did not resolve during the 2026-11-16 check. Production data should remain treated as a fresh setup unless an explicit seed/configuration has been applied.
 
 ## Implemented in the codebase
 
@@ -21,11 +21,11 @@ The dev and staging D1 databases are fresh and empty. The initial schema has bee
 - Stock release is idempotent and batched in D1. Expired OTPs, sessions, and rate-limit counters are cleaned by a Worker cron trigger.
 - Backend and admin GitHub Actions include checks and manual Cloudflare deployment workflows. Production deploys are gated.
 
-## Remaining before a usable live admin rollout
+## Remaining verification and hardening
 
-1. Connect Cloudflare Pages to `sunil2037/dr_hair_admin` and configure its Cloudflare build/runtime settings.
-2. Deploy the backend Worker to the isolated staging environment and configure staging-only secrets for JWT/admin login, SMS, Razorpay test mode, Shiprocket sandbox, and optional notification/AI integrations.
-3. Set the admin runtime's backend URL and allowed origin, then deploy and verify admin login, API reads/writes, media access, payment sandbox callbacks, shipping sandbox callbacks, and mobile API compatibility.
-4. Set up Cloudflare/GitHub environment secrets for CI/CD. Keep production deployment disabled until the staging acceptance checks pass.
+1. Run the staging acceptance flow for admin authentication, API reads/writes, media access, Razorpay test callbacks, simulated Shiprocket callbacks, and Flutter API compatibility.
+2. Verify all production Worker secrets and the D1/R2 bindings from Cloudflare before relying on production transactions.
+3. Restore the two custom domains by checking DNS records and Worker custom-domain routing.
+4. Keep production deployment gated until staging acceptance passes.
 
 See [`CLOUDFLARE_MIGRATION.md`](CLOUDFLARE_MIGRATION.md) for commands, bindings, and secret names. See [`openapi.yaml`](openapi.yaml) for the API contract; it should be kept aligned with the routes when those routes change.

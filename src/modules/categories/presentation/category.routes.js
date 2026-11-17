@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { authenticateToken } from '../../../shared/middlewares/auth.middleware.js';
+import { requireAnyPermission } from '../../../shared/middlewares/admin.middleware.js';
 
 export function createCategoryRouter({ categoryController }) {
   const router = Router();
@@ -9,10 +11,11 @@ export function createCategoryRouter({ categoryController }) {
   router.get('/services', categoryController.listServices);
   router.get('/concerns', categoryController.listConcerns);
 
-  router.post('/', categoryController.create);
-  router.put('/:id', categoryController.update);
-  router.patch('/:id', categoryController.update);
-  router.delete('/:id', categoryController.delete);
+  const manageCategories = [authenticateToken, requireAnyPermission('products.manage', 'content.edit')];
+  router.post('/', ...manageCategories, categoryController.create);
+  router.put('/:id', ...manageCategories, categoryController.update);
+  router.patch('/:id', ...manageCategories, categoryController.update);
+  router.delete('/:id', ...manageCategories, categoryController.delete);
 
   return router;
 }

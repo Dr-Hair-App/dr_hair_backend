@@ -8,7 +8,8 @@ export class FeatureFlagRepository {
       const query = {};
       if (typeof enabled === 'boolean') query.enabled = enabled;
       if (platform && platform !== 'all') {
-        query.$or = [{ platform }, { platform: 'all' }];
+        if (platform === 'admin') query.platform = 'admin';
+        else query.$or = [{ platform }, { platform: 'all' }];
       }
       return FeatureFlagModel.find(query).sort({ group: 1, key: 1 }).lean();
     }
@@ -19,7 +20,7 @@ export class FeatureFlagRepository {
       items = items.filter((f) => f.enabled === enabled);
     }
     if (platform && platform !== 'all') {
-      items = items.filter((f) => f.platform === platform || f.platform === 'all');
+      items = items.filter((f) => platform === 'admin' ? f.platform === 'admin' : f.platform === platform || f.platform === 'all');
     }
     items.sort((a, b) => a.group.localeCompare(b.group) || a.key.localeCompare(b.key));
     return items;

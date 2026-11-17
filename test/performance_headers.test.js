@@ -12,8 +12,8 @@ describe('Performance Headers & Optimization Middleware', () => {
 
     try {
       const endpoints = [
-        { path: '/services', expected: 'public, max-age=300, s-maxage=600, stale-while-revalidate=1200' },
-        { path: '/api/v1/services', expected: 'public, max-age=300, s-maxage=600, stale-while-revalidate=1200' },
+        { path: '/services', expected: 'public, max-age=60, s-maxage=120, stale-while-revalidate=300' },
+        { path: '/api/v1/services', expected: 'public, max-age=60, s-maxage=120, stale-while-revalidate=300' },
         { path: '/api/v1/appointments/closed-dates', expected: 'public, max-age=60, s-maxage=300, stale-while-revalidate=600' },
         { path: '/api/v1/app/config', expected: 'public, max-age=60, s-maxage=120, stale-while-revalidate=300' },
         { path: '/api/v1/categories', expected: 'public, max-age=120, s-maxage=300, stale-while-revalidate=600' },

@@ -6,6 +6,8 @@ import { sendError } from '../../../shared/utils/response.js';
 import { createHash } from 'node:crypto';
 import { createRateLimitStore } from '../../../shared/middlewares/rate-limit-store.js';
 import { normalizeLogin } from '../../../shared/utils/normalize-login.js';
+import { validate } from '../../../shared/validators/validate.middleware.js';
+import { sendLoginOtpSchema, verifyLoginOtpSchema } from '../../../shared/validators/auth.validator.js';
 
 const createOtpLimiter = (limit, message, namespace) => rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -75,10 +77,10 @@ export const createAuthRouter = ({ authController }) => {
 
   // Legacy & Flutter App routes:
   // POST /auth/send_login_otp
-  router.post('/send_login_otp', sendOtpLimiter, parseFormData, sendOtpIdentityLimiter, authController.sendLoginOtp);
+  router.post('/send_login_otp', sendOtpLimiter, parseFormData, validate({ body: sendLoginOtpSchema }), sendOtpIdentityLimiter, authController.sendLoginOtp);
 
   // POST /auth/verify_login_otp
-  router.post('/verify_login_otp', verifyOtpLimiter, parseFormData, verifyOtpIdentityLimiter, authController.verifyLoginOtp);
+  router.post('/verify_login_otp', verifyOtpLimiter, parseFormData, validate({ body: verifyLoginOtpSchema }), verifyOtpIdentityLimiter, authController.verifyLoginOtp);
   router.get('/session', authenticateToken, authController.getSession);
   router.get('/me', authenticateToken, authController.getSession);
   router.post('/refresh', refreshLimiter, authController.refreshToken);

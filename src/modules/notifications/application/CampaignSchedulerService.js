@@ -62,8 +62,14 @@ export class CampaignSchedulerService {
       const invalidTokens = [];
 
       if (tokens.length > 0) {
-        const results = await Promise.all(
-          tokens.map(async ({ token }) => {
+        const results = [];
+        const invalidCodes = new Set([
+          'messaging/registration-token-not-registered',
+          'messaging/invalid-registration-token',
+        ]);
+        for (let offset = 0; offset < tokens.length; offset += 100) {
+          const batch = tokens.slice(offset, offset + 100);
+          results.push(...await Promise.all(batch.map(async ({ token }) => {
             try {
               await sendPushNotification({
                 token,
@@ -78,14 +84,10 @@ export class CampaignSchedulerService {
               });
               return { token, ok: true };
             } catch (error) {
-              const invalidCodes = new Set([
-                'messaging/registration-token-not-registered',
-                'messaging/invalid-registration-token',
-              ]);
               return { token, ok: false, invalid: invalidCodes.has(error.code) };
             }
-          }),
-        );
+          })));
+        }
 
         sentCount = results.filter((r) => r.ok).length;
         failedCount = tokens.length - sentCount;

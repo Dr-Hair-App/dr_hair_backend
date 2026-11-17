@@ -86,13 +86,28 @@ export class AppReleasePolicyRepository {
     return created;
   }
 
-  async checkClientVersion({ platform = 'android', clientVersion = '1.0.0' } = {}) {
+  async checkClientVersion({ platform = 'android', clientVersion = '1.0.0', clientBuild = '' } = {}) {
     const policy = await this.getByPlatform(platform);
     if (!policy) {
       return {
         updateRequired: false,
         updateAvailable: false,
         maintenanceMode: false,
+      };
+    }
+
+    const enabled = policy.enabled !== false;
+    const scheduledAt = policy.scheduledAt ? new Date(policy.scheduledAt).getTime() : 0;
+    const scheduled = Number.isFinite(scheduledAt) && scheduledAt > Date.now();
+    if (!enabled || scheduled) {
+      return {
+        maintenanceMode: enabled && !scheduled && Boolean(policy.maintenanceMode),
+        maintenanceMessage: enabled && !scheduled && policy.maintenanceMode ? policy.maintenanceMessage : undefined,
+        updateRequired: false,
+        updateAvailable: false,
+        policyEnabled: enabled,
+        scheduled,
+        scheduledAt: policy.scheduledAt || null,
       };
     }
 
@@ -105,9 +120,18 @@ export class AppReleasePolicyRepository {
       };
     }
 
-    const cmpMin = compareSemver(clientVersion, policy.minVersion);
-    const updateRequired = cmpMin < 0 || policy.forceUpdate;
-    const cmpLatest = compareSemver(clientVersion, policy.latestVersion);
+    const compareVersionAndBuild = (version, build, targetVersion, targetBuild) => {
+      const versionResult = compareSemver(version, targetVersion);
+      if (versionResult !== 0) return versionResult;
+      const currentBuild = Number.parseInt(build, 10);
+      const requiredBuild = Number.parseInt(targetBuild, 10);
+      if (!Number.isFinite(requiredBuild)) return 0;
+      return (Number.isFinite(currentBuild) ? currentBuild : 0) - requiredBuild;
+    };
+
+    const cmpMin = compareVersionAndBuild(clientVersion, clientBuild, policy.minVersion, policy.minBuild);
+    const cmpLatest = compareVersionAndBuild(clientVersion, clientBuild, policy.latestVersion, policy.latestBuild);
+    const updateRequired = cmpMin < 0 || (Boolean(policy.forceUpdate) && cmpLatest < 0);
     const updateAvailable = cmpLatest < 0;
 
     return {
@@ -117,8 +141,12 @@ export class AppReleasePolicyRepository {
       forceUpdate: Boolean(policy.forceUpdate),
       latestVersion: policy.latestVersion,
       minVersion: policy.minVersion,
+      minBuild: policy.minBuild || null,
+      latestBuild: policy.latestBuild || null,
       downloadUrl: policy.downloadUrl,
       releaseNotes: policy.releaseNotes,
+      updateMessage: policy.updateMessage || '',
+      scheduledAt: policy.scheduledAt || null,
     };
   }
 }

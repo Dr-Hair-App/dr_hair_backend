@@ -20,7 +20,8 @@ export class D1RateLimitStore {
   _fallbackIncrement(storageKey) {
     const now = Date.now();
     let entry = this.fallback.get(storageKey);
-    if (!entry || entry.resetTime.getTime() <= now) {
+    const entryResetMs = entry?.resetTime instanceof Date ? entry.resetTime.getTime() : new Date(entry?.resetTime).getTime();
+    if (!entry || Number.isNaN(entryResetMs) || entryResetMs <= now) {
       entry = { totalHits: 1, resetTime: new Date(now + this.windowMs) };
     } else {
       entry.totalHits += 1;
@@ -33,7 +34,7 @@ export class D1RateLimitStore {
     const storageKey = this.key(key);
     try {
       const item = await RateLimitCounterModel.findOne({ key: storageKey, resetTime: { $gt: new Date() } }).lean();
-      return item ? { totalHits: item.totalHits, resetTime: item.resetTime } : undefined;
+      return item ? { totalHits: item.totalHits, resetTime: new Date(item.resetTime) } : undefined;
     } catch {
       return this.fallback.get(storageKey);
     }
@@ -48,7 +49,7 @@ export class D1RateLimitStore {
         { $inc: { totalHits: 1 } },
         { new: true },
       ).lean();
-      if (active) return { totalHits: active.totalHits, resetTime: active.resetTime };
+      if (active) return { totalHits: active.totalHits, resetTime: new Date(active.resetTime) };
 
       const resetTime = new Date(now.getTime() + this.windowMs);
       const expired = await RateLimitCounterModel.findOneAndUpdate(
@@ -56,11 +57,11 @@ export class D1RateLimitStore {
         { $set: { totalHits: 1, resetTime } },
         { new: true },
       ).lean();
-      if (expired) return { totalHits: expired.totalHits, resetTime: expired.resetTime };
+      if (expired) return { totalHits: expired.totalHits, resetTime: new Date(expired.resetTime) };
 
       try {
         const created = await RateLimitCounterModel.create({ key: storageKey, totalHits: 1, resetTime });
-        return { totalHits: created.totalHits, resetTime: created.resetTime };
+        return { totalHits: created.totalHits, resetTime: new Date(created.resetTime) };
       } catch (error) {
         if (error?.code !== 11000) throw error;
         const raced = await RateLimitCounterModel.findOneAndUpdate(
@@ -68,7 +69,7 @@ export class D1RateLimitStore {
           { $inc: { totalHits: 1 } },
           { new: true },
         ).lean();
-        if (raced) return { totalHits: raced.totalHits, resetTime: raced.resetTime };
+        if (raced) return { totalHits: raced.totalHits, resetTime: new Date(raced.resetTime) };
         throw error;
       }
     } catch {

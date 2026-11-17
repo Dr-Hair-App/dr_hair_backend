@@ -4,13 +4,22 @@ import { sendError } from '../utils/response.js';
 import { config } from '../../config/env.js';
 
 export const errorHandler = (err, req, res, next) => {
-  logger.error(`${req.method} ${req.url} - Error: ${err.message}`, err.stack);
+  logger.error(`${req.method} ${req.url} [${req.id || 'no-request-id'}] - Error: ${err.message}`, err.stack);
 
   if (err instanceof AppError) {
+    const statusCode = Number(err.statusCode) || 500;
+    if (statusCode >= 500) {
+      return sendError(res, {
+        message: config.env === 'production' ? 'Internal Server Error' : err.message,
+        code: 'INTERNAL_ERROR',
+        statusCode,
+        meta: { request_id: req.id || null },
+      });
+    }
     return sendError(res, {
       message: err.message,
       code: err.code || 'INTERNAL_ERROR',
-      statusCode: err.statusCode,
+      statusCode,
       details: err.details,
     });
   }
@@ -32,6 +41,7 @@ export const errorHandler = (err, req, res, next) => {
   return sendError(res, {
     message,
     statusCode: 500,
+    meta: { request_id: req.id || null },
   });
 };
 

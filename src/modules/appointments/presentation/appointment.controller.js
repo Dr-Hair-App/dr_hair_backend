@@ -125,7 +125,7 @@ export class AppointmentController {
     return {
       timezone,
       booking_window_days: Number(metadata.booking_window_days) || 0,
-      weekly_closed_weekdays: Array.isArray(metadata.weekly_closed_weekdays) ? metadata.weekly_closed_weekdays : [],
+      weekly_closed_weekdays: Array.isArray(metadata.weekly_closed_weekdays) ? metadata.weekly_closed_weekdays : [7],
       slot_interval_minutes: slotInterval,
       sessions: metadata.sessions,
       clinic_name: String(metadata.clinic_name || ''),
@@ -141,7 +141,7 @@ export class AppointmentController {
   getScheduleConfigAdmin = async (_req, res, next) => {
     try {
       return sendSuccess(res, { data: (await this.getScheduleConfig()) || {
-        timezone: 'Asia/Kolkata', booking_window_days: null, weekly_closed_weekdays: [],
+        timezone: 'Asia/Kolkata', booking_window_days: null, weekly_closed_weekdays: [7],
         slot_interval_minutes: null, sessions: [], clinic_name: '', clinic_address: '', doctor_name: '', room: '',
         appointment_duration_minutes: null, appointment_services: [], is_configured: false,
       } });
@@ -1430,7 +1430,7 @@ export class AppointmentController {
       return sendSuccess(res, {
         data: {
           ...(schedule || {
-            timezone: 'Asia/Kolkata', booking_window_days: null, weekly_closed_weekdays: [],
+            timezone: 'Asia/Kolkata', booking_window_days: null, weekly_closed_weekdays: [7],
             slot_interval_minutes: null, sessions: [], clinic_name: '', clinic_address: '', doctor_name: '', room: '',
             appointment_duration_minutes: null, appointment_services: [], is_configured: false,
           }),

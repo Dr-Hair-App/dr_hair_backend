@@ -387,6 +387,82 @@ describe('Phase 6: Admin Platform Controls, Aggregates, Flags & Audits', () => {
       assert.equal(configData.data.versionCheck.forceUpdate, true);
     });
 
+    it('honors release build thresholds and defers policies until their scheduled time', async () => {
+      await appReleasePolicyRepo.setPolicy('android', {
+        minVersion: '1.1.0', minBuild: '13', latestVersion: '1.2.0', latestBuild: '20',
+        forceUpdate: true, enabled: true, scheduledAt: new Date(Date.now() + 60_000).toISOString(),
+        maintenanceMode: false,
+      });
+      const beforeStart = await appReleasePolicyRepo.checkClientVersion({
+        platform: 'android', clientVersion: '1.0.0', clientBuild: '1',
+      });
+      assert.equal(beforeStart.scheduled, true);
+      assert.equal(beforeStart.updateRequired, false);
+
+      await appReleasePolicyRepo.setPolicy('android', { scheduledAt: null });
+      const oldBuild = await appReleasePolicyRepo.checkClientVersion({
+        platform: 'android', clientVersion: '1.1.0', clientBuild: '12',
+      });
+      assert.equal(oldBuild.updateRequired, true);
+      assert.equal(oldBuild.updateAvailable, true);
+
+      const current = await appReleasePolicyRepo.checkClientVersion({
+        platform: 'android', clientVersion: '1.1.0', clientBuild: '13',
+      });
+      assert.equal(current.updateRequired, true, 'force update remains active at the minimum build');
+      assert.equal(current.latestBuild, '20');
+    });
+
+    it('does not enforce a disabled release policy', async () => {
+      await appReleasePolicyRepo.setPolicy('ios', {
+        minVersion: '3.0.0', latestVersion: '3.2.0', forceUpdate: true,
+        enabled: false, maintenanceMode: true,
+      });
+      const result = await appReleasePolicyRepo.checkClientVersion({ platform: 'ios', clientVersion: '1.0.0' });
+      assert.equal(result.updateRequired, false);
+      assert.equal(result.maintenanceMode, false);
+      assert.equal(result.policyEnabled, false);
+    });
+
+    it('validates and persists app release settings through the admin API controller', async () => {
+      let saved;
+      const saveReq = {
+        params: { platform: 'android' },
+        user: { email: superAdmin.email },
+        body: {
+          minVersion: '1.1.0', minBuild: '13', latestVersion: '1.2.0', latestBuild: '20',
+          forceUpdate: true, enabled: true, scheduledAt: null, maintenanceMode: false,
+          downloadUrl: 'https://play.google.com/store/apps/details?id=com.drhair',
+          updateMessage: 'Please install the latest Dr. Hair update.',
+          releaseNotes: 'Improved reliability.',
+        },
+      };
+      const response = {
+        status(code) { assert.equal(code, 200); return this; },
+        json(payload) { saved = payload; return this; },
+      };
+      await adminController.updateReleasePolicy(saveReq, response, (error) => { throw error; });
+      assert.equal(saved.status, 'success');
+      assert.equal(saved.data.enabled, true);
+      assert.equal(saved.data.minBuild, '13');
+
+      const config = await appReleasePolicyRepo.checkClientVersion({ platform: 'android', clientVersion: '1.1.0', clientBuild: '12' });
+      assert.equal(config.updateRequired, true);
+      assert.equal(config.updateMessage, 'Please install the latest Dr. Hair update.');
+    });
+
+    it('rejects an enabled policy without a valid store URL', async () => {
+      let error;
+      const request = {
+        params: { platform: 'ios' },
+        user: { email: superAdmin.email },
+        body: { minVersion: '1.0.0', latestVersion: '1.2.0', enabled: true, maintenanceMode: false, downloadUrl: 'http://example.com' },
+      };
+      await adminController.updateReleasePolicy(request, {}, (value) => { error = value; });
+      assert.equal(error?.statusCode, 400);
+      assert.match(error?.message || '', /HTTPS/);
+    });
+
     it('admin updates feature flag rollout percentage and enabled status', async () => {
       const updateReq = {
         user: { id: superAdmin.id, permissions: ['*'] },
@@ -419,6 +495,14 @@ describe('Phase 6: Admin Platform Controls, Aggregates, Flags & Audits', () => {
       // Verify evaluation in repo
       const flag = await featureFlagRepo.findByKey('shop');
       assert.equal(flag.rolloutPercentage, 50);
+    });
+
+    it('keeps persisted admin navigation flags separate from mobile app flags', async () => {
+      const adminFlags = await featureFlagRepo.list({ platform: 'admin' });
+      const appFlags = await featureFlagRepo.list({ platform: 'android' });
+      assert.equal(adminFlags.length, 6);
+      assert.ok(adminFlags.every((flag) => flag.key.startsWith('admin_') && flag.platform === 'admin'));
+      assert.ok(appFlags.every((flag) => !flag.key.startsWith('admin_')));
     });
   });
 

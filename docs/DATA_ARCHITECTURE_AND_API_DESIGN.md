@@ -32,6 +32,6 @@ Use direct SQL for hot aggregate and concurrency-sensitive paths. Inventory rele
 ## Local and environment setup
 
 - Wrangler local bindings isolate local D1/R2/KV state. Apply the SQL migration before starting the local Worker.
-- Dev and staging resources are separate; staging provider calls are forced to Razorpay test mode and Shiprocket sandbox.
+- Dev and staging resources are separate; staging uses Razorpay test credentials and an explicit Shiprocket simulator. Shiprocket's documented external API is live, so staging must never receive its live credentials.
 - Production resource bindings/secrets are configured separately and remain gated. Do not copy development data or credentials into production.
 - See `CLOUDFLARE_MIGRATION.md` for CI/CD, environment bindings, and required secrets.

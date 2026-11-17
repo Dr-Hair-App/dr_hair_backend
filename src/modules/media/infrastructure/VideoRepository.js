@@ -2,6 +2,8 @@ import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { VideoModel } from '../../../shared/database/models.js';
 import { store } from '../../../shared/database/store.js';
 
+const escapeRegexLiteral = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const orderNewestFirst = (a, b) => new Date(b.created_at) - new Date(a.created_at);
 
 export class VideoRepository {
@@ -21,7 +23,7 @@ export class VideoRepository {
     const safeLimit = Math.min(50, Math.max(1, parseInt(limit, 10) || 10));
     const skip = (safePage - 1) * safeLimit;
     const placementFilter = placement ? { placement: { $in: [placement, 'both'] } } : {};
-    const categoryFilter = category && category !== 'All' ? { category: new RegExp(`^${category}$`, 'i') } : {};
+    const categoryFilter = category && category !== 'All' ? { category: new RegExp(`^${escapeRegexLiteral(category)}$`, 'i') } : {};
 
     if (isDatabaseConnected()) {
       const filter = { status: 'published', ...placementFilter, ...categoryFilter };

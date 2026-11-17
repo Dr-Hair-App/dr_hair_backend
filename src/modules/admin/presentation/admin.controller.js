@@ -149,6 +149,7 @@ export class AdminController {
         page: req.query.page,
         limit: req.query.limit,
         search: req.query.search,
+        segment: req.query.segment,
       });
       return sendSuccess(res, {
         data: {
@@ -157,9 +158,20 @@ export class AdminController {
             ...user.toPublicProfile(),
             role: user.role,
             created_at: user.created_at,
+            has_completed_assessment: Boolean(user.has_completed_assessment),
           })),
+          segment: result.segment,
         },
       });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getPatientSegments = async (req, res, next) => {
+    try {
+      const data = await this.userRepository.getSegmentSummary();
+      return sendSuccess(res, { data });
     } catch (error) {
       next(error);
     }
@@ -1167,16 +1179,73 @@ export class AdminController {
       const { platform } = req.params;
       const actor = req.user?.email || 'Super Admin';
       if (!this.appReleasePolicyRepository) throw new NotFoundError('Release policy management is not configured.');
-      const { minVersion, latestVersion, forceUpdate, maintenanceMode, maintenanceMessage, releaseNotes, downloadUrl } = req.body || {};
+      const { minVersion, minBuild, latestVersion, latestBuild, forceUpdate, enabled, scheduledAt, maintenanceMode, maintenanceMessage, releaseNotes, downloadUrl, updateMessage } = req.body || {};
+      if (!['android', 'ios'].includes(String(platform).toLowerCase())) {
+        throw new BadRequestError('Platform must be android or ios.');
+      }
+      const semver = /^\d+\.\d+\.\d+$/;
+      if (minVersion !== undefined && !semver.test(String(minVersion))) throw new BadRequestError('Minimum version must use semantic version format, such as 1.2.3.');
+      if (latestVersion !== undefined && !semver.test(String(latestVersion))) throw new BadRequestError('Latest version must use semantic version format, such as 1.2.3.');
+      for (const [label, value] of [['Minimum build', minBuild], ['Latest build', latestBuild]]) {
+        if (value !== undefined && (!/^\d+$/.test(String(value)) || Number(value) < 1)) throw new BadRequestError(`${label} must be a positive whole number.`);
+      }
+      if (enabled !== undefined && typeof enabled !== 'boolean') throw new BadRequestError('Enabled must be a boolean.');
+      if (forceUpdate !== undefined && typeof forceUpdate !== 'boolean') throw new BadRequestError('Force update must be a boolean.');
+      if (maintenanceMode !== undefined && typeof maintenanceMode !== 'boolean') throw new BadRequestError('Maintenance mode must be a boolean.');
+      if (scheduledAt !== undefined && scheduledAt !== null && scheduledAt !== '') {
+        const scheduledTime = new Date(scheduledAt).getTime();
+        if (!Number.isFinite(scheduledTime) || scheduledTime <= Date.now()) throw new BadRequestError('Scheduled start must be a valid future date and time.');
+      }
+      if (minVersion !== undefined && latestVersion !== undefined) {
+        const compareVersion = (left, right) => {
+          const a = String(left).split('.').map(Number);
+          const b = String(right).split('.').map(Number);
+          for (let index = 0; index < 3; index += 1) {
+            if (a[index] !== b[index]) return a[index] - b[index];
+          }
+          return 0;
+        };
+        const versionOrder = compareVersion(minVersion, latestVersion);
+        const buildOrder = Number(minBuild ?? 1) - Number(latestBuild ?? Number.MAX_SAFE_INTEGER);
+        if (versionOrder > 0 || (versionOrder === 0 && buildOrder > 0)) {
+          throw new BadRequestError('Minimum supported version/build cannot be newer than the latest release.');
+        }
+      }
+      if (downloadUrl !== undefined && downloadUrl !== '') {
+        let parsedUrl;
+        try { parsedUrl = new URL(downloadUrl); } catch { throw new BadRequestError('Store URL must be a valid HTTPS link.'); }
+        if (parsedUrl.protocol !== 'https:') throw new BadRequestError('Store URL must be a valid HTTPS link.');
+      }
+      if (enabled === true && maintenanceMode !== true) {
+        const current = await this.appReleasePolicyRepository.getByPlatform(platform);
+        const effectiveStoreUrl = downloadUrl === undefined ? current?.downloadUrl : downloadUrl;
+        if (!effectiveStoreUrl) throw new BadRequestError('Add a store URL before enabling an update policy.');
+        try {
+          if (new URL(effectiveStoreUrl).protocol !== 'https:') throw new Error('invalid protocol');
+        } catch {
+          throw new BadRequestError('Store URL must be a valid HTTPS link.');
+        }
+      }
+      if (updateMessage !== undefined && (typeof updateMessage !== 'string' || updateMessage.trim().length < 8 || updateMessage.trim().length > 160)) {
+        throw new BadRequestError('Update message must be between 8 and 160 characters.');
+      }
+      if (maintenanceMessage !== undefined && (typeof maintenanceMessage !== 'string' || maintenanceMessage.trim().length < 8 || maintenanceMessage.trim().length > 200)) {
+        throw new BadRequestError('Maintenance message must be between 8 and 200 characters.');
+      }
 
       const updated = await this.appReleasePolicyRepository.setPolicy(platform, {
         minVersion,
+        minBuild: minBuild === undefined ? undefined : String(minBuild),
         latestVersion,
+        latestBuild: latestBuild === undefined ? undefined : String(latestBuild),
         forceUpdate,
+        enabled,
+        scheduledAt: scheduledAt === '' ? null : scheduledAt,
         maintenanceMode,
         maintenanceMessage,
         releaseNotes,
         downloadUrl,
+        updateMessage,
         updatedBy: actor,
       });
 
@@ -1199,10 +1268,11 @@ export class AdminController {
     try {
       const platform = String(req.headers?.['x-platform'] || req.query?.platform || 'android').toLowerCase();
       const clientVersion = String(req.headers?.['x-app-version'] || req.query?.version || '1.0.0');
+      const clientBuild = String(req.headers?.['x-app-build'] || req.query?.build || '');
 
       let versionCheck = { updateRequired: false, updateAvailable: false, maintenanceMode: false };
       if (this.appReleasePolicyRepository) {
-        versionCheck = await this.appReleasePolicyRepository.checkClientVersion({ platform, clientVersion });
+        versionCheck = await this.appReleasePolicyRepository.checkClientVersion({ platform, clientVersion, clientBuild });
       }
 
       let flags = {};
@@ -1229,6 +1299,17 @@ export class AdminController {
 
       if (typeof res.setHeader === 'function' && !res.getHeader?.('Cache-Control')) {
         res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=120, stale-while-revalidate=300');
+      }
+      if (typeof res.setHeader === 'function') {
+        const existingVary = String(res.getHeader?.('Vary') ?? '')
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean);
+        const varyHeaders = new Set(existingVary.map((value) => value.toLowerCase()));
+        for (const header of ['X-Platform', 'X-App-Version', 'X-App-Build']) {
+          if (!varyHeaders.has(header.toLowerCase())) existingVary.push(header);
+        }
+        res.setHeader('Vary', existingVary.join(', '));
       }
 
       return sendSuccess(res, {

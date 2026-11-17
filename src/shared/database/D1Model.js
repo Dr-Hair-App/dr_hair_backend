@@ -123,6 +123,37 @@ const expressionSql = (field) => {
 
 const expressionArgs = (field) => typeof field === 'string' && field.startsWith('$') ? [] : [bindValue(field)];
 
+const regexToLikePattern = (source) => {
+  let pattern = '';
+  const expression = String(source).replace(/^\^/, '').replace(/\$$/, '');
+  for (let index = 0; index < expression.length; index += 1) {
+    const char = expression[index];
+    if (char === '\\') {
+      const literal = expression[index + 1];
+      if (!literal || /[bBdDsSwW]/.test(literal)) {
+        throw new TypeError('Unsupported D1 regular expression escape.');
+      }
+      index += 1;
+      pattern += ['%', '_', '\\'].includes(literal) ? `\\${literal}` : literal;
+      continue;
+    }
+    if (char === '.' && expression[index + 1] === '*') {
+      pattern += '%';
+      index += 1;
+      continue;
+    }
+    if (char === '.') {
+      pattern += '_';
+      continue;
+    }
+    if ('^$+?{}()|[]'.includes(char)) {
+      throw new TypeError('Unsupported D1 regular expression operator.');
+    }
+    pattern += ['%', '_', '\\'].includes(char) ? `\\${char}` : char;
+  }
+  return pattern;
+};
+
 const comparisonSql = (field, condition) => {
   const parts = String(field).split('.');
   const nestedArray = parts.length > 1;
@@ -143,7 +174,10 @@ const comparisonSql = (field, condition) => {
         const values = Array.isArray(expected) ? expected : [];
         if (values.length === 0) clauses.push(operator === '$in' ? '0' : '1');
         else {
-          clauses.push(`${column} ${operator === '$nin' ? 'NOT ' : ''}IN (${values.map(() => '?').join(', ')})`);
+          const membership = `${column} ${operator === '$nin' ? 'NOT ' : ''}IN (${values.map(() => '?').join(', ')})`;
+          clauses.push(operator === '$nin'
+            ? `(${membership} OR ${type} IS NULL OR ${type} = 'null')`
+            : membership);
           args.push(...values.map(bindValue));
         }
       } else if (operator === '$ne') {
@@ -155,9 +189,20 @@ const comparisonSql = (field, condition) => {
       } else if (operator === '$regex') {
         const source = expected instanceof RegExp ? expected.source : String(expected);
         const flags = condition.$options || (expected instanceof RegExp ? expected.flags : '');
-        const pattern = source.replace(/^\^/, '').replace(/\$$/, '').replace(/\.\*/g, '%').replace(/\./g, '_');
-        clauses.push(`${flags.includes('i') ? `LOWER(CAST(${column} AS TEXT))` : `CAST(${column} AS TEXT)`} LIKE ?`);
+        const pattern = regexToLikePattern(source);
+        clauses.push(`${flags.includes('i') ? `LOWER(CAST(${column} AS TEXT))` : `CAST(${column} AS TEXT)`} LIKE ? ESCAPE '\\'`);
         args.push(flags.includes('i') ? pattern.toLowerCase() : pattern);
+      } else if (operator === '$type') {
+        if (expected === 'number') clauses.push(`${type} IN ('integer', 'real')`);
+        else if (expected === 'boolean') clauses.push(`${type} IN ('true', 'false')`);
+        else {
+          const sqliteType = ({ string: 'text', object: 'object', array: 'array', null: 'null' })[expected];
+          if (!sqliteType) throw new TypeError(`Unsupported D1 query type: ${String(expected)}`);
+          clauses.push(`${type} = ?`);
+          args.push(sqliteType);
+        }
+      } else {
+        throw new TypeError(`Unsupported D1 query operator: ${operator}`);
       }
     }
     const clause = clauses.length ? clauses.map((item) => `(${item})`).join(' AND ') : '1';
@@ -292,16 +337,40 @@ class D1Query {
     this.offset = 0;
     this.max = null;
     this.selection = '';
+    this.executionTimeoutMs = null;
   }
 
   sort(value) { this.sortSpec = typeof value === 'function' ? null : value; return this; }
   skip(value) { this.offset = Math.max(0, Number(value) || 0); return this; }
   limit(value) { this.max = Math.max(0, Number(value) || 0); return this; }
   select(value) { this.selection = value || ''; return this; }
-  maxTimeMS() { return this; }
+  maxTimeMS(value) {
+    const timeout = Number(value);
+    this.executionTimeoutMs = Number.isFinite(timeout) && timeout > 0 ? timeout : null;
+    return this;
+  }
+  populate() { return this; }
+  collation() { return this; }
+  hint() { return this; }
+  comment() { return this; }
+  batchSize() { return this; }
+  setOptions() { return this; }
+  read() { return this; }
   lean() { return this; }
   session() { return this; }
-  exec() { return this.model._executeQuery(this); }
+  exec() {
+    const execution = this.model._executeQuery(this);
+    if (!this.executionTimeoutMs) return execution;
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error(`D1 query exceeded ${this.executionTimeoutMs}ms.`);
+        error.code = 'D1_QUERY_TIMEOUT';
+        reject(error);
+      }, this.executionTimeoutMs);
+    });
+    return Promise.race([execution, timeout]).finally(() => clearTimeout(timer));
+  }
   then(resolve, reject) { return this.exec().then(resolve, reject); }
   catch(reject) { return this.exec().catch(reject); }
   finally(callback) { return this.exec().finally(callback); }
@@ -311,10 +380,34 @@ class D1MutationQuery {
   constructor(operation) {
     this.operation = operation;
     this.promise = null;
+    this.selectedFields = null;
   }
 
+  select(fields) {
+    this.selectedFields = fields;
+    return this;
+  }
+
+  populate() {
+    return this;
+  }
+
+  collation() { return this; }
+  hint() { return this; }
+  comment() { return this; }
+  maxTimeMS() { return this; }
+  setOptions() { return this; }
+  session() { return this; }
   lean() { return this; }
-  exec() { this.promise ||= Promise.resolve().then(this.operation); return this.promise; }
+  exec() {
+    this.promise ||= Promise.resolve().then(this.operation).then((doc) => {
+      if (this.selectedFields && doc) {
+        return project(doc, this.selectedFields);
+      }
+      return doc;
+    });
+    return this.promise;
+  }
   then(resolve, reject) { return this.exec().then(resolve, reject); }
   catch(reject) { return this.exec().catch(reject); }
   finally(callback) { return this.exec().finally(callback); }
@@ -335,6 +428,7 @@ export class D1Model {
   findByIdAndDelete(id) { return this.findOneAndDelete({ $or: [{ _id: String(id) }, { id }, { id: String(id) }] }); }
   exists(filter = {}) { return this.findOne(filter).select('_id').lean().then((record) => record ? { _id: record._id } : null); }
   countDocuments(filter = {}) { return new D1Query(this, filter, 'count'); }
+  estimatedDocumentCount(filter = {}) { return this.countDocuments(filter); }
 
   async _executeQuery(query) {
     const database = getDatabaseBinding();
@@ -487,8 +581,37 @@ export class D1Model {
   }
 
   async distinct(field, filter = {}) {
+    const database = getDatabaseBinding();
+    if (database) {
+      const path = jsonPath(field);
+      const where = filterSql(filter);
+      const type = `json_type(payload, '${path}')`;
+      const scalar = `SELECT json_extract(payload, '${path}') AS value, ${type} AS value_type FROM "${this.table}" WHERE (${where.sql}) AND ${type} IS NOT NULL AND ${type} <> 'array'`;
+      const array = `SELECT item.value AS value, item.type AS value_type FROM "${this.table}" CROSS JOIN json_each(payload, '${path}') AS item WHERE (${where.sql}) AND ${type} = 'array'`;
+      const result = await database.prepare(`SELECT DISTINCT value, value_type FROM (${scalar} UNION ALL ${array})`).bind(...where.args, ...where.args).all();
+      const values = [];
+      const seen = new Set();
+      for (const row of result.results || []) {
+        let value = row.value;
+        if (row.value_type === 'true') value = true;
+        else if (row.value_type === 'false') value = false;
+        else if (row.value_type === 'object' || row.value_type === 'array') {
+          try { value = typeof value === 'string' ? JSON.parse(value) : value; } catch { /* retain driver value */ }
+        }
+        const key = JSON.stringify(value);
+        if (!seen.has(key)) {
+          seen.add(key);
+          values.push(value);
+        }
+      }
+      return values;
+    }
     const rows = await this.find(filter).lean();
-    return [...new Set(rows.map((row) => getPath(row, field)).filter((value) => value !== undefined))];
+    const values = rows.flatMap((row) => {
+      const value = getPath(row, field);
+      return value === undefined ? [] : Array.isArray(value) ? value : [value];
+    });
+    return [...new Map(values.map((value) => [JSON.stringify(value), value])).values()];
   }
 
   async bulkWrite(operations = []) {

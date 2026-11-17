@@ -11,6 +11,8 @@ import { InventoryOperationModel, OrderModel, ProviderWebhookEventModel } from '
 import { sendError } from './shared/utils/response.js';
 import { requestIdMiddleware } from './shared/middlewares/requestId.middleware.js';
 import { cacheControl } from './shared/middlewares/cache.middleware.js';
+import { authenticateToken } from './shared/middlewares/auth.middleware.js';
+import { requireAnyPermission } from './shared/middlewares/admin.middleware.js';
 
 const isDatabaseReady = (database) => {
   if (database === 'connected') return true;
@@ -36,9 +38,9 @@ const checkDatabaseReadiness = async () => {
   }
 };
 
-export const createApp = () => {
+export const createApp = (overrides = {}) => {
   const app = express();
-  const container = createContainer();
+  const container = createContainer(overrides);
   if (config.env === 'production') app.set('trust proxy', 1);
 
   // Normalize client IP for serverless / Cloudflare Worker runtimes so rateLimiters have a valid key
@@ -186,47 +188,9 @@ export const createApp = () => {
   app.use('/Review', container.routers.reviewRouter);
   app.use('/review', container.routers.reviewRouter);
 
-  // Clinic Services endpoint (consumed by Flutter home / services catalog)
-  const clinicalServices = [
-    {
-      id: 'srv_assessment',
-      title: 'AI Hair & Scalp Assessment',
-      description: 'Comprehensive evaluation of hair loss pattern, scalp health, and personalized clinical guidance.',
-      imageUrl: '',
-      rating: 4.9,
-      reviewsCount: 340,
-      price: 'Free',
-    },
-    {
-      id: 'srv_prp',
-      title: 'PRP Hair Therapy',
-      description: 'Advanced Platelet-Rich Plasma therapy designed to stimulate active and dormant follicles.',
-      imageUrl: '',
-      rating: 4.8,
-      reviewsCount: 195,
-      price: '₹4,500',
-    },
-    {
-      id: 'srv_consultation',
-      title: 'Trichologist Consultation',
-      description: 'One-on-one video or clinic consultation with certified Dr. Hair medical specialists.',
-      imageUrl: '',
-      rating: 5.0,
-      reviewsCount: 420,
-      price: '₹500',
-    },
-    {
-      id: 'srv_laser',
-      title: 'Low-Level Light Therapy (LLLT)',
-      description: 'Clinical-grade light stimulation therapy for cellular repair and improved scalp circulation.',
-      imageUrl: '',
-      rating: 4.7,
-      reviewsCount: 112,
-      price: '₹2,500',
-    },
-  ];
-  app.get('/services', cacheControl({ maxAge: 300, sMaxAge: 600, staleWhileRevalidate: 1200 }), (_req, res) => res.status(200).json(clinicalServices));
-  app.get('/api/v1/services', cacheControl({ maxAge: 300, sMaxAge: 600, staleWhileRevalidate: 1200 }), (_req, res) => res.status(200).json(clinicalServices));
+  // Service catalog is managed as D1 categories; avoid fabricated static prices and ratings.
+  app.get('/services', cacheControl({ maxAge: 60, sMaxAge: 120, staleWhileRevalidate: 300 }), container.controllers.categoryController.listServicesForHome);
+  app.get('/api/v1/services', cacheControl({ maxAge: 60, sMaxAge: 120, staleWhileRevalidate: 300 }), container.controllers.categoryController.listServicesForHome);
 
   // Public clinic appointment closed dates / holidays
   app.get('/api/v1/appointments/closed-dates', cacheControl({ maxAge: 60, sMaxAge: 300, staleWhileRevalidate: 600 }), container.controllers.appointmentController.listClosedDates);
@@ -248,7 +212,7 @@ export const createApp = () => {
   app.use('/api/v1/videos', cacheControl({ maxAge: 30, sMaxAge: 60, staleWhileRevalidate: 120 }), container.routers.videoPublicRouter);
   app.use('/api/v1/categories', cacheControl({ maxAge: 120, sMaxAge: 300, staleWhileRevalidate: 600 }), container.routers.categoryRouter);
   app.use('/categories', cacheControl({ maxAge: 120, sMaxAge: 300, staleWhileRevalidate: 600 }), container.routers.categoryRouter);
-  app.use('/api/v1/admin/categories', container.routers.categoryRouter);
+  app.use('/api/v1/admin/categories', authenticateToken, requireAnyPermission('products.manage', 'content.edit'), container.routers.categoryRouter);
   app.use('/api/v1/products', cacheControl({ maxAge: 30, sMaxAge: 60, staleWhileRevalidate: 120 }), container.routers.productPublicRouter);
   app.use('/products', cacheControl({ maxAge: 30, sMaxAge: 60, staleWhileRevalidate: 120 }), container.routers.productPublicRouter);
   app.use('/api/v1/admin/products', container.routers.productAdminRouter);

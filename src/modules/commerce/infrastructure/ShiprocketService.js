@@ -3,7 +3,6 @@ import { isSandboxCommerceDeployment } from './CommerceRuntimeEnvironment.js';
 
 const API_BASES = Object.freeze({
   production: 'https://apiv2.shiprocket.in/v1/external',
-  sandbox: 'https://api-sandbox.shiprocket.in/v1/external',
 });
 const TOKEN_REFRESH_MARGIN_MS = 30 * 60 * 1000;
 const cachedTokens = new Map();
@@ -18,22 +17,31 @@ function positiveNumber(name) {
 
 export class ShiprocketService {
   getConfiguration() {
-    const defaultEnvironment = process.env.NODE_ENV === 'production' ? 'production' : 'sandbox';
-    // The separate staging environment must always use sandbox credentials.
-    const environment = isSandboxCommerceDeployment()
-      ? 'sandbox'
-      : process.env.SHIPROCKET_API_ENV?.trim().toLowerCase() || defaultEnvironment;
+    // Shiprocket's documented external API is live and does not provide a
+    // separate API sandbox. Staging therefore uses an explicit local simulator.
+    if (isSandboxCommerceDeployment()) {
+      if (process.env.SHIPROCKET_STAGING_MODE?.trim().toLowerCase() !== 'mock') {
+        return { environment: 'disabled', apiBase: '', email: '', password: '', pickupLocation: '', package: {}, configured: false };
+      }
+      return {
+        environment: 'mock',
+        apiBase: 'mock://shiprocket',
+        email: 'staging-mock',
+        password: 'staging-mock',
+        pickupLocation: process.env.SHIPROCKET_STAGING_PICKUP_NAME?.trim() || 'Dr Hair Staging',
+        package: {},
+        configured: true,
+      };
+    }
+
+    // Local development is opt-in disabled; only an explicit production value
+    // can ever call Shiprocket's live account API.
+    const environment = process.env.SHIPROCKET_API_ENV?.trim().toLowerCase() === 'production'
+      ? 'production'
+      : 'disabled';
     const apiBase = API_BASES[environment] || '';
-    const email = environment === 'sandbox'
-      ? process.env.SHIPROCKET_SANDBOX_API_EMAIL?.trim() || ''
-      : environment === 'production'
-        ? process.env.SHIPROCKET_API_EMAIL?.trim() || ''
-        : '';
-    const password = environment === 'sandbox'
-      ? process.env.SHIPROCKET_SANDBOX_API_PASSWORD || ''
-      : environment === 'production'
-        ? process.env.SHIPROCKET_API_PASSWORD || ''
-        : '';
+    const email = environment === 'production' ? process.env.SHIPROCKET_API_EMAIL?.trim() || '' : '';
+    const password = environment === 'production' ? process.env.SHIPROCKET_API_PASSWORD || '' : '';
     const pickupLocation = process.env.SHIPROCKET_PICKUP_LOCATION?.trim() || '';
     const length = positiveNumber('SHIPROCKET_PACKAGE_LENGTH_CM');
     const breadth = positiveNumber('SHIPROCKET_PACKAGE_BREADTH_CM');
@@ -437,6 +445,7 @@ export class ShiprocketService {
   }
 
   async request(apiBase, path, token, options) {
+    if (apiBase === 'mock://shiprocket') return this.mockRequest(path, options);
     let response;
     try {
       response = await fetch(`${apiBase}${path}`, {
@@ -466,5 +475,35 @@ export class ShiprocketService {
       throw error;
     }
     return responseBody;
+  }
+
+  async mockRequest(path, options = {}) {
+    const pathname = String(path).split('?')[0];
+    const payload = (() => {
+      try { return JSON.parse(options.body || '{}'); } catch { return {}; }
+    })();
+    const timestamp = new Date().toISOString();
+    if (pathname === '/auth/login') return { token: 'staging-shiprocket-mock-token' };
+    if (pathname === '/settings/company/pickup') {
+      return { data: [{ pickup_location: process.env.SHIPROCKET_STAGING_PICKUP_NAME?.trim() || 'Dr Hair Staging', pin_code: process.env.SHIPROCKET_STAGING_PICKUP_PIN || '110001', city: 'New Delhi', state: 'Delhi', address: 'Staging simulator address', phone: '9999999999', contact_name: 'Staging Store' }] };
+    }
+    if (pathname.startsWith('/courier/serviceability/')) {
+      const query = new URLSearchParams(String(path).split('?')[1] || '');
+      return { data: { available_courier_companies: [{ courier_company_id: 99001, courier_name: 'Staging Test Courier', rate: 79, etd: '2-4 days', cod: query.get('cod') === '1' ? 1 : 0, rating: 5, charge_weight: Number(query.get('weight')) || 0 }] } };
+    }
+    if (pathname === '/shipments/create/forward-shipment' || pathname === '/shipments/create/return-shipment') {
+      const mockId = String(Date.now()).slice(-9);
+      return { payload: { order_id: payload.order_id || `STAGE-${mockId}`, shipment_id: mockId, awb_code: `STG${mockId}`, courier_name: 'Staging Test Courier', courier_company_id: 99001, pickup_status: 'PICKUP SCHEDULED', pickup_scheduled_date: timestamp } };
+    }
+    if (pathname === '/courier/generate/pickup') return { response: { pickup_status: 'PICKUP SCHEDULED', pickup_scheduled_date: timestamp } };
+    if (pathname === '/manifests/generate') return { manifest_url: 'https://staging.invalid/shiprocket/manifest' };
+    if (pathname === '/orders/cancel/shipment/awbs') return { status: 'CANCELLED', awbs: payload.awbs || [] };
+    if (pathname.startsWith('/courier/track/')) {
+      const identifier = decodeURIComponent(pathname.split('/').at(-1) || 'STAGING');
+      const inTransit = identifier.toUpperCase().includes('TRANSIT');
+      const status = inTransit ? 'IN TRANSIT' : 'READY TO SHIP';
+      return { tracking_data: { track_url: `https://staging.invalid/shiprocket/tracking/${encodeURIComponent(identifier)}`, shipment_track: [{ awb_code: identifier, courier_name: 'Staging Test Courier', current_status: status, current_status_id: inTransit ? 6 : 1, edd: timestamp.slice(0, 10), origin: 'New Delhi', destination: 'Delivery address', updated_time_stamp: timestamp }], shipment_track_activities: [{ date: timestamp, 'sr-status-label': status, activity: 'Staging shipment update', location: 'Staging simulator' }] } };
+    }
+    throw new BadGatewayError(`Unsupported Shiprocket staging mock operation: ${pathname}`);
   }
 }

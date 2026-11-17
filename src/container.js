@@ -34,8 +34,6 @@ import { FeatureFlagRepository } from './modules/admin/infrastructure/FeatureFla
 import { AppReleasePolicyRepository } from './modules/admin/infrastructure/AppReleasePolicyRepository.js';
 import { SupportInquiryRepository } from './modules/support/infrastructure/SupportInquiryRepository.js';
 import { GeminiAiService } from './modules/ai/infrastructure/GeminiAiService.js';
-import { StreamPatientAssistantReplyUseCase } from './modules/ai/application/StreamPatientAssistantReplyUseCase.js';
-import { PatientAssistantController } from './modules/ai/presentation/patient-assistant.controller.js';
 
 // Use Cases
 import { SendOtpUseCase } from './modules/auth/application/SendOtpUseCase.js';
@@ -275,13 +273,6 @@ export const createContainer = (overrides = {}) => {
   });
 
   const geminiAiService = overrides.geminiAiService || new GeminiAiService({ imageStorage });
-  const streamPatientAssistantReplyUseCase = new StreamPatientAssistantReplyUseCase({ geminiAiService });
-  const patientAssistantController = new PatientAssistantController({
-    streamPatientAssistantReplyUseCase,
-    userRepository,
-    hairTestRepository,
-    treatmentRepository,
-  });
   const assessmentProductAvailabilityService = overrides.assessmentProductAvailabilityService ||
     new AssessmentProductAvailabilityService({ productRepository, featureFlagRepository });
 
@@ -586,7 +577,6 @@ export const createContainer = (overrides = {}) => {
     patientClinicalController,
     appointmentController,
     treatmentController,
-    patientAssistantController,
   });
   const supportRouter = createSupportRouter({ supportController });
   const adminSupportRouter = createAdminSupportRouter({ supportController });
@@ -653,7 +643,6 @@ export const createContainer = (overrides = {}) => {
       processQueuedAiAssessmentUseCase,
       generateAssessmentDietPlanUseCase,
       detectScalpImageUseCase,
-      streamPatientAssistantReplyUseCase,
       getTreatmentHistoryUseCase,
       getReviewsUseCase,
       createReviewUseCase,
@@ -692,7 +681,6 @@ export const createContainer = (overrides = {}) => {
       adminAuthController,
       appointmentController,
       patientClinicalController,
-      patientAssistantController,
       contentController,
       commerceController,
       supportController,

@@ -4,11 +4,42 @@ import { createContainer } from '../src/container.js';
 import { createApp } from '../src/app.js';
 import { TokenService } from '../src/shared/utils/token.service.js';
 import { Product } from '../src/modules/products/domain/Product.js';
+import { ProductRepository } from '../src/modules/products/infrastructure/ProductRepository.js';
+import { clearDatabaseBinding, setDatabaseBinding } from '../src/shared/database/runtime.js';
 
 test('products without review data do not receive a fabricated rating', () => {
   const product = new Product({ id: 'unrated', name: 'Unrated', category: 'Care' });
   assert.equal(product.rating, 0);
   assert.equal(product.reviews_count, 0);
+});
+
+test('product status filtering uses the lowercase indexed equality predicate', async () => {
+  const statements = [];
+  setDatabaseBinding({
+    prepare(sql) {
+      const statement = { sql, args: [] };
+      statements.push(statement);
+      return {
+        bind(...args) {
+          statement.args = args;
+          return {
+            all: async () => ({ results: [] }),
+            first: async () => ({ total: 0 }),
+          };
+        },
+      };
+    },
+  });
+  try {
+    await new ProductRepository().list({ status: 'ACTIVE' });
+    assert.equal(statements.length, 2);
+    assert.match(statements[0].sql, /json_extract\(payload, '\$\.status'\) = \?/);
+    assert.doesNotMatch(statements[0].sql, /LIKE/);
+    assert.ok(statements[0].sql.includes("json_extract(payload, '$.created_at') DESC"));
+    assert.equal(statements[0].args[0], 'active');
+  } finally {
+    clearDatabaseBinding();
+  }
 });
 
 test('Product Module - Clean Architecture Tests', async (t) => {

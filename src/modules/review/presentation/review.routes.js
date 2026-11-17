@@ -3,6 +3,8 @@ import { parseFormData } from '../../../shared/middlewares/upload.middleware.js'
 import { rateLimit } from 'express-rate-limit';
 import { createRateLimitStore } from '../../../shared/middlewares/rate-limit-store.js';
 import { sendError } from '../../../shared/utils/response.js';
+import { validate } from '../../../shared/validators/validate.middleware.js';
+import { createReviewSchema } from '../../../shared/validators/review.validator.js';
 
 export const createReviewRouter = ({ reviewController }) => {
   const router = Router();
@@ -20,7 +22,7 @@ export const createReviewRouter = ({ reviewController }) => {
   // POST /Review/review_get
   router.post('/review_get', parseFormData, reviewController.getReviews);
   router.get('/review_get', reviewController.getReviews);
-  router.post('/create', publicCreateLimiter, parseFormData, reviewController.createReview);
+  router.post('/create', publicCreateLimiter, parseFormData, validate({ body: createReviewSchema }), reviewController.createReview);
 
   return router;
 };

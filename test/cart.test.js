@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createContainer } from '../src/container.js';
+import { CartController } from '../src/modules/cart/presentation/cart.controller.js';
 
 test('Cart Module - Clean Architecture Tests', async (t) => {
   const container = createContainer();
@@ -93,4 +94,26 @@ test('Cart Module - Clean Architecture Tests', async (t) => {
     assert.equal(cleared.items.length, 0);
     assert.equal(cleared.subtotal, 0);
   });
+});
+
+test('guest carts require an unguessable session id and legacy checkout cannot claim an order', async () => {
+  const controller = new CartController({});
+  assert.equal(
+    controller._resolveUserId({ headers: { 'x-guest-session-id': `guest_${'a'.repeat(64)}` } }),
+    `guest_${'a'.repeat(64)}`,
+  );
+  assert.throws(
+    () => controller._resolveUserId({ headers: { 'x-guest-session-id': 'guest_1731800000000' } }),
+    /valid guest cart session/,
+  );
+
+  const response = {
+    statusCode: null,
+    body: null,
+    status(code) { this.statusCode = code; return this; },
+    json(body) { this.body = body; return this; },
+  };
+  await controller.checkout({}, response);
+  assert.equal(response.statusCode, 410);
+  assert.equal(response.body.code, 'CHECKOUT_MOVED');
 });

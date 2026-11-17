@@ -1,6 +1,7 @@
 import { DeviceTokenModel } from '../../../shared/database/models.js';
 import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { store } from '../../../shared/database/store.js';
+import { getPatientSegmentUserIds } from '../../users/infrastructure/patient-segments.js';
 
 export class DeviceTokenRepository {
   async register({ userId, token, platform }) {
@@ -51,9 +52,26 @@ export class DeviceTokenRepository {
   }
 
   async getAudienceUserIds(audience) {
+    const selectedAudiences = Array.isArray(audience)
+      ? audience.map((value) => String(value).trim()).filter(Boolean)
+      : String(audience || 'All app users').split('|').map((value) => value.trim()).filter(Boolean);
+    if (selectedAudiences.length > 1) {
+      const resolved = await Promise.all(selectedAudiences.map((item) => this.getAudienceUserIds(item)));
+      if (resolved.includes(null)) return null;
+      return [...new Set(resolved.flat().map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))];
+    }
     const cleanAudience = String(audience || 'All app users').trim();
     if (cleanAudience === 'All app users' || cleanAudience === 'all') {
       return null; // indicates all users
+    }
+
+    const segmentAudienceMap = {
+      'Accounts & assessments': 'accounts_assessments',
+      'Product customers': 'product_customers',
+      'Appointment & treatment patients': 'appointment_treatment',
+    };
+    if (segmentAudienceMap[cleanAudience]) {
+      return getPatientSegmentUserIds(segmentAudienceMap[cleanAudience]);
     }
 
     if (cleanAudience === 'Active patients') {

@@ -4,7 +4,7 @@ import { createContainer } from '../src/container.js';
 import { SmsService } from '../src/modules/auth/infrastructure/SmsService.js';
 
 describe('Auth Module - Clean Architecture Tests', () => {
-  // Use an injected mock SMS service so tests never contact Fast2SMS.
+  // Use an injected mock SMS service so tests never contact external SMS provider (2Factor).
   const sentOtps = new Map();
   const mockSmsService = {
     async sendOtp(destination, code) {

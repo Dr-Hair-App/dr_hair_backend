@@ -172,6 +172,25 @@ export const store = {
       created_at: '2026-03-20T10:00:00.000Z',
       updated_at: '2026-03-20T10:00:00.000Z',
     },
+    ...[
+      ['patients', 'Patients & assessments', 'Patient profiles, assessment review, and treatment history.'],
+      ['catalog', 'Product catalog', 'Product content, pricing, supply plans, and stock state.'],
+      ['content', 'App Management', 'Content, home placements, and app-facing experiences.'],
+      ['orders', 'Orders', 'Order list, fulfilment state, and customer details.'],
+      ['bookings', 'Clinic appointments', 'Clinic appointments and treatment operations.'],
+      ['tests', 'Hair tests & reports', 'Patient test uploads, clinical review, and report sharing workflow.'],
+    ].map(([id, title, description]) => ({
+      key: `admin_${id}`,
+      title,
+      description,
+      group: 'Admin panel access',
+      enabled: true,
+      platform: 'admin',
+      rolloutPercentage: 100,
+      updatedBy: 'System',
+      created_at: '2026-11-17T00:00:00.000Z',
+      updated_at: '2026-11-17T00:00:00.000Z',
+    })),
   ],
   appReleasePolicies: [
     {

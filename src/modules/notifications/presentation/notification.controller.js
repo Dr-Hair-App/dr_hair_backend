@@ -193,7 +193,15 @@ export class NotificationController {
   previewAudience = async (req, res, next) => {
     try {
       const { audience = 'All app users' } = req.query || {};
-      const count = await this.deviceTokenRepository.countByAudience(audience);
+      const audiences = String(audience).split('|').map((item) => item.trim()).filter(Boolean);
+      const allowedAudiences = new Set([
+        'All app users', 'Active patients', 'Patients with a shared report',
+        'Accounts & assessments', 'Product customers', 'Appointment & treatment patients',
+      ]);
+      if (!audiences.length || audiences.length > 6 || audiences.some((item) => !allowedAudiences.has(item))) {
+        throw new BadRequestError('Choose one or more valid patient groups.');
+      }
+      const count = await this.deviceTokenRepository.countByAudience(audiences);
       return sendSuccess(res, { data: count });
     } catch (error) {
       next(error);
@@ -206,12 +214,24 @@ export class NotificationController {
         title,
         body,
         audience = 'All app users',
+        audiences = null,
         type = 'announcement',
         destination = {},
         data = {},
         scheduled_at = null,
         scheduledAt = null,
       } = req.body || {};
+      const selectedAudiences = Array.isArray(audiences) && audiences.length ? audiences : audience;
+      const audienceList = (Array.isArray(selectedAudiences) ? selectedAudiences : [selectedAudiences]).map((item) => String(item).trim());
+      const allowedAudiences = new Set([
+        'All app users', 'Active patients', 'Patients with a shared report',
+        'Accounts & assessments', 'Product customers', 'Appointment & treatment patients',
+      ]);
+      if (!audienceList.length || audienceList.length > 6 || audienceList.some((item) => !allowedAudiences.has(item))) {
+        throw new BadRequestError('Choose one or more valid patient groups before sending.');
+      }
+      const cleanAudiences = [...new Set(audienceList)];
+      const audienceLabel = cleanAudiences.join('|');
       const imageUrl = req.body?.image_url || req.body?.imageUrl || req.body?.image || null;
 
       if (typeof title !== 'string' || !title.trim() || title.length > 120) {
@@ -232,7 +252,7 @@ export class NotificationController {
       const isFutureSchedule = targetDate && targetDate.getTime() > Date.now() + 60000;
 
       // Calculate audience recipients server-side
-      const targetTokens = await this.deviceTokenRepository.listByAudience(audience);
+      const targetTokens = await this.deviceTokenRepository.listByAudience(cleanAudiences);
       const targetCount = targetTokens.length;
 
       let campaign = null;
@@ -240,7 +260,7 @@ export class NotificationController {
         campaign = await this.campaignRepository.create({
           title: title.trim(),
           body: body.trim(),
-          audience,
+          audience: audienceLabel,
           destination: dest,
           imageUrl,
           scheduledAt: isFutureSchedule ? targetDate : null,
@@ -256,7 +276,7 @@ export class NotificationController {
             actor,
             action: 'notification_campaign.scheduled',
             target: `campaign:${campaign?.id || 'scheduled'}`,
-            metadata: { title: title.trim(), audience, scheduledAt: targetDate.toISOString(), targetCount },
+            metadata: { title: title.trim(), audience: audienceLabel, scheduledAt: targetDate.toISOString(), targetCount },
           }).catch(() => null);
         }
 
@@ -267,7 +287,7 @@ export class NotificationController {
             is_scheduled: true,
             status: 'Scheduled',
             scheduled_at: targetDate.toISOString(),
-            audience,
+            audience: audienceLabel,
             target_count: targetCount,
           },
         });
@@ -351,7 +371,7 @@ export class NotificationController {
           actor,
           action: 'notification_campaign.broadcast',
           target: `campaign:${campaign?.id || 'broadcast'}`,
-          metadata: { title: title.trim(), audience, targetCount, sent, failed, status: finalStatus },
+          metadata: { title: title.trim(), audience: audienceLabel, targetCount, sent, failed, status: finalStatus },
         }).catch(() => null);
       }
 
@@ -360,7 +380,7 @@ export class NotificationController {
         data: {
           campaign,
           notification: saved,
-          audience,
+          audience: audienceLabel,
           total_targets: targetTokens.length,
           sent,
           failed,

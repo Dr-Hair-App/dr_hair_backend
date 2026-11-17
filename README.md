@@ -12,9 +12,9 @@ npm run dev
 npx wrangler d1 migrations apply dr-hair-dev --local
 ```
 
-Wrangler runs the Worker with local D1, R2, and KV bindings. `npm test` runs the backend unit and API tests. `npm run build:cloudflare` performs a Wrangler dry-run. `npm run deploy` targets the isolated staging environment; production deployment is available only through the gated GitHub workflow.
+Wrangler local development uses local D1, R2, and KV emulators. `npm run build:cloudflare` performs a Wrangler dry-run. `npm run deploy` targets the single production Worker `dr-hair-backend` and its custom domain `api.drhairindia.com`; do not run it for routine local work.
 
-The default D1 database starts empty. Create catalog, clinic, and admin configuration through the application/admin APIs. Do not seed historical production data. The first Super Admin is configured with Worker secrets (`SUPER_ADMIN_ID`, `SUPER_ADMIN_NAME`, `SUPER_ADMIN_PASSWORD_HASH`).
+The production D1 database is `dr-hair-production`. Create catalog, clinic, and admin configuration through the application/admin APIs. Do not seed historical production data. Migration `0004_admin_module_flags.sql` creates the initial admin navigation flags. Configure the first Super Admin ID and display name as Worker variables (`SUPER_ADMIN_ID`, `SUPER_ADMIN_NAME`). Generate its password hash with `npm run admin:setup`, then store it as the Worker secret `SUPER_ADMIN_PASSWORD_HASH` on `dr-hair-backend`. Never put the hash in `wrangler.jsonc` or commit it.
 
 ## Persistence and media
 
@@ -24,10 +24,10 @@ The R2 bucket is private. Image uploads use `/api/v1/media/upload`; public catal
 
 ## Worker secrets
 
-Set secrets separately for staging/production with Wrangler or GitHub Environment secrets. Keep `JWT_SECRET`, Super Admin credentials, SMS/OTP credentials, Razorpay test/live keys and webhook secret, Shiprocket sandbox/live credentials and webhook secret, and optional Gemini/Firebase keys out of source control. Staging must use `DRHAIR_DEPLOYMENT_ENV=staging` so commerce providers remain in sandbox/test mode.
+Set production secrets on the single `dr-hair-backend` Worker with Wrangler or the Cloudflare dashboard. Keep `JWT_SECRET`, Super Admin credentials, SMS/OTP credentials, Razorpay keys and webhook secret, Shiprocket credentials and webhook secret, and optional Gemini/Firebase keys out of source control. Local development uses local bindings and keeps Shiprocket disabled.
 
 ## API routes and design
 
 The OpenAPI contract is in [`docs/openapi.yaml`](docs/openapi.yaml). Swagger UI is served at `/api/docs`. Route groups include `/api/v1/auth`, `/api/v1/users`, `/api/v1/hair-tests`, `/api/v1/treatments`, `/api/v1/products`, `/api/v1/commerce`, `/api/v1/appointments`, `/api/v1/media`, `/api/v1/videos`, and `/api/v1/admin`.
 
-Cloudflare bindings, staging rollout and CI/CD are documented in [`docs/CLOUDFLARE_MIGRATION.md`](docs/CLOUDFLARE_MIGRATION.md). No live Cloudflare resources or production endpoints are changed by local code edits.
+Cloudflare bindings and the production-only deployment flow are documented in [`docs/CLOUDFLARE_MIGRATION.md`](docs/CLOUDFLARE_MIGRATION.md). Local code edits do not change live resources until the production deploy command is run.
