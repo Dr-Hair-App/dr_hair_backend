@@ -1,0 +1,4 @@
+NODE_ENV=development
+DRHAIR_DEPLOYMENT_ENV=development
+BASE_URL=http://localhost:8787
+CORS_ORIGINS=http://localhost:3001

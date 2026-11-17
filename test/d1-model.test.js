@@ -34,6 +34,31 @@ test('D1Model builds filters for plain and nested field paths', async () => {
   }
 });
 
+test('D1Model treats undefined optional comparisons as missing or null without binding undefined', async () => {
+  let captured;
+  const database = {
+    prepare(sql) {
+      captured = { sql, args: [] };
+      return {
+        bind(...args) {
+          captured.args = args;
+          return { all: async () => ({ results: [] }) };
+        },
+      };
+    },
+  };
+
+  setDatabaseBinding(database);
+  try {
+    await new D1Model('users').findOne({ email: undefined }).lean();
+    assert.deepEqual(captured.args, []);
+    assert.match(captured.sql, /json_type\(payload, '\$\.email'\) IS NULL/);
+    assert.match(captured.sql, /json_type\(payload, '\$\.email'\) = 'null'/);
+  } finally {
+    clearDatabaseBinding();
+  }
+});
+
 test('D1Model supports lean() on update and delete mutation queries', async () => {
   clearDatabaseBinding();
   const model = new D1Model('products');

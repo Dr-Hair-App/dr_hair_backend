@@ -110,6 +110,10 @@ const jsonPath = (field) => {
 };
 
 const bindValue = (value) => {
+  // Cloudflare D1's prepared-statement API rejects `undefined` values. Treat
+  // optional query values as SQL NULL so an omitted optional field cannot turn
+  // an otherwise valid auth request into a D1_TYPE_ERROR.
+  if (typeof value === 'undefined') return null;
   if (value instanceof Date) return value.toISOString();
   if (typeof value === 'boolean') return value ? 1 : 0;
   if (value && typeof value === 'object') return JSON.stringify(plain(value));
@@ -181,7 +185,7 @@ const comparisonSql = (field, condition) => {
           args.push(...values.map(bindValue));
         }
       } else if (operator === '$ne') {
-        if (expected === null) clauses.push(`(${type} IS NOT NULL AND ${type} <> 'null')`);
+        if (expected === null || typeof expected === 'undefined') clauses.push(`(${type} IS NOT NULL AND ${type} <> 'null')`);
         else { clauses.push(`(${column} <> ? OR ${type} IS NULL OR ${type} = 'null')`); args.push(bindValue(expected)); }
       } else if (operator === '$gt' || operator === '$gte' || operator === '$lt' || operator === '$lte') {
         clauses.push(`${column} ${{ $gt: '>', $gte: '>=', $lt: '<', $lte: '<=' }[operator]} ?`);
@@ -208,7 +212,9 @@ const comparisonSql = (field, condition) => {
     const clause = clauses.length ? clauses.map((item) => `(${item})`).join(' AND ') : '1';
     return { sql: wrap(clause), args };
   }
-  if (condition === null) return { sql: wrap(`(${type} IS NULL OR ${type} = 'null')`), args: [] };
+  if (condition === null || typeof condition === 'undefined') {
+    return { sql: wrap(`(${type} IS NULL OR ${type} = 'null')`), args: [] };
+  }
   return { sql: wrap(`${column} = ?`), args: [bindValue(condition)] };
 };
 

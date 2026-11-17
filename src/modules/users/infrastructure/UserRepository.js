@@ -21,6 +21,9 @@ const toUser = (record) => {
 const cleanEmail = (email) => String(email || '').trim().toLowerCase();
 const cleanPhone = (phone) => String(phone || '').replace(/\D/g, '');
 const escapeRegex = (value) => value.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+const definedFields = (record) => Object.fromEntries(
+  Object.entries(record).filter(([, value]) => typeof value !== 'undefined'),
+);
 
 export class UserRepository extends IUserRepository {
   async findById(id) {
@@ -161,10 +164,10 @@ export class UserRepository extends IUserRepository {
     if (isDatabaseConnected()) {
       const id = await nextUserId();
       return toUser(
-        await UserModel.create({
+        await UserModel.create(definedFields({
           id,
           patient_code: formatPatientCode(id),
-          name: userData.name,
+          name: userData.name || 'Patient',
           email: cleanEmail(userData.email) || undefined,
           phone: userData.phone || undefined,
           phoneNormalized: cleanPhone(userData.phone) || undefined,
@@ -181,7 +184,7 @@ export class UserRepository extends IUserRepository {
           role: 'user',
           created_at: new Date(),
           updated_at: new Date(),
-        }),
+        })),
       );
     }
     const newId = store.users.length > 0 ? Math.max(...store.users.map((u) => u.id)) + 1 : 1;

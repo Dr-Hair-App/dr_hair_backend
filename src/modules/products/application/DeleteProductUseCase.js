@@ -1,8 +1,11 @@
 import { NotFoundError } from '../../../shared/errors/index.js';
+import { getProductR2MediaKeys } from '../domain/productMedia.js';
 
 export class DeleteProductUseCase {
-  constructor({ productRepository }) {
+  constructor({ productRepository, imageStorage, mediaReferenceRepository }) {
     this.productRepository = productRepository;
+    this.imageStorage = imageStorage;
+    this.mediaReferenceRepository = mediaReferenceRepository;
   }
 
   async execute({ id }) {
@@ -14,6 +17,20 @@ export class DeleteProductUseCase {
       throw new NotFoundError('Product not found.');
     }
     const deleted = await this.productRepository.delete(id);
+    if (deleted && this.imageStorage && this.mediaReferenceRepository) {
+      await Promise.all(getProductR2MediaKeys(existing).map(async (key) => {
+        if (await this.mediaReferenceRepository.isReferenced(key)) return;
+        try {
+          await this.imageStorage.deleteImage(key);
+        } catch (error) {
+          console.warn('[media-cleanup] Deleted product image could not be removed from R2.', {
+            productId: id,
+            key,
+            message: error instanceof Error ? error.message : 'unknown error',
+          });
+        }
+      }));
+    }
     return { success: deleted };
   }
 }

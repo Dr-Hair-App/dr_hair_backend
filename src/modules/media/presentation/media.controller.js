@@ -29,6 +29,8 @@ export class MediaController {
         format: asset.format,
         mime_type: asset.mimetype,
         bytes: asset.bytes,
+        original_bytes: asset.originalBytes,
+        compressed: asset.compressed,
         width: asset.width,
         height: asset.height,
         duration: asset.duration,

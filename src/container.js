@@ -329,8 +329,8 @@ export const createContainer = (overrides = {}) => {
   const listProductsUseCase = new ListProductsUseCase({ productRepository });
   const getProductByIdUseCase = new GetProductByIdUseCase({ productRepository });
   const createProductUseCase = new CreateProductUseCase({ productRepository });
-  const updateProductUseCase = new UpdateProductUseCase({ productRepository });
-  const deleteProductUseCase = new DeleteProductUseCase({ productRepository });
+  const updateProductUseCase = new UpdateProductUseCase({ productRepository, imageStorage, mediaReferenceRepository });
+  const deleteProductUseCase = new DeleteProductUseCase({ productRepository, imageStorage, mediaReferenceRepository });
   const listCategoriesUseCase =
     overrides.listCategoriesUseCase ||
     new ListCategoriesUseCase({
