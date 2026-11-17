@@ -67,8 +67,12 @@ describe('OTP response contract', () => {
       encoding: 'utf8',
       env: {
         ...process.env,
-        NODE_ENV: 'development',
         NODE_ENV: 'production',
+        DRHAIR_DEPLOYMENT_ENV: 'production',
+        JWT_SECRET: 'ci-test-production-jwt-secret-with-32-chars',
+        SUPER_ADMIN_ID: 'ci-test-admin@example.invalid',
+        SUPER_ADMIN_PASSWORD_HASH: 'ci-test-password-hash',
+        SUPER_ADMIN_NAME: 'CI Test Admin',
       },
     });
 
