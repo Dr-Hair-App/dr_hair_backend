@@ -366,7 +366,7 @@ export class AuthController {
   logout = async (req, res, next) => {
     try {
       const sessionId = req.body?.session_id || req.body?.sessionId || req.user?.sessionId;
-      const deviceToken = req.body?.device_token || req.body?.deviceToken;
+      const deviceToken = req.body?.device_token || req.body?.deviceToken || req.body?.fcm_token || req.body?.fcmToken;
 
       if (sessionId && sessionId !== req.user?.sessionId) {
         throw new UnauthorizedError('The session does not belong to this access token.', null, 'AUTH_REQUIRED');
