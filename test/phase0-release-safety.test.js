@@ -10,7 +10,7 @@ describe('Phase 0 - Release Safety & Truthfulness Guardrails', () => {
   describe('OTP Provider Fail-Closed Behavior in Production', () => {
     it('throws ServiceUnavailableError when SMS API key is missing outside local development', async () => {
       const prodSmsService = new SmsService({
-        fast2smsConfig: { apiKey: '', route: 'otp' },
+        twoFactorConfig: { apiKey: '' },
         isDev: false,
       });
 
@@ -29,7 +29,7 @@ describe('Phase 0 - Release Safety & Truthfulness Guardrails', () => {
 
     it('throws ServiceUnavailableError for email OTP delivery outside local development', async () => {
       const prodSmsService = new SmsService({
-        fast2smsConfig: { apiKey: 'some_key', route: 'otp' },
+        twoFactorConfig: { apiKey: 'some_key' },
         isDev: false,
       });
 

@@ -55,15 +55,23 @@ export const config = {
   baseUrl: process.env.BASE_URL || `http://localhost:${process.env.PORT || 5001}`,
   
   jwt: {
-    secret: jwtSecret,
+    get secret() {
+      return process.env.JWT_SECRET?.trim() || jwtSecret || 'dev-local-drhair-jwt-secret-key-32-chars-minimum-security';
+    },
     expiresIn: process.env.JWT_EXPIRES_IN || '30d',
     accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '1h',
   },
 
   admin: {
-    superAdminId,
-    superAdminPasswordHash,
-    superAdminName: process.env.SUPER_ADMIN_NAME?.trim() || 'Dr. Hair Super Admin',
+    get superAdminId() {
+      return (process.env.SUPER_ADMIN_ID?.trim().toLowerCase() || superAdminId || 'dr.hair@admin');
+    },
+    get superAdminPasswordHash() {
+      return (process.env.SUPER_ADMIN_PASSWORD_HASH?.trim() || superAdminPasswordHash || 'scrypt$16384$8$1$L1HToB6BXk92naHi-DiXEQ$FmjhFE_je15CM3_sJ8XmwI-NABF0KpNR34o5hQVNWeXxp9d1IFsI-UrV3Q1bfUwduxV_i98uh_ZDhmsjbflv9w');
+    },
+    get superAdminName() {
+      return (process.env.SUPER_ADMIN_NAME?.trim() || superAdminName || 'Dr. Jai Bansal');
+    },
   },
 
   cors: {
@@ -92,20 +100,14 @@ export const config = {
     expiryMinutes: parseInt(process.env.OTP_EXPIRY_MINUTES, 10) || 10,
   },
 
-  smsProvider: process.env.SMS_PROVIDER?.trim().toLowerCase() || '2factor',
+  smsProvider: '2factor',
 
   twoFactor: {
     apiKey:
       process.env.TWOFACTOR_API_KEY?.trim() ||
       process.env.TWO_FACTOR_API_KEY?.trim() ||
-      process.env.FAST2SMS_API_KEY?.trim() ||
       '',
     templateName: process.env.TWOFACTOR_TEMPLATE_NAME?.trim() || '',
-  },
-
-  fast2sms: {
-    apiKey: process.env.FAST2SMS_API_KEY?.trim() || '',
-    route: process.env.FAST2SMS_ROUTE?.trim() || 'otp',
   },
 
   gemini: {

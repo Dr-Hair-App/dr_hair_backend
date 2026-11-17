@@ -113,10 +113,10 @@ describe('Auth Module - Clean Architecture Tests', () => {
     assert.ok(['COMPLETE_PROFILE', 'ASSESSMENT', 'HOME'].includes(jsonResult.data.next_step));
   });
 
-  describe('Fast2SMS Integration in SmsService', () => {
-    it('fails closed when FAST2SMS_API_KEY is not configured in any environment', async () => {
+  describe('2Factor.in Integration in SmsService', () => {
+    it('fails closed when TWOFACTOR_API_KEY is not configured in any environment', async () => {
       const { SmsService } = await import('../src/modules/auth/infrastructure/SmsService.js');
-      const service = new SmsService({ fast2smsConfig: { apiKey: '', route: 'otp' } });
+      const service = new SmsService({ twoFactorConfig: { apiKey: '' } });
       await assert.rejects(
         () => service.sendOtp('9876543210', '123456'),
         { name: 'ServiceUnavailableError', statusCode: 503 },
@@ -125,81 +125,11 @@ describe('Auth Module - Clean Architecture Tests', () => {
 
     it('rejects email destinations because OTP is SMS-only', async () => {
       const { SmsService } = await import('../src/modules/auth/infrastructure/SmsService.js');
-      const service = new SmsService({ fast2smsConfig: { apiKey: 'dummy_key', route: 'otp' } });
+      const service = new SmsService({ twoFactorConfig: { apiKey: 'dummy_key' } });
       await assert.rejects(
         () => service.sendOtp('patient@example.com', '123456'),
         { name: 'ServiceUnavailableError', statusCode: 503 },
       );
-    });
-
-    it('dispatches to Fast2SMS API when apiKey is provided and cleans phone numbers', async () => {
-      const { SmsService } = await import('../src/modules/auth/infrastructure/SmsService.js');
-      const originalFetch = globalThis.fetch;
-      let requestedUrl = null;
-      let requestedBody = null;
-      let requestedHeaders = null;
-
-      globalThis.fetch = async (url, options) => {
-        requestedUrl = url;
-        requestedHeaders = options.headers;
-        requestedBody = JSON.parse(options.body);
-        return {
-          ok: true,
-          json: async () => ({
-            return: true,
-            request_id: 'fast2sms_req_123',
-            message: ['SMS sent successfully.'],
-          }),
-        };
-      };
-
-      try {
-        const service = new SmsService({
-          fast2smsConfig: { apiKey: 'test_fast2sms_key', route: 'otp' },
-        });
-
-        // Test with +91 country code prefix
-        const result = await service.sendOtp('+919876543210', '654321');
-        assert.equal(result, true);
-        assert.equal(requestedUrl, 'https://www.fast2sms.com/dev/bulkV2');
-        assert.equal(requestedHeaders.authorization, 'test_fast2sms_key');
-        assert.equal(requestedBody.route, 'otp');
-        assert.equal(requestedBody.variables_values, '654321');
-        assert.equal(requestedBody.numbers, '9876543210'); // Clean 10 digits
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
-    });
-
-    it('throws BadGatewayError when Fast2SMS returns return: false', async () => {
-      const { SmsService } = await import('../src/modules/auth/infrastructure/SmsService.js');
-      const originalFetch = globalThis.fetch;
-
-      globalThis.fetch = async () => ({
-        ok: true,
-        json: async () => ({
-          return: false,
-          message: 'Invalid authorization key',
-        }),
-      });
-
-      try {
-        const service = new SmsService({
-          fast2smsConfig: { apiKey: 'invalid_key', route: 'otp' },
-        });
-
-        await assert.rejects(
-          async () => {
-            await service.sendOtp('9876543210', '123456');
-          },
-          {
-            name: 'BadGatewayError',
-            statusCode: 502,
-          }
-        );
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
     });
 
     it('dispatches to 2Factor.in API with +91 format and handles Success response', async () => {
@@ -262,6 +192,43 @@ describe('Auth Module - Clean Architecture Tests', () => {
       } finally {
         globalThis.fetch = originalFetch;
       }
+    });
+
+    it('removes fcm_token and revokes session on logout', async () => {
+      const { AuthController } = await import('../src/modules/auth/presentation/auth.controller.js');
+      const { DeviceTokenRepository } = await import('../src/modules/notifications/infrastructure/DeviceTokenRepository.js');
+      const deviceTokenRepo = new DeviceTokenRepository();
+      let revokedSession = null;
+      const fakeSessionRepo = {
+        revoke: async (id, reason) => { revokedSession = { id, reason }; },
+      };
+
+      await deviceTokenRepo.register({ userId: 123, token: 'fcm_sample_token_xyz', platform: 'android' });
+      assert.equal((await deviceTokenRepo.listByUserId(123)).length, 1);
+
+      const controller = new AuthController({
+        sessionRepository: fakeSessionRepo,
+        deviceTokenRepository: deviceTokenRepo,
+      });
+
+      const req = {
+        user: { sessionId: 'ses_123', id: '123' },
+        body: { session_id: 'ses_123', fcm_token: 'fcm_sample_token_xyz' },
+      };
+      let resStatus = null;
+      let resData = null;
+      const res = {
+        status: (s) => { resStatus = s; return res; },
+        json: (d) => { resData = d; return res; },
+      };
+      let nextError = null;
+      await controller.logout(req, res, (err) => { nextError = err; });
+
+      assert.equal(nextError, null);
+      assert.equal(resStatus, 200);
+      assert.equal(resData.data.signed_out, true);
+      assert.equal(revokedSession.id, 'ses_123');
+      assert.equal((await deviceTokenRepo.listByUserId(123)).length, 0);
     });
   });
 });

@@ -119,6 +119,11 @@ export class DeviceTokenRepository {
     };
   }
 
+  async removeToken(token) {
+    if (!token) return false;
+    return this.remove({ token });
+  }
+
   async remove({ userId, token }) {
     const numericId = userId != null && !isNaN(Number(userId)) ? Number(userId) : null;
     if (isDatabaseConnected()) {

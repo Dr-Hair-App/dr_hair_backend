@@ -5,6 +5,13 @@
   "compatibility_date": "2026-11-16",
   "compatibility_flags": ["nodejs_compat", "nodejs_compat_populate_process_env", "enable_nodejs_http_server_modules"],
   "workers_dev": true,
+  "durable_objects": {
+    "bindings": [{ "name": "DAILY_USAGE_QUOTA", "class_name": "DailyUsageQuota" }]
+  },
+  "migrations": [{ "tag": "daily-usage-quota-v1", "new_sqlite_classes": ["DailyUsageQuota"] }],
+  "ratelimits": [
+    { "name": "SHIPPING_QUOTE_RATE_LIMIT", "namespace_id": "8173311", "simple": { "limit": 20, "period": 60 } }
+  ],
   "vars": {
     "NODE_ENV": "development",
     "DRHAIR_DEPLOYMENT_ENV": "development"
@@ -37,6 +44,12 @@
   "env": {
     "staging": {
       "name": "dr-hair-backend-staging",
+      "durable_objects": {
+        "bindings": [{ "name": "DAILY_USAGE_QUOTA", "class_name": "DailyUsageQuota" }]
+      },
+      "ratelimits": [
+        { "name": "SHIPPING_QUOTE_RATE_LIMIT", "namespace_id": "8173312", "simple": { "limit": 20, "period": 60 } }
+      ],
       "vars": {
         "NODE_ENV": "production",
         "DRHAIR_DEPLOYMENT_ENV": "staging",
@@ -50,11 +63,23 @@
     },
     "production": {
       "name": "dr-hair-backend-production",
+      "routes": [
+        { "pattern": "api.drhairindia.com", "custom_domain": true }
+      ],
+      "durable_objects": {
+        "bindings": [{ "name": "DAILY_USAGE_QUOTA", "class_name": "DailyUsageQuota" }]
+      },
+      "ratelimits": [
+        { "name": "SHIPPING_QUOTE_RATE_LIMIT", "namespace_id": "8173313", "simple": { "limit": 20, "period": 60 } }
+      ],
       "vars": {
         "NODE_ENV": "production",
         "DRHAIR_DEPLOYMENT_ENV": "production",
         "BASE_URL": "https://api.drhairindia.com",
-        "CORS_ORIGINS": "https://admin.drhairindia.com,https://dr-hair-admin.drhair-app.workers.dev"
+        "CORS_ORIGINS": "https://admin.drhairindia.com,https://dr-hair-admin.drhair-app.workers.dev",
+        "SUPER_ADMIN_ID": "dr.hair@admin",
+        "SUPER_ADMIN_NAME": "Dr. Jai Bansal",
+        "SUPER_ADMIN_PASSWORD_HASH": "scrypt$16384$8$1$L1HToB6BXk92naHi-DiXEQ$FmjhFE_je15CM3_sJ8XmwI-NABF0KpNR34o5hQVNWeXxp9d1IFsI-UrV3Q1bfUwduxV_i98uh_ZDhmsjbflv9w"
       },
       "d1_databases": [{ "binding": "DB", "database_name": "dr-hair-production", "database_id": "5bc14761-3131-469d-957d-3674564f3e30", "migrations_dir": "migrations" }],
       "r2_buckets": [{ "binding": "MEDIA_BUCKET", "bucket_name": "dr-hair-production-media" }],
