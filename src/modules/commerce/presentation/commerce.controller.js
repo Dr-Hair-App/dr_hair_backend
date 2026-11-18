@@ -976,20 +976,22 @@ export class CommerceController {
   async restockProduct(req, res, next) {
     try {
       const { productId } = req.params;
-      const { quantity, notes } = req.body;
-
-      if (!quantity || quantity <= 0) {
-        throw new BadRequestError('Valid restock quantity is required');
+      const { quantity, delta, notes } = req.body || {};
+      const hasDelta = delta !== undefined;
+      const change = hasDelta ? Number(delta) : Number(quantity);
+      if (!Number.isSafeInteger(change) || change === 0 || (!hasDelta && change < 0)) {
+        throw new BadRequestError('Provide a non-zero integer delta (or a positive legacy quantity).');
       }
 
-      const newStock = await this.inventoryRepository.restock(
+      const newStock = await this.inventoryRepository.adjustStock(
         productId,
-        quantity,
-        notes || 'Admin restock adjustment',
+        change,
+        String(notes || (change > 0 ? 'Admin restock adjustment' : 'Admin stock removal')).trim(),
         req.admin?.id || 'admin',
+        hasDelta ? 'ADJUSTMENT' : 'RESTOCK',
       );
 
-      return sendSuccess(res, { productId, newStock }, `Product restocked to ${newStock} units`);
+      return sendSuccess(res, { productId, delta: change, newStock }, `Product inventory updated to ${newStock} units`);
     } catch (err) {
       next(err);
     }

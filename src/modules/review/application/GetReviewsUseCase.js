@@ -8,6 +8,7 @@ export class GetReviewsUseCase {
       review_type,
       status: 'active',
       page,
+      consent_verified: true,
     });
 
     return reviews.map((r) => r.toPublicResponse());

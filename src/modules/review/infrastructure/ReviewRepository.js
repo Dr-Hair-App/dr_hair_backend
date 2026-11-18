@@ -12,12 +12,13 @@ const toReview = (record) => {
 };
 
 export class ReviewRepository extends IReviewRepository {
-  async findFiltered({ review_type, status, page } = {}) {
+  async findFiltered({ review_type, status, page, consent_verified } = {}) {
     if (isDatabaseConnected()) {
       const filter = {};
       if (review_type) filter.review_type = review_type;
       if (status) filter.status = status;
       if (page) filter.page = page;
+      if (consent_verified === true) filter.consent_verified = true;
       const records = await ReviewModel.find(filter).sort({ created_at: -1 }).lean();
       return records.map(toReview);
     }
@@ -34,6 +35,8 @@ export class ReviewRepository extends IReviewRepository {
     if (page) {
       results = results.filter((r) => !r.page || r.page === page);
     }
+
+    if (consent_verified === true) results = results.filter((r) => r.consent_verified === true);
 
     return results.map((r) => new Review(r));
   }
@@ -65,7 +68,7 @@ export class ReviewRepository extends IReviewRepository {
       return toReview(
         await ReviewModel.findOneAndUpdate(
           { id: numericId },
-          { status, is_verified: status === 'active' },
+          { status, updated_at: new Date() },
           { new: true, runValidators: true },
         ).lean(),
       );
@@ -73,8 +76,46 @@ export class ReviewRepository extends IReviewRepository {
     const review = store.reviews.find((record) => record.id === numericId);
     if (!review) return null;
     review.status = status;
-    review.is_verified = status === 'active';
+    review.updated_at = new Date().toISOString();
     return new Review(review);
+  }
+
+  async findById(id) {
+    const numericId = Number(id);
+    if (!Number.isSafeInteger(numericId) || numericId < 1) return null;
+    if (isDatabaseConnected()) return toReview(await ReviewModel.findOne({ id: numericId }).lean());
+    const review = store.reviews.find((record) => Number(record.id) === numericId);
+    return toReview(review);
+  }
+
+  async updateAdmin(id, updates = {}) {
+    const numericId = Number(id);
+    if (!Number.isSafeInteger(numericId) || numericId < 1) return null;
+    const safeUpdates = { ...updates, updated_at: new Date().toISOString() };
+    if (isDatabaseConnected()) {
+      return toReview(await ReviewModel.findOneAndUpdate(
+        { id: numericId },
+        { $set: safeUpdates },
+        { new: true, runValidators: true },
+      ).lean());
+    }
+    const review = store.reviews.find((record) => Number(record.id) === numericId);
+    if (!review) return null;
+    Object.assign(review, safeUpdates);
+    return toReview(review);
+  }
+
+  async delete(id) {
+    const numericId = Number(id);
+    if (!Number.isSafeInteger(numericId) || numericId < 1) return false;
+    if (isDatabaseConnected()) {
+      const result = await ReviewModel.deleteOne({ id: numericId });
+      return result.deletedCount > 0;
+    }
+    const index = store.reviews.findIndex((record) => Number(record.id) === numericId);
+    if (index < 0) return false;
+    store.reviews.splice(index, 1);
+    return true;
   }
 
   async listAdmin({ page = 1, limit = 25, status } = {}) {

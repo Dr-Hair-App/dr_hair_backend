@@ -2910,6 +2910,21 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /api/v1/admin/hair-tests/{referenceNo}:
+    get:
+      tags: [Admin]
+      summary: Get hair test assessment by reference number
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: referenceNo
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/v1/admin/hair-tests/{referenceNo}/status:
     patch:
       tags: [Admin]
@@ -3029,16 +3044,68 @@ paths:
           schema: { type: integer, minimum: 1, maximum: 100 }
         - name: status
           in: query
-          schema: { type: string, enum: [pending, active, rejected] }
+          schema: { type: string, enum: [draft, pending, active, rejected] }
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Admin]
+      summary: Create a patient story draft or consented publication
+      description: Requires content.edit. Publishing additionally requires content.publish and an explicit patient consent confirmation. Moderation approval does not imply patient verification.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminReviewCreateRequest' }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/admin/reviews/{id}:
+    put:
+      tags: [Admin]
+      summary: Edit an existing patient story
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminReviewUpdateRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Admin]
+      summary: Delete a patient story
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/admin/reviews/status:
     patch:
       tags: [Admin]
       summary: Approve, reject, or return a review to moderation
+      description: Requires content.publish. A review can only be made active after consent has been recorded.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -3246,14 +3313,7 @@ paths:
                 placement: { type: string, enum: [home, reels, care, explore, all], default: 'home' }
                 status: { type: string, enum: [draft, review, published, hidden, archived], default: 'draft' }
                 sortOrder: { type: integer, default: 0 }
-                provenance:
-                  type: object
-                  properties:
-                    consent_verified: { type: boolean }
-                    consent_reference: { type: string }
-                    source: { type: string }
-                    approved_by: { type: string }
-                    evidence_note: { type: string }
+                patient_consent_confirmed: { type: boolean, description: Required to publish patient stories. }
       responses:
         '201': { $ref: '#/components/responses/Success' }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -3280,9 +3340,58 @@ paths:
               properties:
                 status: { type: string, enum: [draft, review, published, hidden, archived] }
                 note: { type: string }
+                patient_consent_confirmed: { type: boolean, description: Required when first publishing a patient story. }
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/admin/content/{id}:
+    put:
+      tags: [Admin]
+      summary: Update a managed content item
+      description: Requires content.edit. Publishing lifecycle state and provenance cannot be changed through this operation.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                title: { type: string, maxLength: 160 }
+                subtitle: { type: string, maxLength: 500 }
+                content: { type: string, maxLength: 12000 }
+                imageUrl: { type: string, maxLength: 2048 }
+                actionUrl: { type: string, maxLength: 2048 }
+                placement: { type: string, enum: [home, reels, care, explore, all] }
+                sortOrder: { type: integer }
+                metadata: { type: object, additionalProperties: true }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Admin]
+      summary: Delete a managed content item
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -3822,10 +3931,41 @@ components:
       required: [visibility]
     AdminReviewStatusRequest:
       type: object
+      additionalProperties: false
       properties:
         id: { type: integer }
-        status: { type: string, enum: [pending, active, rejected] }
+        status: { type: string, enum: [draft, pending, active, rejected] }
       required: [id, status]
+    AdminReviewCreateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 2, maxLength: 80 }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        category: { type: string, minLength: 1, maxLength: 80 }
+        message: { type: string, minLength: 1, maxLength: 1500 }
+        avatar: { type: string, maxLength: 2048 }
+        treatment: { type: string, maxLength: 120 }
+        duration: { type: string, maxLength: 120 }
+        review_type: { type: string, enum: [doctor, product, clinic] }
+        page: { type: string, enum: [home, reels] }
+        status: { type: string, enum: [draft, pending, active, rejected] }
+        patient_consent_confirmed: { type: boolean }
+      required: [name, rating, category, message]
+    AdminReviewUpdateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 2, maxLength: 80 }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        category: { type: string, minLength: 1, maxLength: 80 }
+        message: { type: string, minLength: 1, maxLength: 1500 }
+        avatar: { type: string, maxLength: 2048 }
+        treatment: { type: string, maxLength: 120 }
+        duration: { type: string, maxLength: 120 }
+        review_type: { type: string, enum: [doctor, product, clinic] }
+        page: { type: string, enum: [home, reels] }
+        patient_consent_confirmed: { type: boolean }
     AdminPushRequest:
       type: object
       properties:

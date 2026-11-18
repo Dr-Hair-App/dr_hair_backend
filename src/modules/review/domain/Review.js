@@ -9,11 +9,15 @@ export class Review {
     category,
     message,
     avatar,
-    is_verified = true,
+    is_verified = false,
+    consent_verified = false,
+    treatment = '',
+    duration = '',
     review_type = 'doctor',
-    status = 'active',
+    status = 'pending',
     page = 'home',
     created_at = new Date().toISOString(),
+    updated_at = created_at,
   }) {
     this.id = id;
     this.name = name;
@@ -22,10 +26,14 @@ export class Review {
     this.message = message;
     this.avatar = avatar;
     this.is_verified = Boolean(is_verified);
+    this.consent_verified = Boolean(consent_verified);
+    this.treatment = treatment;
+    this.duration = duration;
     this.review_type = review_type;
     this.status = status;
     this.page = page;
     this.created_at = created_at;
+    this.updated_at = updated_at;
   }
 
   toPublicResponse() {

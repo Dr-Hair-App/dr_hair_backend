@@ -2,6 +2,19 @@ import { Router } from 'express';
 import { authenticateToken } from '../../../shared/middlewares/auth.middleware.js';
 import { requireAdmin, requireSuperAdmin, requirePermission, requireAnyPermission } from '../../../shared/middlewares/admin.middleware.js';
 import { uploadClinicalReportFile } from '../../../shared/middlewares/clinical-report-upload.middleware.js';
+import { validate } from '../../../shared/validators/validate.middleware.js';
+import {
+  adminReviewIdSchema,
+  adminReviewStatusSchema,
+  createAdminReviewSchema,
+  updateAdminReviewSchema,
+} from '../../../shared/validators/review.validator.js';
+import {
+  adminContentIdSchema,
+  createAdminContentSchema,
+  updateAdminContentSchema,
+  updateAdminContentStatusSchema,
+} from '../../../shared/validators/admin-content.validator.js';
 
 export const createAdminRouter = ({ adminController, notificationController, videoController, appointmentController, contentController, commerceController, supportController }) => {
   const router = Router();
@@ -74,6 +87,7 @@ export const createAdminRouter = ({ adminController, notificationController, vid
 
   // Hair tests & Assessments
   router.get('/hair-tests', requireAnyPermission('hair-tests.view', 'assessments.review'), adminController.listHairTests);
+  router.get('/hair-tests/:referenceNo', requireAnyPermission('hair-tests.view', 'assessments.review'), adminController.getHairTest);
   router.patch('/hair-tests/:referenceNo/status', requireAnyPermission('assessments.review', 'hair-tests.upload'), adminController.updateHairTestStatus);
 
   // Care plans / treatments
@@ -89,7 +103,10 @@ export const createAdminRouter = ({ adminController, notificationController, vid
 
   // Reviews
   router.get('/reviews', requireAnyPermission('content.edit', 'content.publish'), adminController.listReviews);
-  router.patch('/reviews/status', requireAnyPermission('content.edit', 'content.publish'), adminController.updateReviewStatus);
+  router.post('/reviews', requirePermission('content.edit'), validate({ body: createAdminReviewSchema }), adminController.createAdminReview);
+  router.put('/reviews/:id', requirePermission('content.edit'), validate({ params: adminReviewIdSchema, body: updateAdminReviewSchema }), adminController.updateAdminReview);
+  router.delete('/reviews/:id', requirePermission('content.edit'), validate({ params: adminReviewIdSchema }), adminController.deleteAdminReview);
+  router.patch('/reviews/status', requirePermission('content.publish'), validate({ body: adminReviewStatusSchema }), adminController.updateReviewStatus);
   router.post('/notifications/send-to-user', requireAnyPermission('notifications.manage'), notificationController.sendToUser);
   router.post('/notifications/broadcast', requireAnyPermission('notifications.manage'), notificationController.broadcast);
   router.get('/notifications/history', requireAnyPermission('notifications.manage'), notificationController.listCampaigns);
@@ -107,10 +124,10 @@ export const createAdminRouter = ({ adminController, notificationController, vid
 
   if (contentController) {
     router.get('/content', requireAnyPermission('content.edit', 'content.publish'), contentController.listAdmin);
-    router.post('/content', requireAnyPermission('content.edit', 'content.publish'), contentController.createContent);
-    router.patch('/content/:id/status', requireAnyPermission('content.edit', 'content.publish'), contentController.updateStatus);
-    router.put('/content/:id', requireAnyPermission('content.edit', 'content.publish'), contentController.updateContent);
-    router.delete('/content/:id', requireAnyPermission('content.edit', 'content.publish'), contentController.deleteContent);
+    router.post('/content', requirePermission('content.edit'), validate({ body: createAdminContentSchema }), contentController.createContent);
+    router.patch('/content/:id/status', requirePermission('content.publish'), validate({ params: adminContentIdSchema, body: updateAdminContentStatusSchema }), contentController.updateStatus);
+    router.put('/content/:id', requirePermission('content.edit'), validate({ params: adminContentIdSchema, body: updateAdminContentSchema }), contentController.updateContent);
+    router.delete('/content/:id', requirePermission('content.edit'), validate({ params: adminContentIdSchema }), contentController.deleteContent);
   }
 
   if (commerceController) {

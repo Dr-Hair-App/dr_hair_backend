@@ -1,6 +1,7 @@
-import { BadRequestError, NotFoundError } from '../../../shared/errors/index.js';
+import { BadRequestError, ForbiddenError, NotFoundError } from '../../../shared/errors/index.js';
 import { sendSuccess } from '../../../shared/utils/response.js';
 import { LEGAL_POLICIES } from '../infrastructure/legalPoliciesData.js';
+import { hasPermission } from '../../../shared/utils/admin-permissions.js';
 
 export class ContentController {
   constructor({ contentRepository, auditEventRepository = null }) {
@@ -100,13 +101,20 @@ export class ContentController {
         actionUrl,
         placement = 'home',
         status = 'draft',
-        provenance = {},
+        patient_consent_confirmed = false,
         sortOrder = 0,
         metadata = {},
       } = req.body || {};
 
-      if (!type || typeof type !== 'string') throw new BadRequestError('Content type is required.');
-      if (!title || typeof title !== 'string' || !title.trim()) throw new BadRequestError('Content title is required.');
+      if (status === 'published' && !hasPermission(req.user, 'content.publish')) {
+        throw new ForbiddenError("Permission 'content.publish' is required to publish content.");
+      }
+      if (patient_consent_confirmed === true && !hasPermission(req.user, 'content.publish')) {
+        throw new ForbiddenError("Permission 'content.publish' is required to confirm publication consent.");
+      }
+      if (status === 'published' && type === 'story' && patient_consent_confirmed !== true) {
+        throw new BadRequestError('Confirm documented patient consent before publishing this story.');
+      }
 
       const actor = String(req.user?.email || req.user?.login || 'Super Admin');
       const item = await this.contentRepository.create({
@@ -119,7 +127,7 @@ export class ContentController {
         placement,
         status,
         provenance: {
-          ...provenance,
+          consent_verified: type === 'story' && patient_consent_confirmed === true,
           approved_by: status === 'published' ? actor : '',
           approved_at: status === 'published' ? new Date() : null,
         },
@@ -136,7 +144,7 @@ export class ContentController {
         }).catch(() => null);
       }
 
-      return sendSuccess(res, { message: 'Content item created.', data: item }, 201);
+      return sendSuccess(res, { message: 'Content item created.', data: item, statusCode: 201 });
     } catch (error) {
       next(error);
     }
@@ -145,13 +153,19 @@ export class ContentController {
   updateStatus = async (req, res, next) => {
     try {
       const { id } = req.params;
-      const { status, note } = req.body || {};
+      const { status, note, patient_consent_confirmed = false } = req.body || {};
       if (!status || typeof status !== 'string') throw new BadRequestError('Status is required.');
 
+      const current = await this.contentRepository.findById(id);
+      if (!current) throw new NotFoundError('Content item not found.');
+      if (status.trim() === 'published' && current.type === 'story' && current.provenance?.consent_verified !== true && patient_consent_confirmed !== true) {
+        throw new BadRequestError('Confirm documented patient consent before publishing this story.');
+      }
       const actor = String(req.user?.email || req.user?.login || 'Super Admin');
       const updated = await this.contentRepository.updateStatus(id, status.trim(), {
         approved_by: actor,
         note: typeof note === 'string' ? note.trim() : '',
+        consent_verified: patient_consent_confirmed === true,
       });
       if (!updated) throw new NotFoundError('Content item not found.');
 
@@ -173,6 +187,11 @@ export class ContentController {
   updateContent = async (req, res, next) => {
     try {
       const { id } = req.params;
+      const current = await this.contentRepository.findById(id);
+      if (!current) throw new NotFoundError('Content item not found.');
+      if (current.status === 'published' && !hasPermission(req.user, 'content.publish')) {
+        throw new ForbiddenError("Permission 'content.publish' is required to edit published content.");
+      }
       const updates = req.body || {};
       const updated = await this.contentRepository.update(id, updates);
       if (!updated) throw new NotFoundError('Content item not found.');
@@ -196,6 +215,11 @@ export class ContentController {
   deleteContent = async (req, res, next) => {
     try {
       const { id } = req.params;
+      const current = await this.contentRepository.findById(id);
+      if (!current) throw new NotFoundError('Content item not found.');
+      if (current.status === 'published' && !hasPermission(req.user, 'content.publish')) {
+        throw new ForbiddenError("Permission 'content.publish' is required to delete published content.");
+      }
       const deleted = await this.contentRepository.delete(id);
       if (!deleted) throw new NotFoundError('Content item not found.');
 

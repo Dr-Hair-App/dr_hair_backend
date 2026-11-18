@@ -114,4 +114,44 @@ describe('AI Assessment Care Routine UseCase & Gemini Service', () => {
     assert.equal(status.patient_id, 42);
     assert.equal(status.patient_code, 'DHP0042');
   });
+
+  it('adminController getHairTest returns single assessment by reference_no', async () => {
+    const { AdminController } = await import('../src/modules/admin/presentation/admin.controller.js');
+    const mockHairTest = {
+      reference_no: 'HT-2026-TESTREF',
+      userId: 12,
+      status: 'submitted',
+      scalp_photos: [{ file_name: 'photo1.jpg', url: 'https://example.com/p1.jpg' }],
+    };
+    const mockUser = {
+      id: 12,
+      role: 'user',
+      patient_code: 'DHP0012',
+      toPublicProfile: () => ({ id: 12, name: 'Sunil Sharma', phone: '9876543210' }),
+    };
+    const controller = new AdminController({
+      hairTestRepository: {
+        findByReferenceNo: async (ref) => (ref === 'HT-2026-TESTREF' ? mockHairTest : null),
+      },
+      userRepository: {
+        findById: async (id) => (Number(id) === 12 ? mockUser : null),
+      },
+      imageStorage: {
+        createPrivateDownloadUrl: () => 'https://example.com/private',
+      },
+    });
+
+    let sentData = null;
+    const req = { params: { referenceNo: 'HT-2026-TESTREF' } };
+    const res = {
+      status(code) { return this; },
+      json(payload) { sentData = payload; return payload; },
+    };
+
+    await controller.getHairTest(req, res, () => {});
+    assert.ok(sentData);
+    assert.equal(sentData.status, 'success');
+    assert.equal(sentData.data.assessment.reference_no, 'HT-2026-TESTREF');
+    assert.equal(sentData.data.patient.name, 'Sunil Sharma');
+  });
 });

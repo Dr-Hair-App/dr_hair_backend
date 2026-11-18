@@ -106,7 +106,7 @@ export class ContentRepository {
     return item;
   }
 
-  async updateStatus(id, newStatus, { approved_by = 'Super Admin', note = '' } = {}) {
+  async updateStatus(id, newStatus, { approved_by = 'Super Admin', note = '', consent_verified = false } = {}) {
     if (!VALID_CONTENT_STATUSES.includes(newStatus)) {
       throw new Error(`Invalid status: ${newStatus}. Must be one of ${VALID_CONTENT_STATUSES.join(', ')}.`);
     }
@@ -120,6 +120,7 @@ export class ContentRepository {
       updates['provenance.approved_at'] = new Date();
       if (note) updates['provenance.evidence_note'] = note;
     }
+    if (consent_verified === true) updates['provenance.consent_verified'] = true;
 
     return this.update(id, updates);
   }

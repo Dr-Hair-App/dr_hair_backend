@@ -1,11 +1,11 @@
-import { AppError, BadRequestError, NotFoundError } from '../../../shared/errors/index.js';
+import { AppError, BadRequestError, ForbiddenError, NotFoundError } from '../../../shared/errors/index.js';
 import { sendSuccess } from '../../../shared/utils/response.js';
 import { config } from '../../../config/env.js';
 import { uploadClinicalReport, createClinicalReportDownloadUrl, deleteClinicalReport } from '../infrastructure/ClinicalReportStorage.js';
 import { clinicalReportFormat } from '../infrastructure/R2ClinicalReportUploadStorage.js';
 import { MalwareScanner, normalizeScanStatus } from '../infrastructure/MalwareScanner.js';
 import { progressCheckInResponse } from '../../../shared/utils/progress-checkin-response.js';
-import { getEffectivePermissions } from '../../../shared/utils/admin-permissions.js';
+import { getEffectivePermissions, hasPermission } from '../../../shared/utils/admin-permissions.js';
 import { hashPassword } from '../../../shared/utils/password-hasher.js';
 import { sendPushNotification } from '../../notifications/infrastructure/FirebaseAdminMessaging.js';
 import { OrderModel, AppointmentModel } from '../../../shared/database/models.js';
@@ -656,6 +656,37 @@ export class AdminController {
     }
   };
 
+  getHairTest = async (req, res, next) => {
+    try {
+      const { referenceNo } = req.params;
+      const assessment = await this.hairTestRepository.findByReferenceNo(referenceNo);
+      if (!assessment) throw new NotFoundError('Assessment not found.');
+      const patient = assessment.userId ? await this.userRepository.findById(assessment.userId) : null;
+      const scalpPhotos = await Promise.all((assessment.scalp_photos || []).filter((photo) => !photo.deleted_at).map(async (photo) => ({
+        ...photo,
+        url: photo.delivery_type === 'authenticated'
+          ? this.imageStorage.createPrivateDownloadUrl(photo.file_name, photo.format)
+          : photo.url,
+        url_expires_in_seconds: photo.delivery_type === 'authenticated' ? 300 : null,
+      })));
+      return sendSuccess(res, {
+        data: {
+          assessment: {
+            ...assessment,
+            scalp_photos: scalpPhotos,
+          },
+          patient: patient ? {
+            ...patient.toPublicProfile(),
+            patient_code: patient.patient_code,
+            created_at: patient.created_at,
+          } : null,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
   listTreatments = async (req, res, next) => {
     try {
       const result = await this.treatmentRepository.list({
@@ -864,12 +895,120 @@ export class AdminController {
     }
   };
 
+  createAdminReview = async (req, res, next) => {
+    try {
+      const {
+        name, rating, category, message, avatar = '', treatment = '', duration = '',
+        review_type = 'doctor', page = 'home', status = 'draft', patient_consent_confirmed = false,
+      } = req.body || {};
+      if (status === 'active' && !hasPermission(req.user, 'content.publish')) {
+        throw new ForbiddenError("Permission 'content.publish' is required to publish a patient story.");
+      }
+      if (status === 'active' && patient_consent_confirmed !== true) {
+        throw new BadRequestError('Confirm documented patient consent before publishing this story.');
+      }
+
+      const actor = String(req.user?.email || req.user?.login || 'Admin');
+      const review = await this.reviewRepository.create({
+        name: name.trim(),
+        rating,
+        category: category.trim(),
+        message: message.trim(),
+        avatar,
+        treatment: treatment.trim(),
+        duration: duration.trim(),
+        review_type,
+        page,
+        status,
+        consent_verified: patient_consent_confirmed === true,
+        // Moderation and publishing consent are not proof of patient verification.
+        is_verified: false,
+        created_by: actor,
+        updated_by: actor,
+      });
+      await this.auditEventRepository?.record?.({
+        actor,
+        action: 'review.created',
+        target: `review:${review.id}`,
+        metadata: { id: review.id, status: review.status },
+      }).catch(() => null);
+      return sendSuccess(res, { message: 'Patient story saved.', data: review, statusCode: 201 });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updateAdminReview = async (req, res, next) => {
+    try {
+      const id = Number(req.params.id);
+      const current = await this.reviewRepository.findById(id);
+      if (!current) throw new NotFoundError('Review not found.');
+      if (current.status === 'active' && !hasPermission(req.user, 'content.publish')) {
+        throw new ForbiddenError("Permission 'content.publish' is required to edit a published patient story.");
+      }
+      const body = req.body || {};
+      const { patient_consent_confirmed, ...updates } = body;
+      const consentVerified = patient_consent_confirmed === true || current.consent_verified === true;
+      if (patient_consent_confirmed === true && !hasPermission(req.user, 'content.publish')) {
+        throw new ForbiddenError("Permission 'content.publish' is required to confirm publication consent.");
+      }
+      if (current.status === 'active' && !consentVerified) {
+        throw new BadRequestError('Confirm documented patient consent before saving a published story.');
+      }
+
+      const actor = String(req.user?.email || req.user?.login || 'Admin');
+      const updated = await this.reviewRepository.updateAdmin(id, {
+        ...updates,
+        ...(patient_consent_confirmed === true ? { consent_verified: true } : {}),
+        updated_by: actor,
+      });
+      if (!updated) throw new NotFoundError('Review not found.');
+      await this.auditEventRepository?.record?.({
+        actor,
+        action: 'review.updated',
+        target: `review:${id}`,
+        metadata: { id },
+      }).catch(() => null);
+      return sendSuccess(res, { message: 'Patient story updated.', data: updated });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  deleteAdminReview = async (req, res, next) => {
+    try {
+      const id = Number(req.params.id);
+      const review = await this.reviewRepository.findById(id);
+      if (!review) throw new NotFoundError('Review not found.');
+      if (review.status === 'active' && !hasPermission(req.user, 'content.publish')) {
+        throw new ForbiddenError("Permission 'content.publish' is required to delete a published patient story.");
+      }
+      const deleted = await this.reviewRepository.delete(id);
+      if (!deleted) throw new NotFoundError('Review not found.');
+      const actor = String(req.user?.email || req.user?.login || 'Admin');
+      await this.auditEventRepository?.record?.({
+        actor,
+        action: 'review.deleted',
+        target: `review:${id}`,
+        metadata: { id },
+      }).catch(() => null);
+      return sendSuccess(res, { message: 'Patient story deleted.' });
+    } catch (error) {
+      next(error);
+    }
+  };
+
   updateReviewStatus = async (req, res, next) => {
     try {
       const { id, status } = req.body || {};
       if (!Number.isInteger(Number(id))) throw new BadRequestError('A numeric review id is required.');
-      if (!['pending', 'active', 'rejected'].includes(status)) {
-        throw new BadRequestError('status must be pending, active, or rejected.');
+      if (!['draft', 'pending', 'active', 'rejected'].includes(status)) {
+        throw new BadRequestError('status must be draft, pending, active, or rejected.');
+      }
+      const current = await this.reviewRepository.findById(id);
+      if (!current) throw new NotFoundError('Review not found.');
+      if (status === 'active' && current.consent_verified !== true) {
+        throw new BadRequestError('Confirm documented patient consent by editing this story before publishing it.');
       }
       const review = await this.reviewRepository.updateStatus(id, status);
       if (!review) throw new NotFoundError('Review not found.');

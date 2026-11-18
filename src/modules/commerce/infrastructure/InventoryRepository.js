@@ -196,43 +196,56 @@ export class InventoryRepository extends IInventoryRepository {
   }
 
   async restock(productId, quantity, notes = '', createdBy = 'admin') {
-    const cleanProductId = String(productId).trim();
-    const qty = Math.max(1, parseInt(quantity, 10) || 1);
+    const qty = Number(quantity);
+    if (!Number.isSafeInteger(qty) || qty <= 0) throw new TypeError('Restock quantity must be a positive integer.');
+    return this.adjustStock(productId, qty, notes, createdBy, 'RESTOCK');
+  }
 
-    if (isDatabaseConnected()) {
-      const updated = await ProductModel.findOneAndUpdate(
-        { id: cleanProductId },
-        { $inc: { stock: qty }, $set: { in_stock: true } },
-        { new: true },
-      );
-      if (!updated) throw new NotFoundError('Product not found');
-      await this.recordMovement({
-        productId: cleanProductId,
-        quantity: qty,
-        balanceAfter: updated.stock,
-        referenceType: 'RESTOCK',
-        notes,
-        createdBy,
-      });
-      return updated.stock;
+  async adjustStock(productId, delta, notes = '', createdBy = 'admin', referenceType = 'ADJUSTMENT') {
+    const cleanProductId = String(productId ?? '').trim();
+    const change = Number(delta);
+    if (!cleanProductId || !Number.isSafeInteger(change) || change === 0) {
+      throw new TypeError('Stock adjustment must be a non-zero integer.');
     }
 
-    if (!Array.isArray(store.products)) store.products = [];
-    const product = store.products.find((p) => p.id === cleanProductId);
-    if (!product) throw new NotFoundError('Product not found');
-    product.stock = (product.stock || 0) + qty;
-    product.in_stock = true;
-    product.inStock = true;
+    let product;
+    if (isDatabaseConnected()) {
+      const filter = { id: cleanProductId };
+      if (change < 0) filter.stock = { $gte: Math.abs(change) };
+      product = await ProductModel.findOneAndUpdate(
+        filter,
+        { $inc: { stock: change }, $set: { in_stock: true, inStock: true } },
+        { new: true },
+      );
+      if (!product) {
+        const exists = await ProductModel.findOne({ id: cleanProductId }).select('id').lean();
+        if (!exists) throw new NotFoundError('Product not found');
+        throw new ConflictError('Stock adjustment cannot reduce inventory below zero.');
+      }
+      product.in_stock = Number(product.stock) > 0;
+      product.inStock = Number(product.stock) > 0;
+      await ProductModel.updateOne({ id: cleanProductId }, { $set: { in_stock: product.in_stock, inStock: product.inStock } });
+    } else {
+      if (!Array.isArray(store.products)) store.products = [];
+      product = store.products.find((item) => item.id === cleanProductId);
+      if (!product) throw new NotFoundError('Product not found');
+      const currentStock = Number.isSafeInteger(Number(product.stock)) ? Number(product.stock) : 0;
+      const nextStock = currentStock + change;
+      if (nextStock < 0) throw new ConflictError('Stock adjustment cannot reduce inventory below zero.');
+      product.stock = nextStock;
+      product.in_stock = nextStock > 0;
+      product.inStock = nextStock > 0;
+    }
 
     await this.recordMovement({
       productId: cleanProductId,
-      quantity: qty,
+      quantity: change,
       balanceAfter: product.stock,
-      referenceType: 'RESTOCK',
+      referenceType,
       notes,
       createdBy,
     });
-    return product.stock;
+    return Number(product.stock);
   }
 
   async getStock(productId) {

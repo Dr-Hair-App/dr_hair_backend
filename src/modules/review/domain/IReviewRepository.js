@@ -9,5 +9,13 @@ export class IReviewRepository {
   async create(reviewData) {
     throw new Error('Method not implemented');
   }
+
+  async updateAdmin(id, updates) {
+    throw new Error('Method not implemented');
+  }
+
+  async delete(id) {
+    throw new Error('Method not implemented');
+  }
 }
 
