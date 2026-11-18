@@ -56,6 +56,7 @@ import { GetHairTestsUseCase } from './modules/hair_test/application/GetHairTest
 import { GenerateHairTestAiAssessmentUseCase } from './modules/hair_test/application/GenerateHairTestAiAssessmentUseCase.js';
 import { ProcessQueuedAiAssessmentUseCase } from './modules/hair_test/application/ProcessQueuedAiAssessmentUseCase.js';
 import { GenerateAssessmentDietPlanUseCase } from './modules/hair_test/application/GenerateAssessmentDietPlanUseCase.js';
+import { GenerateAssessmentRoutineUseCase } from './modules/hair_test/application/GenerateAssessmentRoutineUseCase.js';
 import { AssessmentProductAvailabilityService } from './modules/hair_test/application/AssessmentProductAvailabilityService.js';
 import { DetectScalpImageUseCase } from './modules/hair_test/application/DetectScalpImageUseCase.js';
 import { GetTreatmentHistoryUseCase } from './modules/treatment/application/GetTreatmentHistoryUseCase.js';
@@ -308,6 +309,12 @@ export const createContainer = (overrides = {}) => {
     geminiAiService,
   });
 
+  const generateAssessmentRoutineUseCase = new GenerateAssessmentRoutineUseCase({
+    hairTestRepository,
+    treatmentRepository,
+    geminiAiService,
+  });
+
   const detectScalpImageUseCase = new DetectScalpImageUseCase({
     geminiAiService,
   });
@@ -430,6 +437,7 @@ export const createContainer = (overrides = {}) => {
     getHairTestsUseCase,
     generateHairTestAiAssessmentUseCase,
     generateAssessmentDietPlanUseCase,
+    generateAssessmentRoutineUseCase,
     detectScalpImageUseCase,
     hairTestRepository,
   });

@@ -286,18 +286,47 @@ const project = (document, selection, excludedByDefault = []) => {
   return attachDocumentMethods(output);
 };
 
-const updateDocument = (document, update, isInsert = false) => {
-  const next = { ...document };
+const setUpdatePath = (target, path, value, arrayFilters = []) => {
+  const parts = String(path).split('.');
+  const arrayPartIndex = parts.findIndex((part) => /^\$\[[A-Za-z][A-Za-z0-9_]*\]$/.test(part));
+  if (arrayPartIndex < 0) {
+    setPath(target, path, value);
+    return;
+  }
+
+  const identifier = parts[arrayPartIndex].slice(2, -1);
+  const arrayPath = parts.slice(0, arrayPartIndex).join('.');
+  const array = getPath(target, arrayPath);
+  const filter = arrayFilters.find((item) =>
+    Object.keys(item || {}).some((key) => key.startsWith(`${identifier}.`)),
+  );
+  if (!filter) throw new TypeError(`Missing D1 array filter for identifier: ${identifier}`);
+  const conditions = Object.fromEntries(
+    Object.entries(filter)
+      .filter(([key]) => key.startsWith(`${identifier}.`))
+      .map(([key, condition]) => [key.slice(identifier.length + 1), condition]),
+  );
+  const suffix = parts.slice(arrayPartIndex + 1).join('.');
+  if (!Array.isArray(array) || !suffix) return;
+  for (const entry of array) {
+    if (entry && typeof entry === 'object' && matches(entry, conditions)) {
+      setPath(entry, suffix, value);
+    }
+  }
+};
+
+const updateDocument = (document, update, isInsert = false, arrayFilters = []) => {
+  const next = plain(document);
   if (!update || typeof update !== 'object') return next;
   const operators = Object.keys(update).some((key) => key.startsWith('$'));
   if (!operators) {
-    for (const [key, value] of Object.entries(update)) setPath(next, key, value);
+    for (const [key, value] of Object.entries(update)) setUpdatePath(next, key, value, arrayFilters);
     return next;
   }
   for (const [operator, changes] of Object.entries(update)) {
     if (!changes || typeof changes !== 'object') continue;
     if (operator === '$set' || (operator === '$setOnInsert' && isInsert)) {
-      for (const [path, value] of Object.entries(changes)) setPath(next, path, value);
+      for (const [path, value] of Object.entries(changes)) setUpdatePath(next, path, value, arrayFilters);
     } else if (operator === '$unset') {
       for (const path of Object.keys(changes)) unsetPath(next, path);
     } else if (operator === '$inc') {
@@ -515,7 +544,7 @@ export class D1Model {
       if (!current) {
         if (!options.upsert) return null;
         const seed = Object.fromEntries(Object.entries(filter || {}).filter(([key, value]) => !key.startsWith('$') && (!value || typeof value !== 'object' || value instanceof Date)));
-        const inserted = updateDocument(seed, update, true);
+        const inserted = updateDocument(seed, update, true, options.arrayFilters || []);
         if (!inserted._id) inserted._id = String(seed._id || randomUUID());
         try {
           const created = await this._insert(inserted);
@@ -525,7 +554,7 @@ export class D1Model {
           throw error;
         }
       }
-      const next = updateDocument(current, update, false);
+      const next = updateDocument(current, update, false, options.arrayFilters || []);
       const rowKey = String(current._id);
       if (database) {
         const result = await database.prepare(`UPDATE "${this.table}" SET payload = ?, updated_at = CURRENT_TIMESTAMP WHERE row_key = ? AND payload = ?`).bind(JSON.stringify(next), rowKey, JSON.stringify(current)).run();

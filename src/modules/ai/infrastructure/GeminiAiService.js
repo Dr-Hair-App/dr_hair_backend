@@ -10,6 +10,56 @@ const unavailableImageVerification = (label, details = 'The image verification s
   source: 'unavailable',
 });
 
+const photoAngle = (photo, index) => {
+  const angle = String(photo?.angle || '').toLowerCase();
+  if (['front', 'top', 'left', 'right', 'back'].includes(angle)) return angle;
+  return `photo_${index + 1}`;
+};
+
+const unavailableScalpPhotoVerification = (photos = []) => photos.map((photo, index) => ({
+  angle: photoAngle(photo, index),
+  file_name: String(photo?.file_name || ''),
+  status: 'verificationUnavailable',
+  is_hair: false,
+  confidence: 0,
+  message: 'Could not visually verify this photo. Please try a clearer image or ask the clinic for help.',
+  details: 'The visual scalp check did not return a usable result.',
+}));
+
+const normalizeScalpPhotoVerification = (rawResults, includedImages, photos = []) => {
+  const unavailable = unavailableScalpPhotoVerification(photos);
+  const rawByAngle = new Map(
+    (Array.isArray(rawResults) ? rawResults : [])
+      .filter((result) => result && typeof result === 'object')
+      .map((result) => [String(result.angle || '').toLowerCase(), result]),
+  );
+  const checkedAngles = new Set(includedImages.map((image) => image.angle));
+
+  return unavailable.map((fallback) => {
+    if (!checkedAngles.has(fallback.angle)) return fallback;
+    const result = rawByAngle.get(fallback.angle);
+    const status = result?.status;
+    const isConsistent = status === 'hairDetected'
+      ? result?.is_hair === true
+      : ['notHair', 'lowClarity'].includes(status) && result?.is_hair === false;
+    if (!isConsistent) return fallback;
+    const messages = {
+      hairDetected: 'Scalp and hair are visually present in this photo.',
+      notHair: 'This photo does not appear to show a scalp. Choose a close-up scalp photo.',
+      lowClarity: 'The scalp is too unclear to review. Choose a brighter, sharper photo.',
+    };
+    return {
+      angle: fallback.angle,
+      file_name: fallback.file_name,
+      status,
+      is_hair: status === 'hairDetected',
+      confidence: Math.max(0, Math.min(1, Number(result.confidence) || 0)),
+      message: messages[status],
+      details: 'This is a visual scalp, screenshot, and clarity check; it does not verify image provenance or diagnose a condition.',
+    };
+  });
+};
+
 const conservativeNextStepRecommendation = (patientData = {}) => {
   const pattern = String(patientData.hair_fall_pattern || '').toLowerCase();
   const symptoms = [patientData.scalp_symptoms, patientData.scalp_condition]
@@ -28,10 +78,12 @@ const conservativeNextStepRecommendation = (patientData = {}) => {
   return redFlag
     ? {
         type: 'doctor_appointment',
+        is_critical: true,
         reason: 'Your reported pattern or scalp symptoms deserve an in-person clinician review.',
       }
     : {
         type: 'products',
+        is_critical: false,
         reason: 'Your answers support starting with a simple daily care routine and optional product guidance.',
       };
 };
@@ -59,34 +111,80 @@ export class GeminiAiService {
    * @returns {Promise<Object>} Formatted clinical assessment report.
    */
   async generateHairTestAssessment(patientData = {}) {
+    const photos = Array.isArray(patientData.scalp_photos) ? patientData.scalp_photos : [];
     if (!this.apiKey) {
       this.logger.warn?.('Gemini API key is not set; using clinical rules fallback.');
-      return this.generateFallbackAssessment(patientData);
+      return {
+        ...this.generateFallbackAssessment(patientData),
+        scalp_photo_verification: unavailableScalpPhotoVerification(photos),
+      };
     }
 
-    const prompt = this._buildPrompt(patientData);
+    const maxInlineImages = 5;
+    const maxInlineImageBytes = 2 * 1024 * 1024;
+    const maxInlineImageTotalBytes = maxInlineImages * maxInlineImageBytes;
+    let inlineImageBytes = 0;
     const inlineImages = Array.isArray(patientData.inlineImages)
-      ? patientData.inlineImages.filter((image) => image?.data && image?.mimeType).slice(0, 2)
+      ? patientData.inlineImages.filter((image) => image?.data && image?.mimeType).slice(0, maxInlineImages).map((image, index) => ({
+          ...image,
+          angle: String(image.angle || photoAngle(photos[index], index)).toLowerCase(),
+        }))
       : [];
+    const includedAngles = new Set();
+    for (let index = 0; index < inlineImages.length; index += 1) {
+      const image = inlineImages[index];
+      const angle = String(image.angle || photoAngle(photos[index], index)).toLowerCase();
+      const estimatedBytes = Math.floor((image.data.length * 3) / 4);
+      if (!['front', 'top', 'left', 'right', 'back'].includes(angle) ||
+          estimatedBytes <= 0 || estimatedBytes > maxInlineImageBytes ||
+          inlineImageBytes + estimatedBytes > maxInlineImageTotalBytes) {
+        inlineImages.splice(index, 1);
+        index -= 1;
+        continue;
+      }
+      image.angle = angle;
+      inlineImageBytes += estimatedBytes;
+      includedAngles.add(angle);
+    }
     const maxGeminiCalls = 3;
     const requestDeadline = Date.now() + 25_000;
     let geminiCallCount = 0;
 
-    if (inlineImages.length === 0 && this.imageStorage?.downloadAuthenticatedImage) {
-      const photos = Array.isArray(patientData.scalp_photos) ? patientData.scalp_photos : [];
-      for (const photo of photos) {
-        if (inlineImages.length >= 2) break;
-        const analysisFileName = photo?.optimized_file_name || photo?.file_name;
-        const analysisFormat = photo?.optimized_format || photo?.format;
-        if (photo?.delivery_type !== 'authenticated' || !analysisFileName || !analysisFormat) continue;
-        try {
-          const image = await this.imageStorage.downloadAuthenticatedImage(analysisFileName, analysisFormat);
-          if (image?.data && image?.mimeType) inlineImages.push(image);
-        } catch {
-          this.logger.warn?.('A private assessment image could not be loaded for AI analysis.');
+    if (this.imageStorage?.downloadAuthenticatedImage) {
+      for (let index = 0; index < photos.length && inlineImages.length < maxInlineImages; index += 1) {
+        const photo = photos[index];
+        const angle = photoAngle(photo, index);
+        if (includedAngles.has(angle)) continue;
+        if (photo?.delivery_type !== 'authenticated' || !photo?.file_name || !photo?.format) continue;
+        const candidates = [
+          ...(photo.optimized_file_name
+            ? [{ fileName: photo.optimized_file_name, format: photo.optimized_format || photo.format }]
+            : []),
+          { fileName: photo.file_name, format: photo.format },
+        ];
+        for (const candidate of candidates) {
+          try {
+            const image = await this.imageStorage.downloadAuthenticatedImage(
+              candidate.fileName,
+              candidate.format,
+              { maxBytes: maxInlineImageBytes },
+            );
+            const imageBytes = Math.floor((image?.data?.length || 0) * 3 / 4);
+            if (image?.data && image?.mimeType && imageBytes > 0 &&
+                imageBytes <= maxInlineImageBytes &&
+                inlineImageBytes + imageBytes <= maxInlineImageTotalBytes) {
+              inlineImages.push({ ...image, angle });
+              inlineImageBytes += imageBytes;
+              includedAngles.add(angle);
+              break;
+            }
+          } catch {
+            this.logger.warn?.('A private assessment image could not be loaded for AI analysis.');
+          }
         }
       }
     }
+    const prompt = this._buildPrompt(patientData, inlineImages.map((image) => image.angle));
 
     const callGeminiOnce = async (model) => {
       if (geminiCallCount >= maxGeminiCalls || Date.now() >= requestDeadline) {
@@ -102,6 +200,7 @@ export class GeminiAiService {
       try {
         const parts = [{ text: prompt }];
         for (const img of inlineImages) {
+          parts.push({ text: `The next image is the patient's ${img.angle} scalp photo. Verify only whether it visually shows human scalp/hair and whether it is clear enough for review.` });
           parts.push({
             inline_data: {
               mime_type: img.mimeType,
@@ -173,18 +272,27 @@ export class GeminiAiService {
 
       if (!callResult.ok) {
         this.logger.error?.(`Gemini API request failed with status ${callResult.status}.`);
-        return this.generateFallbackAssessment(patientData);
+        return {
+          ...this.generateFallbackAssessment(patientData),
+          scalp_photo_verification: unavailableScalpPhotoVerification(photos),
+        };
       }
 
       if (!callResult.candidateText) {
         this.logger.warn?.('Gemini returned empty candidate text. Using fallback.');
-        return this.generateFallbackAssessment(patientData);
+        return {
+          ...this.generateFallbackAssessment(patientData),
+          scalp_photo_verification: unavailableScalpPhotoVerification(photos),
+        };
       }
 
       const parsedData = this._parseJsonCandidate(callResult.candidateText);
       if (!parsedData || typeof parsedData !== 'object') {
         this.logger.warn?.(`Failed to parse valid JSON from Gemini output. Raw text length: ${callResult.candidateText?.length}. Preview: ${callResult.candidateText?.substring(0, 200)}`);
-        return this.generateFallbackAssessment(patientData);
+        return {
+          ...this.generateFallbackAssessment(patientData),
+          scalp_photo_verification: unavailableScalpPhotoVerification(photos),
+        };
       }
 
       const hasRequiredAssessment =
@@ -196,49 +304,82 @@ export class GeminiAiService {
         String(parsedData.summary || '').trim().length > 0 &&
         parsedData.recommended_regimen &&
         Array.isArray(parsedData.recommended_regimen.daily_steps);
-      if (!hasRequiredAssessment) return this.generateFallbackAssessment(patientData);
+      if (!hasRequiredAssessment) {
+        return {
+          ...this.generateFallbackAssessment(patientData),
+          scalp_photo_verification: unavailableScalpPhotoVerification(photos),
+        };
+      }
+      const scalpPhotoVerification = normalizeScalpPhotoVerification(
+        parsedData.scalp_photo_verification,
+        inlineImages,
+        photos,
+      );
 
       const nextStepRecommendation = (() => {
         const safetyRecommendation = conservativeNextStepRecommendation(patientData);
         const modelRecommendation = parsedData.next_step_recommendation;
-        if (safetyRecommendation.type === 'doctor_appointment') return safetyRecommendation;
+        if (safetyRecommendation.type === 'doctor_appointment') {
+          return {
+            ...safetyRecommendation,
+            is_critical: true,
+          };
+        }
         if (modelRecommendation?.type === 'doctor_appointment') {
           return {
             type: 'doctor_appointment',
-            reason: 'Your answers need a clinician review before the Assistant can suggest a care plan.',
+            is_critical: true,
+            reason: modelRecommendation.reason || 'Your answers need a clinician review before the Assistant can suggest a care plan.',
           };
         }
-        return safetyRecommendation;
+        return {
+          ...safetyRecommendation,
+          is_critical: false,
+        };
       })();
       const isClinicianPriority = nextStepRecommendation.type === 'doctor_appointment';
+      const parsedSteps = Array.isArray(parsedData.recommended_regimen?.daily_steps)
+        ? parsedData.recommended_regimen.daily_steps.filter((step) => {
+            const instruction = String(step?.action || step?.instruction || step?.step || '');
+            return !/\b(tablet|supplement|medicine|medication|prescription|dosage|mg|ml|minoxidil|capsule)\b/i.test(instruction);
+          })
+        : [];
       const recommendedRegimen = isClinicianPriority
-        ? { summary: '', daily_steps: [], target_products: [] }
+        ? {
+            summary: parsedData.recommended_regimen?.summary || 'Follow in-clinic doctor advice.',
+            daily_steps: parsedSteps,
+            target_products: [],
+          }
         : {
             ...parsedData.recommended_regimen,
-            daily_steps: parsedData.recommended_regimen.daily_steps.filter((step) => {
-              const instruction = String(step?.action || step?.instruction || step?.step || '');
-              return !/\b(tablet|supplement|medicine|medication|prescription|dosage|mg|ml|minoxidil|capsule)\b/i.test(instruction);
-            }),
+            daily_steps: parsedSteps,
+            target_products: Array.isArray(parsedData.recommended_regimen?.target_products)
+              ? parsedData.recommended_regimen.target_products
+              : [],
           };
 
       return {
         ai_status: isClinicianPriority ? 'clinician_review_required' : 'available',
-        scalp_health_score: isClinicianPriority ? null : (Number(parsedData.scalp_health_score) || 70),
-        stage_classification: isClinicianPriority ? '' : String(parsedData.stage_classification || 'Stage 2 - Early Thinning'),
-        summary: isClinicianPriority
-          ? 'Please contact the clinic for guidance. The Assistant will not suggest a care plan for this assessment.'
-          : String(parsedData.summary || 'Clinical AI evaluation completed based on reported symptoms.'),
-        root_causes: isClinicianPriority ? [] : (Array.isArray(parsedData.root_causes) ? parsedData.root_causes : []),
-        diet_plan: isClinicianPriority ? {} : (parsedData.diet_plan || {}),
-        lifestyle_guidance: isClinicianPriority ? {} : (parsedData.lifestyle_guidance || {}),
+        scalp_health_score: Number(parsedData.scalp_health_score) || (isClinicianPriority ? 55 : 70),
+        stage_classification: String(parsedData.stage_classification || (isClinicianPriority ? 'Stage 3 - Noticeable Thinning' : 'Stage 2 - Early Thinning')),
+        summary: String(parsedData.summary || (isClinicianPriority
+          ? 'Clinical AI evaluation indicates advanced thinning or sensitive symptoms. In-person clinician consultation is strongly advised.'
+          : 'Clinical AI evaluation completed based on reported symptoms.')),
+        root_causes: Array.isArray(parsedData.root_causes) ? parsedData.root_causes : [],
+        diet_plan: parsedData.diet_plan || {},
+        lifestyle_guidance: parsedData.lifestyle_guidance || {},
         recommended_regimen: recommendedRegimen,
         next_step_recommendation: nextStepRecommendation,
         generated_by: `Dr. Hair Assistant (${activeModel})`,
         generated_at: new Date().toISOString(),
+        scalp_photo_verification: scalpPhotoVerification,
       };
     } catch (err) {
       this.logger.error?.(`Error invoking Gemini API: ${err.message}. Using fallback assessment.`);
-      return this.generateFallbackAssessment(patientData);
+      return {
+        ...this.generateFallbackAssessment(patientData),
+        scalp_photo_verification: unavailableScalpPhotoVerification(photos),
+      };
     }
   }
 
@@ -298,10 +439,87 @@ export class GeminiAiService {
     };
   }
 
+  async generatePersonalizedRoutine(patientData = {}) {
+    const defaultSteps = [
+      { title: 'Morning Gentle Scalp Cleansing', subtitle: 'Wash with lukewarm water and a pH-balanced gentle cleanser', category: 'Cleansing', time_of_day: 'Morning' },
+      { title: 'Follicular Stimulation Massage', subtitle: '4 minutes gentle fingertip circular motion to enhance microcirculation', category: 'Massage', time_of_day: 'Morning' },
+      { title: 'Mid-Day Hydration & Scalp Protection', subtitle: 'Drink 500ml water and protect hair from harsh direct sun or pollution', category: 'Lifestyle', time_of_day: 'Afternoon' },
+      { title: 'Evening Botanical Regrowth Tonic', subtitle: 'Apply nourishing botanical/peptide scalp serum on thinning regions', category: 'Nourishment', time_of_day: 'Evening' },
+      { title: 'Pre-Sleep Follicle Rest & Care', subtitle: 'Avoid tight hairstyles, use smooth pillowcase, and aim for 7-8h restful sleep', category: 'Sleep', time_of_day: 'Night' },
+    ];
+
+    if (!this.apiKey) {
+      return {
+        summary: 'Clinical routine designed to support scalp barrier health and nutrient flow.',
+        steps: defaultSteps,
+        generated_by: 'Dr. Hair Assistant',
+        generated_at: new Date().toISOString(),
+      };
+    }
+
+    try {
+      const prompt = `You are Dr. Hair Assistant. Create a practical daily hair care routine tailored to this patient's hair loss profile:
+${JSON.stringify({
+  age: patientData.age,
+  gender: patientData.gender,
+  hair_fall_pattern: patientData.hair_fall_pattern,
+  daily_hair_fall: patientData.daily_hair_fall,
+  scalp_condition: patientData.scalp_condition,
+  stress_level: patientData.stress_level,
+  dandruff: patientData.dandruff,
+})}
+Return ONLY valid JSON with this format:
+{
+  "summary": "<1-2 sentence overview of daily routine strategy>",
+  "steps": [
+    { "title": "<Clear action>", "subtitle": "<Specific instruction>", "category": "Cleansing|Massage|Nourishment|Lifestyle|Sleep", "time_of_day": "Morning|Afternoon|Evening|Night" }
+  ]
+}
+Include 4 to 5 daily steps across morning, afternoon, evening, and night. Do not prescribe prescription drugs or minoxidil.`;
+
+      const response = await this.fetchFn(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.2, maxOutputTokens: 1200, responseMimeType: 'application/json' },
+          }),
+          signal: AbortSignal.timeout(15000),
+        },
+      );
+      if (!response.ok) throw new Error(`Gemini routine HTTP ${response.status}`);
+      const data = await response.json();
+      const parsed = this._parseJsonCandidate(data?.candidates?.[0]?.content?.parts?.[0]?.text);
+      if (!parsed || !Array.isArray(parsed.steps) || parsed.steps.length === 0) {
+        throw new Error('Incomplete routine returned');
+      }
+      return {
+        summary: String(parsed.summary || 'Personalized hair care routine designed for your scalp.').slice(0, 300),
+        steps: parsed.steps.slice(0, 8).map((step) => ({
+          title: String(step.title || 'Care Step').slice(0, 100),
+          subtitle: String(step.subtitle || '').slice(0, 250),
+          category: String(step.category || 'Daily care').slice(0, 50),
+          time_of_day: String(step.time_of_day || 'Daily').slice(0, 40),
+        })),
+        generated_by: 'Dr. Hair Assistant',
+        generated_at: new Date().toISOString(),
+      };
+    } catch {
+      return {
+        summary: 'Clinical routine designed to support scalp barrier health and nutrient flow.',
+        steps: defaultSteps,
+        generated_by: 'Dr. Hair Assistant',
+        generated_at: new Date().toISOString(),
+      };
+    }
+  }
+
   /**
    * Builds the clinical trichology system & user prompt for Gemini.
    */
-  _buildPrompt(patientData) {
+  _buildPrompt(patientData, verifiedPhotoAngles = []) {
     const age = patientData.age || 'Not specified';
     const gender = patientData.gender || 'Not specified';
     const duration = patientData.duration || patientData.hair_fall_start || 'Not specified';
@@ -346,6 +564,7 @@ PATIENT PROFILE & ASSESSMENT RESPONSES:
 - Current Medications: ${meds}
 
 Image handling: If photos are included, use them only to assess whether they appear to show the scalp and are clear enough for clinician review. Do not diagnose a condition or infer a hair-loss stage from photos. Base appointment recommendations on the patient's reported answers.
+For visual verification, the attached images have these angle labels in order: ${verifiedPhotoAngles.length ? verifiedPhotoAngles.join(', ') : 'no images could be verified'}. Return exactly one verification entry for every listed angle. Do not invent an entry for an image that was not attached. Photos may show screenshots or unrelated images; classify based only on the visible content. This visual check does not establish who took the photo or verify image provenance.
 
 CLINICAL REQUIREMENTS:
 Return a single strictly valid JSON object matching this schema exactly:
@@ -353,6 +572,9 @@ Return a single strictly valid JSON object matching this schema exactly:
   "scalp_health_score": <Integer between 10 and 100; a questionnaire screening indicator, not a medical measurement>,
   "stage_classification": "<A cautious description of the patient's reported pattern; do not assign a medical diagnosis or infer a Norwood/Ludwig stage>",
   "summary": "<2-3 sentence cautious overview of the answers; distinguish reported information from possible explanations>",
+  "scalp_photo_verification": [
+    { "angle": "<one supplied attached-image angle>", "status": "hairDetected | notHair | lowClarity", "is_hair": true | false, "confidence": 0.9 }
+  ],
   "next_step_recommendation": {
     "type": "doctor_appointment | products",
     "reason": "<Brief reason based only on the patient's answers; never present this as a diagnosis>"
@@ -415,6 +637,7 @@ NEXT-STEP DECISION:
 - Suggest only broad categories from Hair Care or Serums; never suggest supplements, medicines, prescriptions, or branded products. The app matches broad categories to the active in-stock catalog.
 - Never infer a diagnosis from a photo or questionnaire, and never recommend prescription treatment or supplement dosing.
 - Do not call the score a clinical measurement or present the reported pattern as a confirmed stage or diagnosis.
+- For each attached photo, use "hairDetected" only when a close scalp/hair area is visibly present, "notHair" for screenshots, unrelated images, or photos without scalp, and "lowClarity" for a scalp photo too blurry/dark to review. Keep is_hair consistent with status. Do not infer authenticity, ownership, or provenance.
 
 Do not include markdown fences outside the JSON. Return valid JSON only.
 `;
@@ -476,6 +699,9 @@ Do not include markdown fences outside the JSON. Return valid JSON only.
             type: 'unavailable',
             reason: 'AI could not prepare a product recommendation. Please retry or ask a clinician.',
           },
+      scalp_photo_verification: unavailableScalpPhotoVerification(
+        Array.isArray(patientData.scalp_photos) ? patientData.scalp_photos : [],
+      ),
       generated_by: 'unavailable',
       generated_at: new Date().toISOString(),
     };

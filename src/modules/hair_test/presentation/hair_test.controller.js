@@ -7,6 +7,7 @@ export class HairTestController {
     getHairTestsUseCase,
     generateHairTestAiAssessmentUseCase,
     generateAssessmentDietPlanUseCase,
+    generateAssessmentRoutineUseCase,
     detectScalpImageUseCase,
     hairTestRepository,
   }) {
@@ -14,6 +15,7 @@ export class HairTestController {
     this.getHairTestsUseCase = getHairTestsUseCase;
     this.generateHairTestAiAssessmentUseCase = generateHairTestAiAssessmentUseCase;
     this.generateAssessmentDietPlanUseCase = generateAssessmentDietPlanUseCase;
+    this.generateAssessmentRoutineUseCase = generateAssessmentRoutineUseCase;
     this.detectScalpImageUseCase = detectScalpImageUseCase;
     this.hairTestRepository = hairTestRepository;
   }
@@ -129,6 +131,26 @@ export class HairTestController {
         data: {
           reference_no: result.reference_no,
           meal_plan: result.meal_plan,
+          ai_assessment: result.ai_assessment,
+          test: result.test,
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  generateDailyRoutine = async (req, res, next) => {
+    try {
+      const result = await this.generateAssessmentRoutineUseCase.execute({
+        userId: req.user?.id,
+        referenceNo: req.params?.referenceNo,
+      });
+      return sendSuccess(res, {
+        message: result.message,
+        data: {
+          reference_no: result.reference_no,
+          routine: result.routine,
           ai_assessment: result.ai_assessment,
           test: result.test,
         },

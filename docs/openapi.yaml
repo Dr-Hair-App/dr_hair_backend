@@ -686,7 +686,7 @@ paths:
     post:
       tags: [Hair tests]
       summary: Submit a hair and scalp assessment
-      description: Submit questionnaire answers and up to five original scalp photos with optional optimized derivatives in one multipart request (up to ten total files). Images stream directly into private R2 storage with bounded memory, then the AI assessment is generated before the response so the patient app can show one loading state until the result arrives. If the AI provider is unavailable, a deterministic fallback result is returned and saved. Each file is limited to 25 MiB, the complete multipart request is limited to 90 MiB to stay below Cloudflare's ingress ceiling, and text fields are limited to 64 fields of at most 16 KiB each with at most 80 total parts. Assessment submission is limited to ten per patient per India-local day. Available products are matched server-side only when the patient shop is enabled and items are active and in stock. Critical cases return clinician_review_required and omit self-care recommendations.
+      description: Submit questionnaire answers and up to five original scalp photos with optional optimized derivatives in one multipart request (up to ten total files). Images stream directly into private R2 storage with bounded memory. The same Gemini assessment request includes up to five optimized private images (maximum 2 MiB each and 10 MiB aggregate) and returns `scalp_photo_verification` with one visual scalp/screenshot/clarity result per stored photo; photos that cannot be included or verified are explicitly `verificationUnavailable`. Verification results are persisted on each `scalp_photos` item by stable `file_name`, and are returned by submission and assessment-history APIs. This check does not establish photo provenance or ownership and is not a diagnosis. If the AI provider is unavailable, a deterministic fallback result is returned and saved without marking any photo genuine. Each file is limited to 25 MiB, the complete multipart request is limited to 90 MiB to stay below Cloudflare's ingress ceiling, and text fields are limited to 64 fields of at most 16 KiB each with at most 80 total parts. Assessment submission is limited to ten per patient per India-local day. Available products are matched server-side only when the patient shop is enabled and items are active and in stock. Critical cases return clinician_review_required and omit self-care recommendations.
       x-legacy-path: /HairTest/submit_form
       security: [{ bearerAuth: [] }]
       requestBody:
@@ -714,7 +714,16 @@ paths:
                     photo_right_url: { type: string, format: uri }
                     photo_back_url: { type: string, format: uri }
       responses:
-        '200': { $ref: '#/components/responses/Success' }
+        '200':
+          description: Assessment stored with AI result or queued result and per-photo visual verification.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/HairTestSubmissionData' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '413': { description: Complete multipart request exceeds 90 MiB }
@@ -725,10 +734,22 @@ paths:
     post:
       tags: [Hair tests]
       summary: List the authenticated user's hair tests
+      description: History photo items retain their stable file_name, angle, verification_status, verification_confidence, verification_message, and verification_details fields. Signed image URLs are refreshed for the authenticated owner.
       x-legacy-path: /HairTest/hair_test
       security: [{ bearerAuth: [] }]
       responses:
-        '200': { $ref: '#/components/responses/Success' }
+        '200':
+          description: Assessment history with stored per-photo visual verification metadata.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/HairTestHistoryItem' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/ServerError' }
 
@@ -779,7 +800,7 @@ paths:
     get:
       tags: [Hair tests]
       summary: Get the authenticated patient's AI assessment job status and result
-      description: Returns queued, processing, ready, or failed. Only the owner of the assessment can poll this endpoint. The AI result is included only when ready.
+      description: Returns queued, processing, ready, or failed. Only the owner of the assessment can poll this endpoint. The AI result is included only when ready and includes scalp_photo_verification for each selected photo, including unavailable outcomes.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: referenceNo
@@ -787,7 +808,16 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        '200': { $ref: '#/components/responses/Success' }
+        '200':
+          description: AI assessment status and result, including per-photo visual verification when ready.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/HairAssessmentStatusData' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '500': { $ref: '#/components/responses/ServerError' }
@@ -814,6 +844,24 @@ paths:
       tags: [Hair tests]
       summary: Generate a personalized seven-day AI meal plan for an assessment
       description: Available only to the assessment owner after a non-critical AI assessment. The generated plan is stored with the assessment and returned with the complete AI assessment payload. Critical cases should follow the clinician appointment recommendation.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: referenceNo
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /api/v1/hair-tests/{referenceNo}/routine:
+    post:
+      tags: [Hair tests]
+      summary: Generate a personalized daily AI care routine for an assessment
+      description: Available to the assessment owner to generate a structured morning, afternoon, evening, and night hair care routine.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: referenceNo
@@ -3546,11 +3594,38 @@ components:
       anyOf:
         - required: [full_name]
         - required: [name]
+    ScalpPhotoVerification:
+      type: object
+      description: Visual scalp, screenshot, and clarity review only. Does not verify provenance or ownership and does not diagnose a condition.
+      properties:
+        file_name: { type: string, description: Stable private R2 file key this verification belongs to. }
+        angle: { type: string, enum: [front, top, left, right, back] }
+        verification_status: { type: string, enum: [pending, hairDetected, notHair, lowClarity, verificationUnavailable] }
+        verification_confidence: { type: number, minimum: 0, maximum: 1 }
+        verification_message: { type: string }
+        verification_details: { type: string }
+      required: [file_name, angle, verification_status]
+    ScalpPhotoVerificationResult:
+      type: object
+      description: AI assessment response field containing the visual result for each submitted photo, including unavailable results when an image could not be checked.
+      properties:
+        angle: { type: string, enum: [front, top, left, right, back] }
+        file_name: { type: string, description: Stable private R2 file key. }
+        status: { type: string, enum: [hairDetected, notHair, lowClarity, verificationUnavailable] }
+        is_hair: { type: boolean }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        message: { type: string }
+        details: { type: string }
+      required: [angle, file_name, status, is_hair, confidence, message, details]
     HairAssessmentAiResult:
       type: object
       properties:
         ai_status: { type: string, enum: [available, unavailable, clinician_review_required] }
         summary: { type: string }
+        scalp_photo_verification:
+          type: array
+          description: One visual scalp/screenshot/clarity result per submitted photo. Verification is stored on its scalp_photos record by file_name. Fallback assessments never mark a photo hairDetected.
+          items: { $ref: '#/components/schemas/ScalpPhotoVerificationResult' }
         next_step_recommendation:
           type: object
           properties:
@@ -3575,6 +3650,59 @@ components:
             status: { type: string, enum: [checked, unavailable, not_applicable] }
             shop_enabled: { type: boolean }
         custom_meal_plan: { type: object, description: AI-generated seven-day plan, when requested and eligible. }
+    HairTestSubmissionData:
+      type: object
+      properties:
+        reference_no: { type: string }
+        ai_assessment_status: { type: string, enum: [queued, processing, ready, failed] }
+        ai_assessment:
+          oneOf:
+            - $ref: '#/components/schemas/HairAssessmentAiResult'
+            - type: 'null'
+        test:
+          type: object
+          properties:
+            reference_no: { type: string }
+            scalp_photos:
+              type: array
+              description: Stored visual verification travels with each stable photo file key in assessment history.
+              items:
+                allOf:
+                  - $ref: '#/components/schemas/ScalpPhotoVerification'
+                  - type: object
+                    properties:
+                      url: { type: string, format: uri }
+                      format: { type: string }
+                      optimized_file_name: { type: string }
+                      optimized_format: { type: string }
+    HairAssessmentStatusData:
+      type: object
+      properties:
+        reference_no: { type: string }
+        status: { type: string, enum: [queued, processing, ready, failed] }
+        ai_assessment:
+          oneOf:
+            - $ref: '#/components/schemas/HairAssessmentAiResult'
+            - type: 'null'
+    HairTestHistoryItem:
+      type: object
+      properties:
+        id: { type: integer }
+        reference_no: { type: string }
+        status: { type: string }
+        scalp_photos:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/ScalpPhotoVerification'
+              - type: object
+                properties:
+                  url: { type: string, format: uri }
+                  format: { type: string }
+                  optimized_file_name: { type: string }
+                  optimized_format: { type: string }
+        ai_assessment: { $ref: '#/components/schemas/HairAssessmentAiResult' }
+        ai_assessment_status: { type: string, enum: [queued, processing, ready, failed] }
     ReviewQueryRequest:
       type: object
       properties:

@@ -4,6 +4,7 @@ import { store } from '../../../shared/database/store.js';
 import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { HairTestModel, HairTestDraftModel, nextId } from '../../../shared/database/models.js';
 import { BadRequestError, NotFoundError } from '../../../shared/errors/index.js';
+import { formatPatientCode } from '../../../shared/utils/patient-code.js';
 
 const VALID_TRANSITIONS = {
   draft: ['submitted', 'archived'],
@@ -16,6 +17,38 @@ const VALID_TRANSITIONS = {
 const toHairTest = (record) => {
   if (!record) return null;
   return new HairTest(typeof record.toObject === 'function' ? record.toObject() : record);
+};
+
+const VERIFICATION_STATUSES = new Set([
+  'hairDetected',
+  'notHair',
+  'lowClarity',
+  'verificationUnavailable',
+]);
+
+export const buildScalpPhotoVerificationUpdate = (results = []) => {
+  const set = {};
+  const arrayFilters = [];
+  const seenFileNames = new Set();
+  for (const result of Array.isArray(results) ? results : []) {
+    const fileName = typeof result?.file_name === 'string' ? result.file_name : '';
+    if (!fileName || seenFileNames.has(fileName) || !VERIFICATION_STATUSES.has(result.status)) continue;
+    seenFileNames.add(fileName);
+    const identifier = `photo${arrayFilters.length}`;
+    set[`scalp_photos.$[${identifier}].verification_status`] = result.status;
+    const confidence = Number(result.confidence);
+    if (Number.isFinite(confidence)) {
+      set[`scalp_photos.$[${identifier}].verification_confidence`] = Math.max(0, Math.min(1, confidence));
+    }
+    if (typeof result.message === 'string') {
+      set[`scalp_photos.$[${identifier}].verification_message`] = result.message.slice(0, 500);
+    }
+    if (typeof result.details === 'string') {
+      set[`scalp_photos.$[${identifier}].verification_details`] = result.details.slice(0, 1000);
+    }
+    arrayFilters.push({ [`${identifier}.file_name`]: fileName });
+  }
+  return { set, arrayFilters };
 };
 
 export class HairTestRepository extends IHairTestRepository {
@@ -269,11 +302,22 @@ export class HairTestRepository extends IHairTestRepository {
 
   async saveAiAssessment(referenceNo, aiAssessment) {
     const updatedAt = new Date();
+    const { set: photoVerificationSet, arrayFilters } = buildScalpPhotoVerificationUpdate(
+      aiAssessment?.scalp_photo_verification,
+    );
     if (isDatabaseConnected()) {
       const record = await HairTestModel.findOneAndUpdate(
         { reference_no: referenceNo },
-        { $set: { ai_assessment: aiAssessment, ai_assessment_status: 'ready', ai_assessment_updated_at: updatedAt }, $unset: { ai_assessment_locked_at: 1, ai_assessment_locked_by: 1, ai_assessment_error: 1, ai_assessment_queued_at: 1 } },
-        { new: true },
+        {
+          $set: {
+            ai_assessment: aiAssessment,
+            ai_assessment_status: 'ready',
+            ai_assessment_updated_at: updatedAt,
+            ...photoVerificationSet,
+          },
+          $unset: { ai_assessment_locked_at: 1, ai_assessment_locked_by: 1, ai_assessment_error: 1, ai_assessment_queued_at: 1 },
+        },
+        { new: true, ...(arrayFilters.length ? { arrayFilters } : {}) },
       ).lean();
       return toHairTest(record);
     }
@@ -281,6 +325,24 @@ export class HairTestRepository extends IHairTestRepository {
     const test = store.hairTests.find((t) => t.reference_no === referenceNo);
     if (!test) return null;
     test.ai_assessment = aiAssessment;
+    const byFileName = new Map(
+      (Array.isArray(aiAssessment?.scalp_photo_verification) ? aiAssessment.scalp_photo_verification : [])
+        .filter((result) => typeof result?.file_name === 'string' && VERIFICATION_STATUSES.has(result.status))
+        .map((result) => [result.file_name, result]),
+    );
+    test.scalp_photos = (test.scalp_photos || []).map((photo) => {
+      const result = byFileName.get(photo.file_name);
+      if (!result) return photo;
+      return {
+        ...photo,
+        verification_status: result.status,
+        ...(Number.isFinite(Number(result.confidence))
+          ? { verification_confidence: Math.max(0, Math.min(1, Number(result.confidence))) }
+          : {}),
+        ...(typeof result.message === 'string' ? { verification_message: result.message.slice(0, 500) } : {}),
+        ...(typeof result.details === 'string' ? { verification_details: result.details.slice(0, 1000) } : {}),
+      };
+    });
     test.ai_assessment_status = 'ready';
     test.ai_assessment_updated_at = updatedAt;
     delete test.ai_assessment_locked_at;
@@ -329,8 +391,17 @@ export class HairTestRepository extends IHairTestRepository {
     if (isDatabaseConnected()) {
       const record = await HairTestModel.findOneAndUpdate(
         { reference_no: referenceNo, ai_assessment_status: 'processing' },
-        { $set: { ai_assessment_status: 'failed', ai_assessment_error: safeError, ai_assessment_updated_at: updatedAt }, $unset: { ai_assessment_locked_at: 1, ai_assessment_locked_by: 1, ai_assessment_queued_at: 1 } },
-        { new: true },
+        {
+          $set: {
+            ai_assessment_status: 'failed',
+            ai_assessment_error: safeError,
+            ai_assessment_updated_at: updatedAt,
+            'scalp_photos.$[photo].verification_status': 'verificationUnavailable',
+            'scalp_photos.$[photo].verification_message': 'Photo verification could not be completed. You can retry the AI check.',
+          },
+          $unset: { ai_assessment_locked_at: 1, ai_assessment_locked_by: 1, ai_assessment_queued_at: 1 },
+        },
+        { new: true, arrayFilters: [{ 'photo.verification_status': 'pending' }] },
       ).lean();
       return toHairTest(record);
     }
@@ -339,6 +410,13 @@ export class HairTestRepository extends IHairTestRepository {
     record.ai_assessment_status = 'failed';
     record.ai_assessment_error = safeError;
     record.ai_assessment_updated_at = updatedAt;
+    record.scalp_photos = (record.scalp_photos || []).map((photo) => photo.verification_status === 'pending'
+      ? {
+        ...photo,
+        verification_status: 'verificationUnavailable',
+        verification_message: 'Photo verification could not be completed. You can retry the AI check.',
+      }
+      : photo);
     delete record.ai_assessment_locked_at;
     delete record.ai_assessment_locked_by;
     delete record.ai_assessment_queued_at;
@@ -348,9 +426,11 @@ export class HairTestRepository extends IHairTestRepository {
   async getAiAssessmentStatus(referenceNo, userId) {
     const numericUserId = Number(userId);
     if (isDatabaseConnected()) {
-      const record = await HairTestModel.findOne({ reference_no: referenceNo, userId: numericUserId }).select('reference_no ai_assessment_status ai_assessment ai_assessment_error ai_assessment_updated_at').lean();
+      const record = await HairTestModel.findOne({ reference_no: referenceNo, userId: numericUserId }).select('reference_no userId patient_code ai_assessment_status ai_assessment ai_assessment_error ai_assessment_updated_at').lean();
       return record ? {
         reference_no: record.reference_no,
+        patient_id: record.userId || numericUserId,
+        patient_code: record.patient_code || formatPatientCode(record.userId || numericUserId),
         status: record.ai_assessment_status || (record.ai_assessment ? 'ready' : 'queued'),
         ai_assessment: record.ai_assessment || null,
         error_code: record.ai_assessment_error || null,
@@ -361,6 +441,8 @@ export class HairTestRepository extends IHairTestRepository {
     if (!record) return null;
     return {
       reference_no: record.reference_no,
+      patient_id: record.userId || numericUserId,
+      patient_code: record.patient_code || formatPatientCode(record.userId || numericUserId),
       status: record.ai_assessment_status || (record.ai_assessment ? 'ready' : 'queued'),
       ai_assessment: record.ai_assessment || null,
       error_code: record.ai_assessment_error || null,

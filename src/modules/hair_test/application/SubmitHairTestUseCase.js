@@ -168,7 +168,12 @@ export class SubmitHairTestUseCase {
             };
           };
           const original = await persistUploadedFile(uploadedFiles[0], key);
-          const photo = { ...original, angle: key.replace('photo_', '') };
+          const photo = {
+            ...original,
+            angle: key.replace('photo_', ''),
+            verification_status: 'pending',
+            verification_message: 'Visual photo review is pending with the assessment.',
+          };
           scalpPhotos.push(photo);
           if (optimizedFiles[0]) {
             const optimized = await persistUploadedFile(optimizedFiles[0], `${key}_optimized`);
@@ -186,6 +191,8 @@ export class SubmitHairTestUseCase {
             format: asset.format,
             bytes: asset.bytes,
             angle: key.replace('photo_', ''),
+            verification_status: 'pending',
+            verification_message: 'Visual photo review is pending with the assessment.',
           };
           if (optimizedValue) {
             const optimized = await resolveOwnedPhoto(

@@ -132,7 +132,7 @@ describe('GeminiAiService Unit & Integration Tests', () => {
     assert.equal(result.root_causes[0].factor, 'DHT Sensitivity');
   });
 
-  it('should attach up to two owned private scalp photos to the Gemini request', async () => {
+  it('should verify up to five optimized private scalp photos in the assessment request', async () => {
     let sentParts = [];
     const service = new GeminiAiService({
       apiKey: 'test-fake-key',
@@ -151,6 +151,13 @@ describe('GeminiAiService Unit & Integration Tests', () => {
               scalp_health_score: 81,
               stage_classification: 'Reported thinning pattern',
               summary: 'A non-diagnostic screening summary.',
+              scalp_photo_verification: [
+                { angle: 'front', status: 'hairDetected', is_hair: true, confidence: 0.9 },
+                { angle: 'top', status: 'notHair', is_hair: false, confidence: 0.95 },
+                { angle: 'left', status: 'lowClarity', is_hair: false, confidence: 0.75 },
+                { angle: 'right', status: 'hairDetected', is_hair: true, confidence: 0.85 },
+                { angle: 'back', status: 'hairDetected', is_hair: true, confidence: 0.8 },
+              ],
               recommended_regimen: { daily_steps: [] },
             }) }] } }],
           }),
@@ -159,21 +166,107 @@ describe('GeminiAiService Unit & Integration Tests', () => {
       logger: { warn() {}, error() {} },
     });
 
-    await service.generateHairTestAssessment({
+    const result = await service.generateHairTestAssessment({
       scalp_photos: [
-        { file_name: 'assessment/front', format: 'jpg', delivery_type: 'authenticated' },
-        { file_name: 'assessment/top', format: 'jpg', delivery_type: 'authenticated' },
-        { file_name: 'assessment/third', format: 'jpg', delivery_type: 'authenticated' },
-        { file_name: 'assessment/public', format: 'jpg', delivery_type: 'upload' },
+        { file_name: 'assessment/front', format: 'jpg', angle: 'front', delivery_type: 'authenticated' },
+        { file_name: 'assessment/top', format: 'jpg', angle: 'top', delivery_type: 'authenticated' },
+        { file_name: 'assessment/left', format: 'jpg', angle: 'left', delivery_type: 'authenticated' },
+        { file_name: 'assessment/right', format: 'jpg', angle: 'right', delivery_type: 'authenticated' },
+        { file_name: 'assessment/back', format: 'jpg', angle: 'back', delivery_type: 'authenticated' },
       ],
     });
 
     const imageParts = sentParts.filter((part) => part.inline_data);
-    assert.equal(imageParts.length, 2);
+    assert.equal(imageParts.length, 5);
     assert.deepEqual(imageParts.map((part) => part.inline_data.data), [
       'encoded-assessment/front',
       'encoded-assessment/top',
+      'encoded-assessment/left',
+      'encoded-assessment/right',
+      'encoded-assessment/back',
     ]);
+    assert.deepEqual(result.scalp_photo_verification.map(({ angle, file_name, status }) => ({ angle, file_name, status })), [
+      { angle: 'front', file_name: 'assessment/front', status: 'hairDetected' },
+      { angle: 'top', file_name: 'assessment/top', status: 'notHair' },
+      { angle: 'left', file_name: 'assessment/left', status: 'lowClarity' },
+      { angle: 'right', file_name: 'assessment/right', status: 'hairDetected' },
+      { angle: 'back', file_name: 'assessment/back', status: 'hairDetected' },
+    ]);
+    assert.ok(sentParts.some((part) => part.text?.includes('front, top, left, right, back')));
+  });
+
+  it('keeps unreturned or uncheckable photo verdicts unavailable and never infers them from fallback', async () => {
+    const photos = [
+      { file_name: 'assessment/front', format: 'jpg', angle: 'front', delivery_type: 'authenticated' },
+      { file_name: 'assessment/top', format: 'jpg', angle: 'top', delivery_type: 'authenticated' },
+    ];
+    const service = new GeminiAiService({
+      apiKey: 'test-key',
+      imageStorage: {
+        downloadAuthenticatedImage: async (publicId) => {
+          if (publicId.endsWith('/top')) throw new Error('synthetic image unavailable');
+          return { data: 'aW1hZ2U=', mimeType: 'image/jpeg' };
+        },
+      },
+      fetchFn: async () => ({
+        ok: true,
+        json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+          scalp_health_score: 80,
+          stage_classification: 'Reported pattern',
+          summary: 'Screening summary.',
+          scalp_photo_verification: [{ angle: 'front', status: 'hairDetected', is_hair: true, confidence: 0.99 }],
+          recommended_regimen: { daily_steps: [] },
+        }) }] } }] }),
+      }),
+      logger: { warn() {}, error() {} },
+    });
+
+    const result = await service.generateHairTestAssessment({ scalp_photos: photos });
+    assert.deepEqual(result.scalp_photo_verification.map(({ angle, file_name, status }) => ({ angle, file_name, status })), [
+      { angle: 'front', file_name: 'assessment/front', status: 'hairDetected' },
+      { angle: 'top', file_name: 'assessment/top', status: 'verificationUnavailable' },
+    ]);
+
+    const fallback = await new GeminiAiService({ apiKey: '' }).generateHairTestAssessment({ scalp_photos: photos });
+    assert.ok(fallback.scalp_photo_verification.every((photo) => photo.status === 'verificationUnavailable'));
+  });
+
+  it('falls back from an oversized optimized derivative to the original only within the 2 MiB cap', async () => {
+    const requested = [];
+    const service = new GeminiAiService({
+      apiKey: 'test-key',
+      imageStorage: {
+        downloadAuthenticatedImage: async (fileName, _format, { maxBytes }) => {
+          requested.push(fileName);
+          assert.equal(maxBytes, 2 * 1024 * 1024);
+          if (fileName.endsWith('.webp')) throw new Error('derivative exceeds bounded read');
+          return { data: 'aW1hZ2U=', mimeType: 'image/jpeg' };
+        },
+      },
+      fetchFn: async (_url, options) => ({
+        ok: true,
+        json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+          scalp_health_score: 80,
+          stage_classification: 'Reported pattern',
+          summary: 'Screening summary.',
+          scalp_photo_verification: [{ angle: 'front', status: 'lowClarity', is_hair: false, confidence: 0.6 }],
+          recommended_regimen: { daily_steps: [] },
+        }) }] } }] }),
+      }),
+      logger: { warn() {}, error() {} },
+    });
+
+    const result = await service.generateHairTestAssessment({ scalp_photos: [{
+      file_name: 'assessment/front.jpg',
+      optimized_file_name: 'assessment/front.webp',
+      format: 'jpg',
+      optimized_format: 'webp',
+      angle: 'front',
+      delivery_type: 'authenticated',
+    }] });
+
+    assert.deepEqual(requested, ['assessment/front.webp', 'assessment/front.jpg']);
+    assert.equal(result.scalp_photo_verification[0].status, 'lowClarity');
   });
 
   it('should use the configured fallback model when the primary model is unavailable', async () => {
