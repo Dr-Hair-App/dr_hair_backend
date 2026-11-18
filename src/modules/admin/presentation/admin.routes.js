@@ -16,6 +16,9 @@ import {
   updateAdminContentStatusSchema,
 } from '../../../shared/validators/admin-content.validator.js';
 
+export const clinicalReportUploadPermissions = ['documents.upload', 'reports.approve', 'hair-tests.upload'];
+export const clinicalReportReadPermissions = ['documents.view', 'reports.approve'];
+
 export const createAdminRouter = ({ adminController, notificationController, videoController, appointmentController, contentController, commerceController, supportController }) => {
   const router = Router();
   router.use(authenticateToken, requireAdmin);
@@ -74,12 +77,12 @@ export const createAdminRouter = ({ adminController, notificationController, vid
   router.delete('/users/:userId', requireSuperAdmin, adminController.deleteUser);
 
   // Clinical reports
-  router.get('/reports', requireAnyPermission('documents.view', 'reports.approve'), adminController.listAllReports);
-  router.post('/users/:userId/reports', requireAnyPermission('documents.upload', 'reports.approve'), uploadClinicalReportFile, adminController.uploadPatientReport);
+  router.get('/reports', requireAnyPermission(...clinicalReportReadPermissions), adminController.listAllReports);
+  router.post('/users/:userId/reports', requireAnyPermission(...clinicalReportUploadPermissions), uploadClinicalReportFile, adminController.uploadPatientReport);
   router.delete('/users/:userId/reports/:reportId', requireAnyPermission('documents.upload', 'reports.approve'), adminController.deletePatientReport);
   router.post('/users/:userId/reports/:reportId/restore', requireAnyPermission('documents.upload', 'reports.approve'), adminController.restorePatientReport);
   router.patch('/users/:userId/reports/:reportId/visibility', requireAnyPermission('documents.share', 'reports.share'), adminController.updatePatientReportVisibility);
-  router.get('/users/:userId/reports/:reportId/download', requireAnyPermission('documents.view', 'reports.approve'), adminController.downloadPatientReport);
+  router.get('/users/:userId/reports/:reportId/download', requireAnyPermission(...clinicalReportReadPermissions), adminController.downloadPatientReport);
 
   // Clinical check-ins & Scalp photos
   router.patch('/users/:userId/progress-checkins/:checkInId', requireAnyPermission('progress.review', 'care-plans.edit'), adminController.reviewProgressCheckIn);

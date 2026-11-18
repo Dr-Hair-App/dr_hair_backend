@@ -61,7 +61,7 @@ test('Clinical Reports & Push Notification Automation', async (t) => {
     const req = {
       params: { userId: String(patient.id), reportId: createdReportId },
       body: { visibility: 'Shared', patient_consent_confirmed: true },
-      user: { email: 'doctor@drhair.in' },
+      user: { role: 'super_admin', email: 'doctor@drhair.in' },
     };
 
     await adminController.updatePatientReportVisibility(req, res, (err) => { if (err) throw err; });

@@ -87,7 +87,7 @@ describe('Admin patient record', () => {
     const request = {
       params: { userId: '42' },
       body: { title: 'Blood test', visibility: 'Shared', patient_consent_confirmed: 'true' },
-      file, user: { email: 'doctor@example.test' },
+      file, user: { role: 'super_admin', email: 'doctor@example.test' },
     };
     const result = await invoke(controller.uploadPatientReport, request);
     assert.equal(result.error, undefined);
@@ -106,6 +106,54 @@ describe('Admin patient record', () => {
       body: { title: 'Blood test', visibility: 'Shared' },
     });
     assert.equal(unconsented.error?.statusCode, 400);
+  });
+
+
+  it('allows hair test operators to upload private reports but requires share permission for Shared uploads', async () => {
+    const reportFile = {
+      id: 'report-uuid', key: 'drhair/private-reports/user-42/report-uuid.pdf',
+      format: 'pdf', originalname: 'lab.pdf', mimetype: 'application/pdf', size: 512,
+      bytes: 512, storedBytes: 512, sha256: 'a'.repeat(64), scanningStatus: 'not_scanned',
+    };
+    const makeController = (savedReports, notifications) => new AdminController({
+      userRepository: { findById: async () => patient },
+      clinicalReportRepository: { create: async (report) => { savedReports.push(report); return report; } },
+      patientActivityRepository: { record: async () => {} },
+      notificationRepository: { create: async (notification) => { notifications.push(notification); return { ...notification, id: 'notif-id' }; } },
+      malwareScanner: { scanClinicalReport: async () => ({ status: 'clean' }) },
+    });
+
+    const savedReports = [];
+    const notifications = [];
+    const controller = makeController(savedReports, notifications);
+    const privateResult = await invoke(controller.uploadPatientReport, {
+      params: { userId: '42' }, body: { title: 'Private lab result' }, file: reportFile,
+      user: { role: 'admin', permissions: ['hair-tests.upload'], email: 'operator@example.test' },
+    });
+    assert.equal(privateResult.error, undefined);
+    assert.equal(privateResult.body.data.visibility, 'Private');
+    assert.equal(savedReports.length, 1);
+
+    const deniedShared = await invoke(controller.uploadPatientReport, {
+      params: { userId: '42' },
+      body: { title: 'Shared lab result', visibility: 'Shared', patient_consent_confirmed: 'true' },
+      file: reportFile,
+      user: { role: 'admin', permissions: ['hair-tests.upload'], email: 'operator@example.test' },
+    });
+    assert.equal(deniedShared.error?.statusCode, 403);
+    assert.equal(savedReports.length, 1);
+    assert.equal(notifications.length, 0);
+
+    const sharedResult = await invoke(controller.uploadPatientReport, {
+      params: { userId: '42' },
+      body: { title: 'Shared lab result', visibility: 'Shared', patient_consent_confirmed: 'true' },
+      file: reportFile,
+      user: { role: 'admin', permissions: ['hair-tests.upload', 'documents.share'], email: 'operator@example.test' },
+    });
+    assert.equal(sharedResult.error, undefined);
+    assert.equal(sharedResult.body.data.visibility, 'Shared');
+    assert.equal(savedReports.length, 2);
+    assert.equal(notifications.length, 1);
   });
 
   it('records scan status and leaves unconfigured scanning explicitly not_scanned', async () => {

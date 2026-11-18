@@ -401,6 +401,9 @@ export class AdminController {
       if (visibility === 'Shared' && !patientConsentConfirmed) {
         throw new BadRequestError('Confirm patient consent before uploading a report directly to the patient app.');
       }
+      if (visibility === 'Shared' && !hasPermission(req.user, 'documents.share') && !hasPermission(req.user, 'reports.share')) {
+        throw new ForbiddenError('Permission documents.share or reports.share is required to share a patient report.');
+      }
       uploadedAsset = await uploadClinicalReport(req.file, patient.id, {
         compress: req.body?.compress_losslessly !== 'false',
       });
