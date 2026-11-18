@@ -116,6 +116,15 @@ export class ClinicalReportRepository {
     return result.report;
   }
 
+  async listByUploadedBy(uploadedBy) {
+    const identity = typeof uploadedBy === 'string' ? uploadedBy.trim() : '';
+    if (!identity) return [];
+    if (isDatabaseConnected()) {
+      return ClinicalReportModel.find({ uploaded_by: identity, deleted_at: null }).sort({ created_at: -1 }).lean();
+    }
+    return store.clinicalReports.filter((report) => report.uploaded_by === identity && !report.deleted_at);
+  }
+
   async listAll() {
     if (isDatabaseConnected()) {
       return ClinicalReportModel.find({ deleted_at: null }).sort({ created_at: -1 }).lean();

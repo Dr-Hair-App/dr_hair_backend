@@ -77,6 +77,7 @@ export const createAdminRouter = ({ adminController, notificationController, vid
   router.delete('/users/:userId', requireSuperAdmin, adminController.deleteUser);
 
   // Clinical reports
+  router.get('/reports/mine', requireAnyPermission(...clinicalReportUploadPermissions), adminController.listMyReports);
   router.get('/reports', requireAnyPermission(...clinicalReportReadPermissions), adminController.listAllReports);
   router.post('/users/:userId/reports', requireAnyPermission(...clinicalReportUploadPermissions), uploadClinicalReportFile, adminController.uploadPatientReport);
   router.delete('/users/:userId/reports/:reportId', requireAnyPermission('documents.upload', 'reports.approve'), adminController.deletePatientReport);

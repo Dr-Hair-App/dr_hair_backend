@@ -511,6 +511,16 @@ export class AdminController {
     }
   };
 
+  listMyReports = async (req, res, next) => {
+    try {
+      const identity = String(req.user?.email || req.user?.login || '').trim();
+      const reports = identity ? await this.clinicalReportRepository.listByUploadedBy(identity) : [];
+      return sendSuccess(res, { data: { reports: reports.map(reportResponse) } });
+    } catch (error) {
+      next(error);
+    }
+  };
+
   listAllReports = async (req, res, next) => {
     try {
       const reports = await this.clinicalReportRepository.listAll();
