@@ -1880,29 +1880,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /api/v1/admin/products/{productId}/inventory/restock:
-    parameters:
-      - name: productId
-        in: path
-        required: true
-        schema: { type: string }
-    post:
-      tags: [Admin]
-      summary: Restock product inventory and record movement in the ledger
-      security: [{ bearerAuth: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/InventoryRestockRequest' }
-      responses:
-        '200': { $ref: '#/components/responses/Success' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-
-  /api/v1/admin/products/{productId}/inventory/ledger:
+  /api/v1/admin/products/{productId}/inventory:
     parameters:
       - name: productId
         in: path
@@ -1910,16 +1888,37 @@ paths:
         schema: { type: string }
     get:
       tags: [Admin]
-      summary: List inventory audit ledger movements for product
+      summary: List inventory ledger movements for a product
       security: [{ bearerAuth: [] }]
       parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
         - name: limit
           in: query
-          schema: { type: integer, default: 50 }
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Admin]
+      summary: Apply an idempotent product stock adjustment and record it in the ledger
+      description: Stock can be increased or decreased. The operation and ledger entry are persisted atomically; a repeated idempotency key returns the original balance without applying the delta twice.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InventoryAdjustmentRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Stock would fall below zero or the idempotency key was reused with another delta. }
 
   /api/v1/admin/orders:
     get:
@@ -4044,12 +4043,13 @@ components:
       properties:
         reason: { type: string }
         restock_inventory: { type: boolean, default: false }
-    InventoryRestockRequest:
+    InventoryAdjustmentRequest:
       type: object
-      required: [quantity]
+      required: [delta, idempotency_key]
       properties:
-        quantity: { type: integer, minimum: 1 }
-        note: { type: string }
+        delta: { type: integer, description: Positive to add stock, negative to remove stock; cannot reduce balance below zero. }
+        notes: { type: string, maxLength: 500 }
+        idempotency_key: { type: string, minLength: 1, maxLength: 128 }
   responses:
     Success:
       description: Request completed successfully

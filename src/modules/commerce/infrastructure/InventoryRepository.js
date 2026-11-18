@@ -198,53 +198,139 @@ export class InventoryRepository extends IInventoryRepository {
   async restock(productId, quantity, notes = '', createdBy = 'admin') {
     const qty = Number(quantity);
     if (!Number.isSafeInteger(qty) || qty <= 0) throw new TypeError('Restock quantity must be a positive integer.');
-    return this.adjustStock(productId, qty, notes, createdBy, 'RESTOCK');
+    return this.adjustStock(productId, qty, notes, createdBy, 'RESTOCK', randomUUID());
   }
 
-  async adjustStock(productId, delta, notes = '', createdBy = 'admin', referenceType = 'ADJUSTMENT') {
+  async adjustStock(productId, delta, notes = '', createdBy = 'admin', referenceType = 'ADJUSTMENT', idempotencyKey = randomUUID()) {
     const cleanProductId = String(productId ?? '').trim();
     const change = Number(delta);
+    const operationKey = String(idempotencyKey ?? '').trim();
     if (!cleanProductId || !Number.isSafeInteger(change) || change === 0) {
       throw new TypeError('Stock adjustment must be a non-zero integer.');
     }
+    if (!operationKey || operationKey.length > 128) throw new TypeError('A valid inventory idempotency key is required.');
 
-    let product;
     if (isDatabaseConnected()) {
-      const filter = { id: cleanProductId };
-      if (change < 0) filter.stock = { $gte: Math.abs(change) };
-      product = await ProductModel.findOneAndUpdate(
-        filter,
-        { $inc: { stock: change }, $set: { in_stock: true, inStock: true } },
-        { new: true },
-      );
-      if (!product) {
-        const exists = await ProductModel.findOne({ id: cleanProductId }).select('id').lean();
-        if (!exists) throw new NotFoundError('Product not found');
-        throw new ConflictError('Stock adjustment cannot reduce inventory below zero.');
+      const db = getDatabaseBinding();
+      const operationType = 'ADMIN_ADJUSTMENT';
+      const now = new Date().toISOString();
+      const operationId = randomUUID();
+      const ledgerId = randomUUID();
+      const operation = JSON.stringify({
+        _id: operationId,
+        operation_type: operationType,
+        reference_id: operationKey,
+        product_id: cleanProductId,
+        quantity: change,
+        reference_type: referenceType,
+        created_by: String(createdBy),
+        created_at: now,
+      });
+      const ledger = JSON.stringify({
+        _id: ledgerId,
+        id: `inv_${ledgerId}`,
+        product_id: cleanProductId,
+        quantity: change,
+        reference_type: referenceType,
+        reference_id: operationKey,
+        notes: String(notes),
+        created_by: String(createdBy),
+        created_at: now,
+      });
+
+      const results = await db.batch([
+        db.prepare(`UPDATE products
+          SET payload = json_set(payload,
+            '$.stock', COALESCE(CAST(json_extract(payload, '$.stock') AS INTEGER), 0) + ?,
+            '$.in_stock', json(CASE WHEN COALESCE(CAST(json_extract(payload, '$.stock') AS INTEGER), 0) + ? > 0 THEN 'true' ELSE 'false' END),
+            '$.inStock', json(CASE WHEN COALESCE(CAST(json_extract(payload, '$.stock') AS INTEGER), 0) + ? > 0 THEN 'true' ELSE 'false' END),
+            '$.updated_at', ?)
+          WHERE json_extract(payload, '$.id') = ?
+            AND COALESCE(CAST(json_extract(payload, '$.stock') AS INTEGER), 0) + ? >= 0
+            AND NOT EXISTS (
+              SELECT 1 FROM inventory_operations
+              WHERE json_extract(payload, '$.operation_type') = ?
+                AND json_extract(payload, '$.reference_id') = ?
+                AND json_extract(payload, '$.product_id') = ?
+            )`)
+          .bind(change, change, change, now, cleanProductId, change, operationType, operationKey, cleanProductId),
+        db.prepare(`INSERT INTO inventory_operations (row_key, payload)
+          SELECT ?, json_set(?, '$.balance_after', json_extract(products.payload, '$.stock'))
+          FROM products WHERE json_extract(products.payload, '$.id') = ? AND changes() > 0`)
+          .bind(operationId, operation, cleanProductId),
+        db.prepare(`INSERT INTO inventory_ledgers (row_key, payload)
+          SELECT ?, json_set(?, '$.balance_after', json_extract(products.payload, '$.stock'))
+          FROM products WHERE json_extract(products.payload, '$.id') = ? AND changes() > 0`)
+          .bind(ledgerId, ledger, cleanProductId),
+      ]);
+
+      if (results[0]?.meta?.changes > 0) {
+        const updated = await ProductModel.findOne({ id: cleanProductId }).select('stock').lean();
+        return Number(updated?.stock ?? 0);
       }
-      product.in_stock = Number(product.stock) > 0;
-      product.inStock = Number(product.stock) > 0;
-      await ProductModel.updateOne({ id: cleanProductId }, { $set: { in_stock: product.in_stock, inStock: product.inStock } });
-    } else {
-      if (!Array.isArray(store.products)) store.products = [];
-      product = store.products.find((item) => item.id === cleanProductId);
-      if (!product) throw new NotFoundError('Product not found');
-      const currentStock = Number.isSafeInteger(Number(product.stock)) ? Number(product.stock) : 0;
-      const nextStock = currentStock + change;
-      if (nextStock < 0) throw new ConflictError('Stock adjustment cannot reduce inventory below zero.');
-      product.stock = nextStock;
-      product.in_stock = nextStock > 0;
-      product.inStock = nextStock > 0;
+
+      const previousOperation = await InventoryOperationModel.findOne({
+        operation_type: operationType,
+        reference_id: operationKey,
+        product_id: cleanProductId,
+      }).lean();
+      if (previousOperation) {
+        if (Number(previousOperation.quantity) !== change) {
+          throw new ConflictError('This idempotency key was already used for a different stock adjustment.');
+        }
+        return Number(previousOperation.balance_after ?? 0);
+      }
+      const existing = await ProductModel.findOne({ id: cleanProductId }).select('stock').lean();
+      if (!existing) throw new NotFoundError('Product not found');
+      throw new ConflictError('Stock adjustment cannot reduce inventory below zero.');
     }
 
-    await this.recordMovement({
-      productId: cleanProductId,
+    let product;
+    if (!Array.isArray(store.products)) store.products = [];
+    if (!Array.isArray(store.inventoryOperations)) store.inventoryOperations = [];
+    const previousOperation = store.inventoryOperations.find((entry) =>
+      entry.operation_type === 'ADMIN_ADJUSTMENT' && entry.reference_id === operationKey && entry.product_id === cleanProductId);
+    if (previousOperation) {
+      if (Number(previousOperation.quantity) !== change) throw new ConflictError('This idempotency key was already used for a different stock adjustment.');
+      return Number(previousOperation.balance_after ?? 0);
+    }
+    product = store.products.find((item) => item.id === cleanProductId);
+    if (!product) throw new NotFoundError('Product not found');
+    const currentStock = Number.isSafeInteger(Number(product.stock)) ? Number(product.stock) : 0;
+    const nextStock = currentStock + change;
+    if (nextStock < 0) throw new ConflictError('Stock adjustment cannot reduce inventory below zero.');
+    product.stock = nextStock;
+    product.in_stock = nextStock > 0;
+    product.inStock = nextStock > 0;
+    store.inventoryOperations.push({
+      operation_type: 'ADMIN_ADJUSTMENT',
+      reference_id: operationKey,
+      product_id: cleanProductId,
       quantity: change,
-      balanceAfter: product.stock,
-      referenceType,
-      notes,
-      createdBy,
+      balance_after: nextStock,
+      created_at: new Date().toISOString(),
     });
+
+    try {
+      await this.recordMovement({
+        productId: cleanProductId,
+        quantity: change,
+        balanceAfter: product.stock,
+        referenceType,
+        referenceId: operationKey,
+        notes,
+        createdBy,
+      });
+    } catch (error) {
+      product.stock = currentStock;
+      product.in_stock = currentStock > 0;
+      product.inStock = currentStock > 0;
+      store.inventoryOperations = store.inventoryOperations.filter((entry) => !(
+        entry.operation_type === 'ADMIN_ADJUSTMENT' && entry.reference_id === operationKey && entry.product_id === cleanProductId
+      ));
+      store.inventoryLedgers = (store.inventoryLedgers || []).filter((entry) => entry.reference_id !== operationKey || entry.product_id !== cleanProductId);
+      throw error;
+    }
     return Number(product.stock);
   }
 

@@ -976,11 +976,17 @@ export class CommerceController {
   async restockProduct(req, res, next) {
     try {
       const { productId } = req.params;
-      const { quantity, delta, notes } = req.body || {};
+      const { quantity, delta, notes, idempotency_key: idempotencyKey } = req.body || {};
       const hasDelta = delta !== undefined;
-      const change = hasDelta ? Number(delta) : Number(quantity);
+      const change = hasDelta ? delta : Number(quantity);
       if (!Number.isSafeInteger(change) || change === 0 || (!hasDelta && change < 0)) {
         throw new BadRequestError('Provide a non-zero integer delta (or a positive legacy quantity).');
+      }
+      if (notes !== undefined && (typeof notes !== 'string' || notes.length > 500)) {
+        throw new BadRequestError('Inventory notes must be text no longer than 500 characters.');
+      }
+      if (hasDelta && (typeof idempotencyKey !== 'string' || !idempotencyKey.trim() || idempotencyKey.length > 128)) {
+        throw new BadRequestError('A valid idempotency_key is required for inventory adjustments.');
       }
 
       const newStock = await this.inventoryRepository.adjustStock(
@@ -989,6 +995,7 @@ export class CommerceController {
         String(notes || (change > 0 ? 'Admin restock adjustment' : 'Admin stock removal')).trim(),
         req.admin?.id || 'admin',
         hasDelta ? 'ADJUSTMENT' : 'RESTOCK',
+        hasDelta ? idempotencyKey.trim() : undefined,
       );
 
       return sendSuccess(res, { productId, delta: change, newStock }, `Product inventory updated to ${newStock} units`);
