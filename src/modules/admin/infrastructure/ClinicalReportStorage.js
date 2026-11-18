@@ -13,8 +13,8 @@ export async function uploadClinicalReport(file, userId, { compress = true } = {
       public_id: file.key,
       asset_id: file.key,
       bytes: file.bytes,
-      stored_bytes: file.storedBytes,
-      compressed: false,
+      stored_bytes: file.storedBytes ?? file.bytes,
+      compressed: file.compressed === true,
       sha256: file.sha256,
       scanning_status: file.scanningStatus || 'not_scanned',
     };
@@ -24,9 +24,16 @@ export async function uploadClinicalReport(file, userId, { compress = true } = {
   }
   const bucket = getMediaBucket();
   if (!bucket) throw new Error('R2 MEDIA_BUCKET is not configured.');
-  // Only plain text can benefit from gzip; already compressed documents and
-  // images stay in their exact original bytes.
-  const stored = await compressLosslessly(file.buffer, compress && file.mimetype === 'text/plain');
+  // Losslessly compress text, PDF, and Office documents when gzip yields a smaller payload.
+  // Images and already-compressed formats are preserved byte-for-byte.
+  const isCompressible = typeof file.mimetype === 'string' && (
+    file.mimetype === 'text/plain' ||
+    file.mimetype === 'application/pdf' ||
+    file.mimetype.startsWith('application/vnd.openxmlformats-officedocument.') ||
+    file.mimetype === 'application/msword' ||
+    file.mimetype === 'application/vnd.ms-excel'
+  );
+  const stored = await compressLosslessly(file.buffer, compress && isCompressible);
   const id = file.id || randomUUID();
   const key = `drhair/private-reports/user-${Number(userId)}/${id}.${format}${stored.compressed ? '.gz' : ''}`;
   await bucket.put(key, stored.buffer, {

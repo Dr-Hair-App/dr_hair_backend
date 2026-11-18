@@ -68,6 +68,46 @@ describe('Admin patient record', () => {
     assert.equal(result.error?.statusCode, 400);
   });
 
+  it('uploads and shares in one multipart request only with explicit patient consent', async () => {
+    let saved;
+    const notifications = [];
+    const controller = new AdminController({
+      userRepository: { findById: async () => patient },
+      clinicalReportRepository: { create: async (report) => { saved = report; return report; } },
+      patientActivityRepository: { record: async () => {} },
+      notificationRepository: { create: async (notification) => { notifications.push(notification); return { ...notification, id: 'notif-42' }; } },
+      deviceTokenRepository: { listByUserId: async () => [] },
+      malwareScanner: { scanClinicalReport: async () => ({ status: 'clean' }) },
+    });
+    const file = {
+      id: 'report-uuid', key: 'drhair/private-reports/user-42/report-uuid.pdf',
+      format: 'pdf', originalname: 'lab.pdf', mimetype: 'application/pdf', size: 512,
+      bytes: 512, storedBytes: 512, sha256: 'a'.repeat(64), scanningStatus: 'not_scanned',
+    };
+    const request = {
+      params: { userId: '42' },
+      body: { title: 'Blood test', visibility: 'Shared', patient_consent_confirmed: 'true' },
+      file, user: { email: 'doctor@example.test' },
+    };
+    const result = await invoke(controller.uploadPatientReport, request);
+    assert.equal(result.error, undefined);
+    assert.equal(result.statusCode, 201);
+    assert.equal(saved.userId, patient.id);
+    assert.equal(saved.title, 'Blood test');
+    assert.equal(saved.visibility, 'Shared');
+    assert.equal(result.body.data.notification_delivery.inboxCreated, true);
+    assert.equal(result.body.data.notification_delivery.pushSent, 0);
+    assert.equal(result.body.data.notification_delivery.pushStatus, 'no_devices');
+    assert.equal(notifications.length, 1);
+    assert.deepEqual(notifications[0].destination, { type: 'report', entityId: 'report-uuid' });
+
+    const unconsented = await invoke(controller.uploadPatientReport, {
+      ...request,
+      body: { title: 'Blood test', visibility: 'Shared' },
+    });
+    assert.equal(unconsented.error?.statusCode, 400);
+  });
+
   it('records scan status and leaves unconfigured scanning explicitly not_scanned', async () => {
     let saved;
     let scanInput;

@@ -51,7 +51,7 @@ test('Clinical Reports & Push Notification Automation', async (t) => {
     assert.equal(found.title, 'Dr. Jai Bansal Trichoscopy Report');
   });
 
-  await t.test('sharing report auto-dispatches notification to patient', async () => {
+  await t.test('sharing report creates a report destination notification once', async () => {
     let responseData;
     const res = {
       status(code) { this.statusCode = code; return this; },
@@ -69,9 +69,15 @@ test('Clinical Reports & Push Notification Automation', async (t) => {
 
     // Verify automated notification creation
     const notifications = await notificationRepository.listByUserId(patient.id);
-    const reportNotif = notifications.items.find((n) => n.type === 'report' || n.destination?.screen === 'assessment_result');
+    const reportNotif = notifications.items.find((n) => n.type === 'report' && n.destination?.type === 'report');
     assert.ok(reportNotif, 'Expected in-app notification to be created for shared report');
     assert.match(reportNotif.title, /report/i);
-    assert.equal(reportNotif.destination.screen, 'assessment_result');
+    assert.equal(reportNotif.destination.entityId, createdReportId);
+    assert.equal(reportNotif.data.report_id, createdReportId);
+
+    const repeated = await adminController.updatePatientReportVisibility(req, res, (err) => { if (err) throw err; });
+    assert.equal(responseData?.message, 'Report visibility is already up to date.');
+    const afterRetry = await notificationRepository.listByUserId(patient.id);
+    assert.equal(afterRetry.items.filter((n) => n.type === 'report' && n.destination?.entityId === createdReportId).length, 1);
   });
 });

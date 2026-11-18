@@ -87,25 +87,33 @@ export class ClinicalReportRepository {
     return index < 0 ? null : store.clinicalReports.splice(index, 1)[0];
   }
 
-  async updateVisibility(userId, id, visibility, changedBy = '', patientConsentConfirmed = false) {
+  async updateVisibilityWithResult(userId, id, visibility, changedBy = '', patientConsentConfirmed = false) {
     const sharedAt = visibility === 'Shared' ? new Date() : null;
     const currentVisibility = await this.findByUserIdAndId(userId, id);
-    if (!currentVisibility) return null;
-    if ((currentVisibility.visibility || 'Private') === visibility) return currentVisibility;
+    if (!currentVisibility) return { report: null, changed: false };
+    if ((currentVisibility.visibility || 'Private') === visibility) return { report: currentVisibility, changed: false };
     const event = { action: visibility === 'Shared' ? 'shared' : 'hidden', visibility, changed_by: changedBy, changed_at: new Date(), patient_consent_confirmed: patientConsentConfirmed };
     if (isDatabaseConnected()) {
-      return ClinicalReportModel.findOneAndUpdate(
-        { userId: Number(userId), id, deleted_at: null },
+      const report = await ClinicalReportModel.findOneAndUpdate(
+        { userId: Number(userId), id, deleted_at: null, visibility: { $ne: visibility } },
         { $set: { visibility, shared_at: sharedAt }, $push: { visibility_history: event } },
         { new: true, runValidators: true },
       ).lean();
+      if (report) return { report, changed: true };
+      const latest = await this.findByUserIdAndId(userId, id);
+      return { report: latest, changed: false };
     }
     const report = store.clinicalReports.find((item) => Number(item.userId) === Number(userId) && item.id === id);
-    if (!report) return null;
+    if (!report) return { report: null, changed: false };
     report.visibility = visibility;
     report.shared_at = sharedAt?.toISOString() || null;
     report.visibility_history = [...(report.visibility_history || []), { ...event, changed_at: event.changed_at.toISOString() }];
-    return { ...report };
+    return { report: { ...report }, changed: true };
+  }
+
+  async updateVisibility(userId, id, visibility, changedBy = '', patientConsentConfirmed = false) {
+    const result = await this.updateVisibilityWithResult(userId, id, visibility, changedBy, patientConsentConfirmed);
+    return result.report;
   }
 
   async listAll() {

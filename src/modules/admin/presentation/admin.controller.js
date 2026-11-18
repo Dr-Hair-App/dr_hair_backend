@@ -350,14 +350,57 @@ export class AdminController {
     }
   };
 
+  notifyPatientReportShared = async (patient, report) => {
+    if (!this.notificationRepository) return { inboxCreated: false, pushSent: 0, pushFailed: 0, pushStatus: 'unavailable' };
+    let notification;
+    try {
+      const reportTitle = typeof report.title === 'string' && report.title.trim() ? report.title.trim() : 'Clinical report';
+      notification = await this.notificationRepository.create({
+        userId: Number(patient.id),
+        title: 'New Clinical Report Available',
+        body: `Your clinic shared "${reportTitle}" in your care records. Tap to view.`,
+        type: 'report',
+        destination: { type: 'report', entityId: report.id },
+        data: { destination_type: 'report', report_id: report.id },
+      });
+      if (!this.deviceTokenRepository) return { inboxCreated: true, pushSent: 0, pushFailed: 0, pushStatus: 'unavailable' };
+      const tokenRows = await this.deviceTokenRepository.listByUserId(patient.id);
+      const tokens = [...new Set((tokenRows || []).map((row) => row?.token).filter((token) => typeof token === 'string' && token.length > 0))];
+      if (!tokens.length) return { inboxCreated: true, pushSent: 0, pushFailed: 0, pushStatus: 'no_devices' };
+      const results = await Promise.allSettled(tokens.map((token) => sendPushNotification({
+        token,
+        title: notification.title,
+        body: notification.body,
+        data: {
+          notification_id: notification.id,
+          destination_type: 'report',
+          report_id: report.id,
+        },
+      })));
+      const pushSent = results.filter((result) => result.status === 'fulfilled').length;
+      const pushFailed = results.length - pushSent;
+      return { inboxCreated: true, pushSent, pushFailed, pushStatus: pushSent > 0 ? 'sent' : 'failed' };
+    } catch {
+      // Report access and any persisted inbox record stay authoritative if FCM is unavailable.
+      return { inboxCreated: Boolean(notification), pushSent: 0, pushFailed: 0, pushStatus: notification ? 'unavailable' : 'not_created' };
+    }
+  };
+
   uploadPatientReport = async (req, res, next) => {
     let uploadedAsset = req.file?.key ? { public_id: req.file.key } : null;
+    let reportPersisted = false;
     try {
       const patient = await this.userRepository.findById(req.params.userId);
       if (!patient || patient.role !== 'user') throw new NotFoundError('Patient not found.');
       if (!req.file) throw new BadRequestError('Choose a report file to upload.');
       const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
       if (!title || title.length > 160) throw new BadRequestError('Report title is required and must be at most 160 characters.');
+      const visibility = req.body?.visibility === undefined ? 'Private' : req.body.visibility;
+      if (!['Private', 'Shared'].includes(visibility)) throw new BadRequestError('visibility must be either Private or Shared.');
+      const patientConsentConfirmed = req.body?.patient_consent_confirmed === 'true';
+      if (visibility === 'Shared' && !patientConsentConfirmed) {
+        throw new BadRequestError('Confirm patient consent before uploading a report directly to the patient app.');
+      }
       uploadedAsset = await uploadClinicalReport(req.file, patient.id, {
         compress: req.body?.compress_losslessly !== 'false',
       });
@@ -372,6 +415,7 @@ export class AdminController {
         throw new BadRequestError('The report could not be accepted because its security scan did not pass.');
       }
       const uploadedBy = String(req.user?.email || req.user?.login || 'Super Admin');
+      const sharedAt = visibility === 'Shared' ? new Date() : null;
       const report = await this.clinicalReportRepository.create({
         id: uploadedAsset.id,
         userId: patient.id,
@@ -386,22 +430,41 @@ export class AdminController {
         scanning_status: scanningStatus,
         public_id: uploadedAsset.public_id,
         uploaded_by: uploadedBy,
-        visibility: 'Private',
-        shared_at: null,
-        visibility_history: [{ action: 'uploaded', visibility: 'Private', changed_by: uploadedBy, changed_at: new Date() }],
+        visibility,
+        shared_at: sharedAt,
+        visibility_history: [
+          { action: 'uploaded', visibility: 'Private', changed_by: uploadedBy, changed_at: new Date() },
+          ...(visibility === 'Shared' ? [{ action: 'shared', visibility: 'Shared', changed_by: uploadedBy, changed_at: sharedAt, patient_consent_confirmed: true }] : []),
+        ],
       });
-      await this.patientActivityRepository.record({ userId: patient.id, patientCode: patient.patient_code, type: 'report', title: 'Report uploaded', summary: title, actor: uploadedBy, metadata: { report_id: report.id } });
+      reportPersisted = true;
+      await this.patientActivityRepository?.record({
+        userId: patient.id,
+        patientCode: patient.patient_code,
+        type: 'report',
+        title: visibility === 'Shared' ? 'Report uploaded and shared' : 'Report uploaded',
+        summary: title,
+        actor: uploadedBy,
+        metadata: { report_id: report.id, visibility, patient_consent_confirmed: visibility === 'Shared' },
+      }).catch(() => null);
       if (this.auditEventRepository?.record) {
         await this.auditEventRepository.record({
           actor: uploadedBy,
           action: 'report.uploaded',
           target: `patient:${patient.id}`,
-          metadata: { report_id: report.id, title },
+          metadata: { report_id: report.id, title, visibility, patient_consent_confirmed: visibility === 'Shared' },
         }).catch(() => null);
       }
-      return sendSuccess(res, { message: 'Private patient report uploaded.', data: reportResponse(report), statusCode: 201 });
+      const notificationDelivery = visibility === 'Shared'
+        ? await this.notifyPatientReportShared(patient, report)
+        : null;
+      return sendSuccess(res, {
+        message: visibility === 'Shared' ? 'Patient report uploaded and shared.' : 'Private patient report uploaded.',
+        data: { ...reportResponse(report), ...(notificationDelivery ? { notification_delivery: notificationDelivery } : {}) },
+        statusCode: 201,
+      });
     } catch (error) {
-      if (uploadedAsset?.public_id) {
+      if (uploadedAsset?.public_id && !reportPersisted) {
         try { await deleteClinicalReport(uploadedAsset.public_id); } catch { /* best-effort cleanup after metadata failure */ }
       }
       next(error);
@@ -416,9 +479,13 @@ export class AdminController {
       if (!['Private', 'Shared'].includes(visibility)) throw new BadRequestError('visibility must be either Private or Shared.');
       if (visibility === 'Shared' && req.body?.patient_consent_confirmed !== true) throw new BadRequestError('Confirm that the patient agreed to view this report before sharing it.');
       const changedBy = String(req.user?.email || req.user?.login || 'Super Admin');
-      const report = await this.clinicalReportRepository.updateVisibility(patient.id, req.params.reportId, visibility, changedBy, visibility === 'Shared');
+      const result = await this.clinicalReportRepository.updateVisibilityWithResult
+        ? await this.clinicalReportRepository.updateVisibilityWithResult(patient.id, req.params.reportId, visibility, changedBy, visibility === 'Shared')
+        : { report: await this.clinicalReportRepository.updateVisibility(patient.id, req.params.reportId, visibility, changedBy, visibility === 'Shared'), changed: true };
+      const report = result.report;
       if (!report) throw new NotFoundError('Patient report not found.');
-      await this.patientActivityRepository.record({ userId: patient.id, patientCode: patient.patient_code, type: 'report', title: visibility === 'Shared' ? 'Report shared with patient' : 'Report hidden from patient', summary: report.title, actor: changedBy, metadata: { report_id: report.id, patient_consent_confirmed: visibility === 'Shared' } });
+      if (!result.changed) return sendSuccess(res, { message: 'Report visibility is already up to date.', data: reportResponse(report) });
+      await this.patientActivityRepository?.record({ userId: patient.id, patientCode: patient.patient_code, type: 'report', title: visibility === 'Shared' ? 'Report shared with patient' : 'Report hidden from patient', summary: report.title, actor: changedBy, metadata: { report_id: report.id, patient_consent_confirmed: visibility === 'Shared' } }).catch(() => null);
       if (this.auditEventRepository?.record) {
         await this.auditEventRepository.record({
           actor: changedBy,
@@ -428,47 +495,13 @@ export class AdminController {
         }).catch(() => null);
       }
 
-      if (visibility === 'Shared' && this.notificationRepository) {
-        try {
-          const notif = await this.notificationRepository.create({
-            userId: Number(patient.id),
-            title: 'Your hair test report is ready',
-            body: `${report.title} is now available in your Dr. Hair profile. Tap to view your report.`,
-            type: 'report',
-            destination: {
-              type: 'screen',
-              screen: 'assessment_result',
-              entityId: report.id,
-            },
-            data: {
-              report_id: report.id,
-              destination_type: 'screen',
-              screen: 'assessment_result',
-            },
-          });
-
-          if (this.deviceTokenRepository) {
-            const tokens = await this.deviceTokenRepository.listByUserId(patient.id);
-            for (const { token } of tokens) {
-              await sendPushNotification({
-                token,
-                title: notif.title,
-                body: notif.body,
-                data: {
-                  notification_id: notif.id,
-                  destination_type: 'screen',
-                  screen: 'assessment_result',
-                  entity_id: report.id,
-                },
-              }).catch(() => {});
-            }
-          }
-        } catch {}
-      }
+      const notificationDelivery = visibility === 'Shared'
+        ? await this.notifyPatientReportShared(patient, report)
+        : null;
 
       return sendSuccess(res, {
         message: visibility === 'Shared' ? 'Report is now visible to the patient.' : 'Report is now hidden from the patient.',
-        data: reportResponse(report),
+        data: { ...reportResponse(report), ...(notificationDelivery ? { notification_delivery: notificationDelivery } : {}) },
       });
     } catch (error) {
       next(error);

@@ -2212,8 +2212,8 @@ paths:
         schema: { type: string, description: Numeric database ID or patient code such as DHP0001 }
     post:
       tags: [Admin]
-      summary: Upload a private patient report to authenticated R2 storage
-      description: Streams one PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT, JPEG, PNG, WebP, GIF, AVIF, HEIC, or HEIF report (maximum 25 MiB) directly to private R2 with bounded memory. Multipart text is limited to 64 fields of at most 16 KiB each and at most 80 total parts, preserving the title field. Validates file signatures, records SHA-256, and marks scanning_status as not_scanned until a malware scanner is configured. The report remains private until explicitly shared.
+      summary: Upload a patient report and optionally share it in one request
+      description: Streams one PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT, JPEG, PNG, WebP, GIF, AVIF, HEIC, or HEIF report (maximum 25 MiB) directly to private R2. Reports up to 8 MiB with PDF, Office, or text MIME types are gzip-tested in bounded memory and stored compressed only when the measured output is smaller; larger files and images remain uncompressed. Multipart text is limited to 64 fields of at most 16 KiB each and at most 80 total parts. Patient name and ownership come from the validated userId route/database record, not client-supplied form data. File signatures are validated and SHA-256 is recorded. scanning_status remains not_scanned until a malware scanner is configured. By default the report remains Private; setting visibility=Shared requires patient_consent_confirmed=true, creates a report-destination inbox notification, and attempts FCM delivery. The response includes notification_delivery.inboxCreated, pushSent, and pushFailed counts plus pushStatus (sent, failed, no_devices, unavailable, or not_created); push may be unavailable when the patient has no registered device or FCM fails.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -2266,7 +2266,7 @@ paths:
     patch:
       tags: [Admin]
       summary: Share a report with the patient or hide it (Super Admin only)
-      description: New reports are private by default. Only shared reports appear in the patient's clinical record and can be downloaded by that patient. Every actual visibility change appends an event with action, actor, and timestamp to visibility_history.
+      description: New reports are private by default. Only shared reports appear in the patient's clinical record and can be downloaded by that patient. Every actual visibility change appends an event with action, actor, and timestamp to visibility_history. Sharing creates one inbox notification for the transition and attempts FCM; repeated requests for an already Shared report do not duplicate notifications.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -3900,6 +3900,8 @@ components:
       properties:
         title: { type: string, minLength: 1, maxLength: 160 }
         file: { type: string, format: binary, description: PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT, JPEG, PNG, WebP, GIF, AVIF, HEIC, or HEIF; maximum 25 MiB }
+        visibility: { type: string, enum: [Private, Shared], default: Private }
+        patient_consent_confirmed: { type: boolean, description: Required as the multipart text value true when visibility=Shared. }
       required: [title, file]
     PatientProgressCheckInRequest:
       type: object

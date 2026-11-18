@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { BadRequestError, PayloadTooLargeError } from '../../../shared/errors/index.js';
 import { config } from '../../../config/env.js';
 import { getMediaBucket } from '../../../shared/storage/runtime.js';
-import { detectImageMime, hasSafeImageDimensions } from '../../media/infrastructure/R2MediaStorage.js';
+import { compressLosslessly, detectImageMime, hasSafeImageDimensions } from '../../media/infrastructure/R2MediaStorage.js';
 
 const reportFormats = new Map([
   ['application/pdf', 'pdf'],
@@ -93,9 +93,21 @@ export class R2ClinicalReportUploadStorage {
     const key = `drhair/private-reports/user-${ownerId}/${id}.${format}`;
     const limit = config.upload.maxFileSize;
     const partSize = 5 * 1024 * 1024;
+    const maxCompressionCandidateSize = 8 * 1024 * 1024;
+    const canTryCompression = new Set([
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'text/plain',
+    ]).has(file.mimetype);
     const prefixChunks = [];
     let tail = Buffer.alloc(0);
     const bufferedChunks = [];
+    const compressionChunks = [];
     const parts = [];
     const hash = createHash('sha256');
     const textDecoder = file.mimetype === 'text/plain' ? new TextDecoder('utf-8', { fatal: true }) : null;
@@ -104,11 +116,46 @@ export class R2ClinicalReportUploadStorage {
     let currentPartSize = 0;
     let partNumber = 1;
     let textIsValid = true;
-  let complete = false;
+    let compressionCandidate = canTryCompression;
+    let rawUploadStarted = false;
+    let complete = false;
     const finish = (error, info) => {
       if (complete) return;
       complete = true;
       callback(error, info);
+    };
+
+    const appendRawChunk = async (chunk) => {
+      let offset = 0;
+      while (offset < chunk.length) {
+        const take = Math.min(partSize - currentPartSize, chunk.length - offset);
+        bufferedChunks.push(Buffer.from(chunk.subarray(offset, offset + take)));
+        currentPartSize += take;
+        offset += take;
+        if (currentPartSize === partSize) {
+          if (!multipart) {
+            multipart = await bucket.createMultipartUpload(key, {
+              httpMetadata: { contentType: file.mimetype, cacheControl: 'private, no-store' },
+              customMetadata: {
+                purpose: 'clinical-report', ownerId, visibility: 'private',
+                scanningStatus: 'not_scanned', compression: 'none',
+              },
+            });
+          }
+          parts.push(await multipart.uploadPart(partNumber, Buffer.concat(bufferedChunks, currentPartSize)));
+          partNumber += 1;
+          bufferedChunks.length = 0;
+          currentPartSize = 0;
+        }
+      }
+    };
+
+    const beginRawUpload = async () => {
+      if (rawUploadStarted) return;
+      rawUploadStarted = true;
+      compressionCandidate = false;
+      for (const chunk of compressionChunks) await appendRawChunk(chunk);
+      compressionChunks.length = 0;
     };
 
     (async () => {
@@ -127,28 +174,12 @@ export class R2ClinicalReportUploadStorage {
             try { textDecoder.decode(chunk, { stream: true }); } catch { textIsValid = false; }
           }
 
-          let offset = 0;
-          while (offset < chunk.length) {
-            const take = Math.min(partSize - currentPartSize, chunk.length - offset);
-            bufferedChunks.push(Buffer.from(chunk.subarray(offset, offset + take)));
-            currentPartSize += take;
-            offset += take;
-            if (currentPartSize === partSize) {
-              if (!multipart) {
-                multipart = await bucket.createMultipartUpload(key, {
-                  httpMetadata: { contentType: file.mimetype, cacheControl: 'private, no-store' },
-                  customMetadata: {
-                    purpose: 'clinical-report', ownerId, visibility: 'private',
-                    scanningStatus: 'not_scanned', compression: 'none',
-                  },
-                });
-              }
-              parts.push(await multipart.uploadPart(partNumber, Buffer.concat(bufferedChunks, currentPartSize)));
-              partNumber += 1;
-              bufferedChunks.length = 0;
-              currentPartSize = 0;
-            }
+          if (compressionCandidate && size <= maxCompressionCandidateSize) {
+            compressionChunks.push(Buffer.from(chunk));
+            continue;
           }
+          if (compressionCandidate) await beginRawUpload();
+          await appendRawChunk(chunk);
         }
         if (file.stream.truncated) throw new PayloadTooLargeError('Report file exceeds the 25 MiB upload limit.');
         if (textDecoder) {
@@ -160,6 +191,30 @@ export class R2ClinicalReportUploadStorage {
         }
 
         const checksum = hash.digest('hex');
+        let storedBytes = size;
+        let compressed = false;
+        if (compressionCandidate && !rawUploadStarted) {
+          const original = Buffer.concat(compressionChunks, size);
+          const stored = await compressLosslessly(original, true);
+          const storedKey = stored.compressed ? `${key}.gz` : key;
+          storedBytes = stored.buffer.length;
+          compressed = stored.compressed;
+          await bucket.put(storedKey, stored.buffer, {
+            httpMetadata: { contentType: file.mimetype, cacheControl: 'private, no-store' },
+            customMetadata: {
+              purpose: 'clinical-report', ownerId, visibility: 'private',
+              originalBytes: String(size), sha256: checksum,
+              scanningStatus: 'not_scanned', compression: compressed ? 'gzip' : 'none',
+            },
+          });
+          finish(null, {
+            id, key: storedKey, publicId: storedKey, public_id: storedKey,
+            originalname: String(file.originalname || 'report').replace(/[\\/\u0000-\u001f]/g, '_').slice(0, 180),
+            mimetype: file.mimetype, size, bytes: size, storedBytes,
+            sha256: checksum, format, scanningStatus: 'not_scanned', compressed,
+          });
+          return;
+        }
         if (multipart) {
           const finalPart = Buffer.concat(bufferedChunks, currentPartSize);
           if (finalPart.length) parts.push(await multipart.uploadPart(partNumber, finalPart));
@@ -179,9 +234,9 @@ export class R2ClinicalReportUploadStorage {
         finish(null, {
           id, key, publicId: key, public_id: key,
           originalname: String(file.originalname || 'report').replace(/[\\/\u0000-\u001f]/g, '_').slice(0, 180),
-          mimetype: file.mimetype, size, bytes: size, storedBytes: size,
+          mimetype: file.mimetype, size, bytes: size, storedBytes,
           sha256: checksum, format, scanningStatus: 'not_scanned',
-          compressed: false,
+          compressed,
         });
       } catch (error) {
         if (multipart) await multipart.abort().catch(() => null);

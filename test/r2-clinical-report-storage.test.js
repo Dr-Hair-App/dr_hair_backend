@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
+import { gunzipSync } from 'node:zlib';
 import { R2ClinicalReportUploadStorage } from '../src/modules/admin/infrastructure/R2ClinicalReportUploadStorage.js';
 import { setStorageBindings, clearStorageBindings } from '../src/shared/storage/runtime.js';
 
@@ -114,13 +115,14 @@ test('clinical report R2 upload streams supported document and image formats pri
         }, (error, result) => error ? reject(error) : resolve(result));
       });
       assert.equal(file.bytes, bytes.length);
-      assert.equal(file.storedBytes, bytes.length);
-      assert.equal(file.compressed, false);
+      assert.equal(file.storedBytes, stored.at(-1).value.length);
+      assert.equal(file.compressed, stored.at(-1).options.customMetadata.compression === 'gzip');
+      assert.deepEqual(file.compressed ? gunzipSync(stored.at(-1).value) : stored.at(-1).value, bytes);
+      assert.equal(file.key.endsWith('.gz'), file.compressed);
       assert.equal(file.scanningStatus, 'not_scanned');
       assert.match(file.key, /^drhair\/private-reports\/user-42\/[a-f0-9-]+\./);
       assert.equal(stored.at(-1).options.customMetadata.visibility, 'private');
       assert.equal(stored.at(-1).options.customMetadata.scanningStatus, 'not_scanned');
-      assert.deepEqual(stored.at(-1).value, bytes);
       assert.equal(file.sha256.length, 64);
     }
   } finally {
@@ -170,6 +172,42 @@ test('valid Office entry names are verified from the ZIP directory after the fir
     });
     assert.equal(result.bytes, bytes.length);
     assert.equal(stored, true);
+  } finally {
+    clearStorageBindings();
+  }
+});
+
+
+test('clinical report upload keeps files over the compression buffer limit on raw multipart storage', async () => {
+  const bytes = Buffer.alloc(8 * 1024 * 1024 + 32, 0x61);
+  Buffer.from('%PDF-1.7\n').copy(bytes);
+  let multipartOptions;
+  const uploadedParts = [];
+  let completed = false;
+  setStorageBindings({ MEDIA_BUCKET: {
+    async put() {},
+    async createMultipartUpload(key, options) {
+      multipartOptions = { key, options };
+      return {
+        async uploadPart(number, value) { uploadedParts.push({ number, value: Buffer.from(value) }); return { partNumber: number }; },
+        async complete() { completed = true; },
+        async abort() {},
+      };
+    },
+  } });
+  try {
+    const storage = new R2ClinicalReportUploadStorage();
+    const result = await new Promise((resolve, reject) => {
+      storage._handleFile({ params: { userId: '42' } }, {
+        mimetype: 'application/pdf', originalname: 'large.pdf', stream: Readable.from([bytes]),
+      }, (error, file) => error ? reject(error) : resolve(file));
+    });
+    assert.equal(result.bytes, bytes.length);
+    assert.equal(result.storedBytes, bytes.length);
+    assert.equal(result.compressed, false);
+    assert.equal(multipartOptions.options.customMetadata.compression, 'none');
+    assert.equal(completed, true);
+    assert.deepEqual(Buffer.concat(uploadedParts.map((part) => part.value)), bytes);
   } finally {
     clearStorageBindings();
   }
