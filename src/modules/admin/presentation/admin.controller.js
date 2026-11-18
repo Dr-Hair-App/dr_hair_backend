@@ -905,7 +905,7 @@ export class AdminController {
         throw new ForbiddenError("Permission 'content.publish' is required to publish a patient story.");
       }
       if (status === 'active' && patient_consent_confirmed !== true) {
-        throw new BadRequestError('Confirm documented patient consent before publishing this story.');
+        throw new BadRequestError('An authorized admin must confirm documented patient consent before publishing this story.');
       }
 
       const actor = String(req.user?.email || req.user?.login || 'Admin');
@@ -930,7 +930,7 @@ export class AdminController {
         actor,
         action: 'review.created',
         target: `review:${review.id}`,
-        metadata: { id: review.id, status: review.status },
+        metadata: { id: review.id, status: review.status, patient_consent_confirmed: patient_consent_confirmed === true },
       }).catch(() => null);
       return sendSuccess(res, { message: 'Patient story saved.', data: review, statusCode: 201 });
     } catch (error) {
@@ -953,7 +953,7 @@ export class AdminController {
         throw new ForbiddenError("Permission 'content.publish' is required to confirm publication consent.");
       }
       if (current.status === 'active' && !consentVerified) {
-        throw new BadRequestError('Confirm documented patient consent before saving a published story.');
+        throw new BadRequestError('An authorized admin must confirm documented patient consent before saving a published story.');
       }
 
       const actor = String(req.user?.email || req.user?.login || 'Admin');
@@ -967,7 +967,7 @@ export class AdminController {
         actor,
         action: 'review.updated',
         target: `review:${id}`,
-        metadata: { id },
+        metadata: { id, patient_consent_confirmed: patient_consent_confirmed === true },
       }).catch(() => null);
       return sendSuccess(res, { message: 'Patient story updated.', data: updated });
     } catch (error) {
@@ -1008,10 +1008,17 @@ export class AdminController {
       const current = await this.reviewRepository.findById(id);
       if (!current) throw new NotFoundError('Review not found.');
       if (status === 'active' && current.consent_verified !== true) {
-        throw new BadRequestError('Confirm documented patient consent by editing this story before publishing it.');
+        throw new BadRequestError('An authorized admin must attest to documented patient consent before publishing this story.');
       }
       const review = await this.reviewRepository.updateStatus(id, status);
       if (!review) throw new NotFoundError('Review not found.');
+      const actor = String(req.user?.email || req.user?.login || 'Admin');
+      await this.auditEventRepository?.record?.({
+        actor,
+        action: 'review.status_updated',
+        target: `review:${id}`,
+        metadata: { id: Number(id), status: review.status },
+      }).catch(() => null);
       return sendSuccess(res, { message: 'Review status updated.', data: review });
     } catch (error) {
       next(error);

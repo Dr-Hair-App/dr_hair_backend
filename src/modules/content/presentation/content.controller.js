@@ -113,7 +113,7 @@ export class ContentController {
         throw new ForbiddenError("Permission 'content.publish' is required to confirm publication consent.");
       }
       if (status === 'published' && type === 'story' && patient_consent_confirmed !== true) {
-        throw new BadRequestError('Confirm documented patient consent before publishing this story.');
+        throw new BadRequestError('An authorized admin must confirm documented patient consent before publishing this story.');
       }
 
       const actor = String(req.user?.email || req.user?.login || 'Super Admin');
@@ -140,7 +140,13 @@ export class ContentController {
           actor,
           action: 'content.created',
           target: `content:${item.id}`,
-          metadata: { id: item.id, type: item.type, title: item.title, status: item.status },
+          metadata: {
+            id: item.id,
+            type: item.type,
+            title: item.title,
+            status: item.status,
+            patient_consent_confirmed: patient_consent_confirmed === true,
+          },
         }).catch(() => null);
       }
 
@@ -159,7 +165,7 @@ export class ContentController {
       const current = await this.contentRepository.findById(id);
       if (!current) throw new NotFoundError('Content item not found.');
       if (status.trim() === 'published' && current.type === 'story' && current.provenance?.consent_verified !== true && patient_consent_confirmed !== true) {
-        throw new BadRequestError('Confirm documented patient consent before publishing this story.');
+        throw new BadRequestError('An authorized admin must confirm documented patient consent before publishing this story.');
       }
       const actor = String(req.user?.email || req.user?.login || 'Super Admin');
       const updated = await this.contentRepository.updateStatus(id, status.trim(), {
@@ -174,7 +180,12 @@ export class ContentController {
           actor,
           action: 'content.status_updated',
           target: `content:${id}`,
-          metadata: { id, status: updated.status, note },
+          metadata: {
+            id,
+            status: updated.status,
+            note,
+            patient_consent_confirmed: patient_consent_confirmed === true,
+          },
         }).catch(() => null);
       }
 

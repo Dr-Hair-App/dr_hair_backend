@@ -36,7 +36,9 @@ export class ReviewRepository extends IReviewRepository {
       results = results.filter((r) => !r.page || r.page === page);
     }
 
-    if (consent_verified === true) results = results.filter((r) => r.consent_verified === true);
+    if (consent_verified === true) {
+      results = results.filter((r) => r.consent_verified === true || (r.consent_verified !== false && r.is_verified === true));
+    }
 
     return results.map((r) => new Review(r));
   }
