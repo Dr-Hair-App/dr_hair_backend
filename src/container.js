@@ -261,6 +261,7 @@ export const createContainer = (overrides = {}) => {
 
   const updateProfileUseCase = new UpdateProfileUseCase({
     userRepository,
+    imageStorage,
   });
 
   const updateProfilePictureUseCase = new UpdateProfilePictureUseCase({

@@ -144,9 +144,9 @@ Permanently deletes the authenticated patient's account and personal authenticat
 ## 4. Hair Assessment & Clinical Records
 
 ### `POST /HairTest/submit_form`
-Submits a multi-step hair evaluation questionnaire along with optional scalp photo references.
+Submits the questionnaire and up to five original scalp images (with optional optimized derivatives) together in one multipart request. Files stream to private R2 storage, then the server generates and saves the AI assessment before responding. The app can show one loading screen and render/cache the returned result without another polling request. If the AI provider is unavailable, the API returns and stores its deterministic fallback result. Patients may submit up to ten assessments per India-local day.
 - **Headers:** `Authorization: Bearer <token>`
-- **Body (`application/json` or `multipart/form-data`):**
+- **Body (`multipart/form-data`; complete request maximum 90 MiB, each file maximum 25 MiB):** Use `photo_front`, `photo_top`, `photo_left`, `photo_right`, or `photo_back` for original image parts. An optional `photo_<position>_optimized` part can accompany an original. Questionnaire answers are regular form fields, up to 64 fields of 16 KiB each and 80 total multipart parts; `scalp_photos` URL references remain supported for older clients.
 ```json
 {
   "gender": "male",
@@ -156,10 +156,7 @@ Submits a multi-step hair evaluation questionnaire along with optional scalp pho
   "family_history": "yes",
   "dandruff": "mild",
   "lifestyle": "high_stress",
-  "scalp_photos": [
-    "https://api.example.com/api/v1/media/assets/...",
-    "https://api.example.com/api/v1/media/assets/..."
-  ]
+    "scalp_photos": ["https://api.example.com/api/v1/media/assets/..."]
 }
 ```
 - **Response (200 OK):**
@@ -170,7 +167,9 @@ Submits a multi-step hair evaluation questionnaire along with optional scalp pho
   "data": {
     "reference_no": "HT-20261102-4821",
     "stage": "Stage 2 - Receding Temples",
-    "summary": "Moderate early stage thinning detected. Recommended clinical regimen created."
+    "summary": "Moderate early stage thinning detected. Recommended clinical regimen created.",
+    "ai_assessment_status": "ready",
+    "ai_assessment": { "summary": "...", "severity": "moderate" }
   }
 }
 ```
@@ -346,25 +345,34 @@ Fetches published video stories and clinical case demonstrations.
 ## 9. Media & Document Uploads
 
 ### `POST /api/v1/media/upload`
-Shared endpoint for uploading images (scalp photos, profile avatars) to the private R2 bucket.
+Shared authenticated endpoint for uploading one to ten images per request to R2. Each file is limited to 25 MiB, the full request to 90 MiB, and multipart text to 64 fields of at most 16 KiB each (80 total parts). The API checks the actual image signature and bounded header dimensions (maximum 40 megapixels), preserves the uploaded original bytes, computes a SHA-256 checksum, and streams large files to R2 with bounded memory. It does not gzip image files. Browser/app optimization may send original and derivative files together; each remains a separately addressed R2 asset.
 - **Headers:** `Authorization: Bearer <token>`, `Content-Type: multipart/form-data`
+- **Purpose:** `X-Media-Purpose: general | profile | assessment | progress | content | product` (optional; defaults to `general`)
 - **Fields:**
-  - `purpose`: `"profile"` | `"assessment"` | `"checkin"`
-  - `files`: One or more image binary files (`.jpg`, `.png`, `.webp`, max 10MB)
-- **Response (200 OK):**
+  - `file` or `files`: JPEG, PNG, WebP, AVIF, HEIC, HEIF, or GIF image parts. GIF animation is preserved.
+- **Response (201 Created):**
 ```json
 {
   "status": "success",
-  "data": [
-    {
+  "data": {
+    "items": [{
+      "asset_id": "drhair/images/user-123/assessment/uuid.webp",
+      "public_id": "drhair/images/user-123/assessment/uuid.webp",
       "url": "https://api.example.com/api/v1/media/assets/...",
-      "key": "images/user_123/photo_abc.jpg",
-      "format": "jpg",
-      "bytes": 245100
-    }
-  ]
+      "format": "webp",
+      "mime_type": "image/webp",
+      "bytes": 245100,
+      "original_bytes": 245100,
+      "sha256": "<64-character checksum>",
+      "processing_status": "original_preserved"
+    }]
+  }
 }
 ```
+
+Clinical reports are uploaded by the authenticated admin route `POST /api/v1/admin/users/{userId}/reports`. It accepts PDF, DOC/DOCX, XLS/XLSX, PPT/PPTX, TXT, JPEG, PNG, WebP, GIF, AVIF, HEIC, and HEIF files up to 25 MiB, with multipart text limited to 64 fields of at most 16 KiB each and 80 total parts (including the report title). It streams files to private R2, records metadata/checksum in the existing D1 report record, and returns `scanning_status`. Reports remain `not_scanned` unless an actual malware scanner adapter is configured; an infected or failed scan rejects the upload rather than marking the file safe.
+
+Uploads use the existing authenticated Worker APIs and stream parts to the configured `MEDIA_BUCKET` binding. This Worker binding does not mint S3 presigned PUT URLs; enabling direct-to-R2 uploads would require restricted R2 S3 credentials and a separate security/configuration change. Existing assessment, product, content, and report records already persist asset references/metadata, so this flow adds no duplicate upload table or migration.
 
 ---
 

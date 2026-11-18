@@ -1,22 +1,20 @@
 import multer from 'multer';
 import { config } from '../../config/env.js';
 import { BadRequestError } from '../errors/index.js';
-
-const allowedTypes = new Set([
-  'application/pdf',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-]);
+import { R2ClinicalReportUploadStorage, supportedClinicalReportMimeTypes } from '../../modules/admin/infrastructure/R2ClinicalReportUploadStorage.js';
 
 const reportUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: config.upload.maxFileSize, files: 1 },
+  storage: new R2ClinicalReportUploadStorage(),
+  limits: {
+    fileSize: config.upload.maxFileSize,
+    files: 1,
+    fields: config.upload.maxFieldsPerRequest,
+    fieldSize: config.upload.maxFieldSize,
+    parts: config.upload.maxPartsPerRequest,
+  },
   fileFilter(_req, file, callback) {
-    if (!allowedTypes.has(file.mimetype)) {
-      callback(new BadRequestError('Upload a PDF, DOC, DOCX, JPG, PNG, or WebP report.'));
+    if (!supportedClinicalReportMimeTypes.has(file.mimetype)) {
+      callback(new BadRequestError('Upload a supported PDF, Office document, text file, or image report.'));
       return;
     }
     callback(null, true);

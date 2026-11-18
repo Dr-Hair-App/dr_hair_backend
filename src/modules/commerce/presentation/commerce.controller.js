@@ -1013,7 +1013,10 @@ export class CommerceController {
     try {
       const { status, page, limit } = req.query;
       const result = await this.couponRepository.list({ status, page, limit });
-      return sendSuccess(res, result, 'Coupons retrieved');
+      return sendSuccess(res, {
+        ...result,
+        coupons: result.items,
+      }, 'Coupons retrieved');
     } catch (err) {
       next(err);
     }
@@ -1022,7 +1025,7 @@ export class CommerceController {
   async createCoupon(req, res, next) {
     try {
       const coupon = await this.couponRepository.create(req.body);
-      return sendCreated(res, coupon, `Coupon ${coupon.code} created`);
+      return sendCreated(res, { coupon, ...coupon }, `Coupon ${coupon.code} created`);
     } catch (err) {
       next(err);
     }

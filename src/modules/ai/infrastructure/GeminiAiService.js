@@ -68,14 +68,19 @@ export class GeminiAiService {
     const inlineImages = Array.isArray(patientData.inlineImages)
       ? patientData.inlineImages.filter((image) => image?.data && image?.mimeType).slice(0, 2)
       : [];
+    const maxGeminiCalls = 3;
+    const requestDeadline = Date.now() + 25_000;
+    let geminiCallCount = 0;
 
     if (inlineImages.length === 0 && this.imageStorage?.downloadAuthenticatedImage) {
       const photos = Array.isArray(patientData.scalp_photos) ? patientData.scalp_photos : [];
       for (const photo of photos) {
         if (inlineImages.length >= 2) break;
-        if (photo?.delivery_type !== 'authenticated' || !photo.file_name || !photo.format) continue;
+        const analysisFileName = photo?.optimized_file_name || photo?.file_name;
+        const analysisFormat = photo?.optimized_format || photo?.format;
+        if (photo?.delivery_type !== 'authenticated' || !analysisFileName || !analysisFormat) continue;
         try {
-          const image = await this.imageStorage.downloadAuthenticatedImage(photo.file_name, photo.format);
+          const image = await this.imageStorage.downloadAuthenticatedImage(analysisFileName, analysisFormat);
           if (image?.data && image?.mimeType) inlineImages.push(image);
         } catch {
           this.logger.warn?.('A private assessment image could not be loaded for AI analysis.');
@@ -84,8 +89,15 @@ export class GeminiAiService {
     }
 
     const callGeminiOnce = async (model) => {
+      if (geminiCallCount >= maxGeminiCalls || Date.now() >= requestDeadline) {
+        return { ok: false, status: 0, errorText: 'Gemini request budget exhausted.' };
+      }
+      geminiCallCount += 1;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        Math.min(10_000, requestDeadline - Date.now()),
+      );
 
       try {
         const parts = [{ text: prompt }];
@@ -142,8 +154,9 @@ export class GeminiAiService {
       const callWithTransientRetry = async (model) => {
         let result = await callGeminiOnce(model);
         if (!result.ok && (result.status === 429 || result.status === 503)) {
-          this.logger.warn?.(`Gemini [${result.status}] transient issue. Retrying once after 1500ms...`);
-          await new Promise((resolve) => setTimeout(resolve, 1500));
+          if (geminiCallCount >= maxGeminiCalls || Date.now() + 800 >= requestDeadline) return result;
+          this.logger.warn?.(`Gemini [${result.status}] transient issue. Retrying once within the request budget...`);
+          await new Promise((resolve) => setTimeout(resolve, 800));
           result = await callGeminiOnce(model);
         }
         return result;
@@ -528,7 +541,9 @@ If rejected (non-hair, screenshot, or random object), return:
 `;
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    // Keep enough time for the image upload, Gemini vision inference, and the
+    // backend response envelope. The mobile client allows slightly longer.
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
 
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
@@ -564,6 +579,10 @@ If rejected (non-hair, screenshot, or random object), return:
       clearTimeout(timeoutId);
 
       if (!response.ok) {
+        this.logger.warn?.('Gemini scalp photo verification failed.', {
+          reason: 'upstream_http_error',
+          status: response.status,
+        });
         return unavailableImageVerification(label);
       }
 
@@ -572,12 +591,23 @@ If rejected (non-hair, screenshot, or random object), return:
       const parsed = this._parseJsonCandidate(candidateText);
 
       if (!parsed || typeof parsed !== 'object') {
+        this.logger.warn?.('Gemini scalp photo verification failed.', {
+          reason: 'invalid_model_response',
+        });
         return unavailableImageVerification(label);
       }
 
       const allowedStatuses = new Set(['hairDetected', 'notHair', 'lowClarity']);
-      if (!allowedStatuses.has(parsed.status)) return unavailableImageVerification(label);
+      if (!allowedStatuses.has(parsed.status)) {
+        this.logger.warn?.('Gemini scalp photo verification failed.', {
+          reason: 'unsupported_model_status',
+        });
+        return unavailableImageVerification(label);
+      }
       if (parsed.status === 'hairDetected' && parsed.is_hair !== true) {
+        this.logger.warn?.('Gemini scalp photo verification failed.', {
+          reason: 'inconsistent_model_result',
+        });
         return unavailableImageVerification(label);
       }
       const isHair = parsed.status === 'hairDetected';
@@ -595,6 +625,10 @@ If rejected (non-hair, screenshot, or random object), return:
       };
     } catch (err) {
       clearTimeout(timeoutId);
+      this.logger.warn?.('Gemini scalp photo verification failed.', {
+        reason: controller.signal.aborted ? 'upstream_timeout' : 'upstream_request_error',
+        errorName: err?.name || 'Error',
+      });
       return unavailableImageVerification(label);
     }
   }

@@ -67,4 +67,48 @@ describe('Admin patient record', () => {
     });
     assert.equal(result.error?.statusCode, 400);
   });
+
+  it('records scan status and leaves unconfigured scanning explicitly not_scanned', async () => {
+    let saved;
+    let scanInput;
+    const controller = new AdminController({
+      userRepository: { findById: async () => patient },
+      clinicalReportRepository: { create: async (report) => { saved = report; return report; } },
+      patientActivityRepository: { record: async () => {} },
+      malwareScanner: { scanClinicalReport: async (input) => { scanInput = input; return { status: 'clean' }; } },
+    });
+    const result = await invoke(controller.uploadPatientReport, {
+      params: { userId: '42' }, body: { title: 'Lab report' },
+      file: {
+        id: 'report-uuid', key: 'drhair/private-reports/user-42/report-uuid.pdf',
+        format: 'pdf', originalname: 'lab.pdf', mimetype: 'application/pdf', size: 512,
+        bytes: 512, storedBytes: 512, sha256: 'a'.repeat(64), scanningStatus: 'not_scanned',
+      },
+      user: { email: 'doctor@example.test' },
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(scanInput.key, 'drhair/private-reports/user-42/report-uuid.pdf');
+    assert.equal(saved.scanning_status, 'clean');
+    assert.equal(result.body.data.scanning_status, 'clean');
+  });
+
+  it('rejects and cleans a report when a configured malware scanner flags it', async () => {
+    let saved = false;
+    const controller = new AdminController({
+      userRepository: { findById: async () => patient },
+      clinicalReportRepository: { create: async () => { saved = true; return {}; } },
+      malwareScanner: { scanClinicalReport: async () => ({ status: 'infected' }) },
+    });
+    const result = await invoke(controller.uploadPatientReport, {
+      params: { userId: '42' }, body: { title: 'Unsafe report' },
+      file: {
+        id: 'report-uuid', key: 'drhair/private-reports/user-42/report-uuid.pdf',
+        format: 'pdf', originalname: 'lab.pdf', mimetype: 'application/pdf', size: 512,
+        bytes: 512, storedBytes: 512, sha256: 'a'.repeat(64), scanningStatus: 'not_scanned',
+      },
+      user: { email: 'doctor@example.test' },
+    });
+    assert.equal(result.error?.statusCode, 400);
+    assert.equal(saved, false);
+  });
 });

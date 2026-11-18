@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { ipKeyGenerator, rateLimit } from 'express-rate-limit';
 import { authenticateToken } from '../../../shared/middlewares/auth.middleware.js';
-import { requirePermission } from '../../../shared/middlewares/admin.middleware.js';
+import { requirePermission, requireAnyPermission } from '../../../shared/middlewares/admin.middleware.js';
 import { cloudflareRateLimit, createRateLimitStore } from '../../../shared/middlewares/rate-limit-store.js';
 import { dailyUsageLimit } from '../../../shared/middlewares/daily-usage-limit.js';
 import { sendError } from '../../../shared/utils/response.js';
@@ -103,7 +103,7 @@ export function createAdminOrderRouter({ commerceController }) {
 export function createAdminCouponRouter({ commerceController }) {
   const router = Router();
   router.use(authenticateToken);
-  router.use(requirePermission('commerce.manage'));
+  router.use(requireAnyPermission('promotions.manage', 'commerce.manage'));
 
   router.get('/', (req, res, next) => commerceController.listCoupons(req, res, next));
   router.post('/', (req, res, next) => commerceController.createCoupon(req, res, next));

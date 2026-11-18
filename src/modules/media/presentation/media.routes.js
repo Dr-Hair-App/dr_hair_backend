@@ -4,6 +4,7 @@ import { authenticateToken } from '../../../shared/middlewares/auth.middleware.j
 import { requireRegisteredUser } from '../../../shared/middlewares/registered-user.middleware.js';
 import { requireSuperAdmin, requireAnyPermission } from '../../../shared/middlewares/admin.middleware.js';
 import { uploadMediaFiles } from '../../../shared/middlewares/media-upload.middleware.js';
+import { enforceUploadRequestSize } from '../../../shared/middlewares/upload.middleware.js';
 import { createRateLimitStore } from '../../../shared/middlewares/rate-limit-store.js';
 
 export const createMediaRouter = ({ mediaController }) => {
@@ -29,6 +30,7 @@ export const createMediaRouter = ({ mediaController }) => {
   router.post(
     '/upload',
     authenticateToken,
+    enforceUploadRequestSize,
     (req, res, next) => {
       if (req.user?.role === 'super_admin' || req.user?.role === 'admin') {
         return uploadMediaFiles(req, res, next);

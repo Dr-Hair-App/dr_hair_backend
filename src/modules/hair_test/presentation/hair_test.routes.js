@@ -1,22 +1,35 @@
 import { Router } from 'express';
 import { authenticateToken } from '../../../shared/middlewares/auth.middleware.js';
 import { requireRegisteredUser } from '../../../shared/middlewares/registered-user.middleware.js';
-import { uploadScalpPhotos } from '../../../shared/middlewares/upload.middleware.js';
+import { enforceUploadRequestSize, uploadScalpPhotos, uploadScalpPhotosToR2 } from '../../../shared/middlewares/upload.middleware.js';
+import { dailyUsageLimit } from '../../../shared/middlewares/daily-usage-limit.js';
 
 export const createHairTestRouter = ({ hairTestController }) => {
   const router = Router();
 
-  const scalpUploadFields = uploadScalpPhotos.fields([
+  const scalpUploadFields = uploadScalpPhotosToR2.fields([
     { name: 'photo_front', maxCount: 1 },
+    { name: 'photo_front_optimized', maxCount: 1 },
     { name: 'photo_top', maxCount: 1 },
+    { name: 'photo_top_optimized', maxCount: 1 },
     { name: 'photo_left', maxCount: 1 },
+    { name: 'photo_left_optimized', maxCount: 1 },
     { name: 'photo_right', maxCount: 1 },
+    { name: 'photo_right_optimized', maxCount: 1 },
     { name: 'photo_back', maxCount: 1 },
+    { name: 'photo_back_optimized', maxCount: 1 },
   ]);
+  // One inexpensive Durable Object counter protects the R2 and Gemini work
+  // from repeated submissions while leaving ample room for legitimate retests.
+  const assessmentSubmitDailyLimit = dailyUsageLimit({
+    feature: 'hair_assessment_submit',
+    defaultLimit: 10,
+    subject: (req) => `patient:${req.user?.id}`,
+  });
 
   // Legacy & Flutter App routes:
   // POST /HairTest/submit_form
-  router.post('/submit_form', authenticateToken, requireRegisteredUser, scalpUploadFields, hairTestController.submitForm);
+  router.post('/submit_form', authenticateToken, requireRegisteredUser, enforceUploadRequestSize, assessmentSubmitDailyLimit, scalpUploadFields, hairTestController.submitForm);
 
   // POST /HairTest/hair_test
   router.post('/hair_test', authenticateToken, requireRegisteredUser, hairTestController.getHairTests);

@@ -37,6 +37,43 @@ describe('GeminiAiService Unit & Integration Tests', () => {
     assert.match(result.next_step_recommendation.reason, /clinician/i);
   });
 
+  it('should classify a scalp image from a mocked Gemini vision response', async () => {
+    const service = new GeminiAiService({
+      apiKey: 'test-key',
+      fetchFn: async (_url, options) => {
+        assert.ok(options.signal);
+        return {
+          ok: true,
+          json: async () => ({
+            candidates: [{
+              content: {
+                parts: [{
+                  text: JSON.stringify({
+                    is_hair: true,
+                    status: 'hairDetected',
+                    confidence: 0.94,
+                    message: 'Scalp verified.',
+                    details: 'Mocked scalp image response.',
+                  }),
+                }],
+              },
+            }],
+          }),
+        };
+      },
+    });
+
+    const result = await service.detectHairAndScalpImage({
+      base64Data: 'c3ludGhldGljLWltYWdl',
+      mimeType: 'image/jpeg',
+      label: 'Front Hairline',
+    });
+
+    assert.equal(result.status, 'hairDetected');
+    assert.equal(result.is_hair, true);
+    assert.equal(result.confidence, 0.94);
+  });
+
   it('should parse valid JSON returned from mocked Gemini API', async () => {
     const mockApiResponse = {
       candidates: [
@@ -169,6 +206,27 @@ describe('GeminiAiService Unit & Integration Tests', () => {
     const result = await service.generateHairTestAssessment({});
     assert.deepEqual(models, ['primary-model', 'fallback-model']);
     assert.equal(result.generated_by, 'Dr. Hair Assistant (fallback-model)');
+  });
+
+  it('caps combined transient retry and model fallback attempts at three Gemini calls', async () => {
+    const statuses = [429, 404, 503];
+    let calls = 0;
+    const service = new GeminiAiService({
+      apiKey: 'test-fake-key',
+      model: 'primary-model',
+      fallbackModel: 'fallback-model',
+      fetchFn: async () => ({
+        ok: false,
+        status: statuses[calls++],
+        text: async () => 'temporary failure',
+      }),
+      logger: { warn() {}, error() {} },
+    });
+
+    const result = await service.generateHairTestAssessment({});
+
+    assert.equal(calls, 3);
+    assert.equal(result.ai_status, 'unavailable');
   });
 
   it('should return unavailable without fabricated results when Gemini fails', async () => {

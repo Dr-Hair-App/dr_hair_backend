@@ -3,6 +3,7 @@ import { getWorkerBindings } from '../database/runtime.js';
 import { sendError } from '../utils/response.js';
 
 const POLICY_CACHE_TTL_MS = 30_000;
+const POLICY_CACHE_MAX_ENTRIES = 1_000;
 const policyCache = new Map();
 
 const subjectHash = (subject) => createHash('sha256').update(String(subject)).digest('hex').slice(0, 32);
@@ -27,6 +28,16 @@ const resolveLimit = async (kv, feature, userHash, fallback) => {
     limit = parseLimit(userPolicy ?? defaultPolicy, fallback);
   } catch {
     // A policy KV outage falls back to the conservative code default.
+  }
+  if (policyCache.size >= POLICY_CACHE_MAX_ENTRIES) {
+    const now = Date.now();
+    for (const [key, entry] of policyCache) {
+      if (entry.expiresAt <= now) policyCache.delete(key);
+      if (policyCache.size < POLICY_CACHE_MAX_ENTRIES) break;
+    }
+    if (policyCache.size >= POLICY_CACHE_MAX_ENTRIES) {
+      policyCache.delete(policyCache.keys().next().value);
+    }
   }
   policyCache.set(cacheKey, { value: limit, expiresAt: Date.now() + POLICY_CACHE_TTL_MS });
   return limit;

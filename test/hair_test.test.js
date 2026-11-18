@@ -81,26 +81,21 @@ describe('Hair Test & Treatment Modules - Clean Architecture Tests', () => {
         hair_loss_stage: 'Stage-2',
       },
       files: {
-        photo_front: [{ filename: 'scalp_front_test.jpg', buffer: Buffer.from('front image') }],
-        photo_top: [{ filename: 'scalp_top_test.jpg', buffer: Buffer.from('top image') }],
+        photo_front: [{ filename: 'scalp_front_test.jpg', mimetype: 'image/jpeg', buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) }],
+        photo_top: [{ filename: 'scalp_top_test.jpg', mimetype: 'image/jpeg', buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) }],
       },
     });
 
     assert.equal(result.message, 'Hair test submitted successfully.');
     assert.ok(result.reference_no.startsWith('HT-'));
-    assert.equal(result.test.ai_assessment, null);
-    assert.equal(result.test.ai_assessment_status, 'queued');
-    assert.equal(result.ai_assessment_status, 'queued');
+    assert.ok(result.ai_assessment);
+    assert.equal(result.test.ai_assessment_status, 'ready');
+    assert.equal(result.ai_assessment_status, 'ready');
     createdReferenceNo = result.reference_no;
   });
 
-  it('processes the queued AI assessment after the submit response', async () => {
+  it('persists the AI assessment before returning the submit response', async () => {
     let status = await container.repositories.hairTestRepository.getAiAssessmentStatus(createdReferenceNo, 12);
-    for (let attempt = 0; status?.status === 'queued' && attempt < 25; attempt += 1) {
-      const processed = await container.useCases.processQueuedAiAssessmentUseCase.processOne();
-      if (!processed) break;
-      status = await container.repositories.hairTestRepository.getAiAssessmentStatus(createdReferenceNo, 12);
-    }
     assert.equal(status.status, 'ready');
     assert.equal(typeof status.ai_assessment.scalp_health_score, 'number');
   });

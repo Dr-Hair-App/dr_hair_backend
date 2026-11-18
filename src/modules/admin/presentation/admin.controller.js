@@ -2,6 +2,8 @@ import { AppError, BadRequestError, NotFoundError } from '../../../shared/errors
 import { sendSuccess } from '../../../shared/utils/response.js';
 import { config } from '../../../config/env.js';
 import { uploadClinicalReport, createClinicalReportDownloadUrl, deleteClinicalReport } from '../infrastructure/ClinicalReportStorage.js';
+import { clinicalReportFormat } from '../infrastructure/R2ClinicalReportUploadStorage.js';
+import { MalwareScanner, normalizeScanStatus } from '../infrastructure/MalwareScanner.js';
 import { progressCheckInResponse } from '../../../shared/utils/progress-checkin-response.js';
 import { getEffectivePermissions } from '../../../shared/utils/admin-permissions.js';
 import { hashPassword } from '../../../shared/utils/password-hasher.js';
@@ -20,6 +22,8 @@ const reportResponse = (report) => ({
   bytes: report.bytes,
   stored_bytes: report.stored_bytes || report.bytes,
   compressed: report.compressed === true,
+  sha256: report.sha256 || null,
+  scanning_status: report.scanning_status || 'not_scanned',
   uploaded_by: report.uploaded_by,
   visibility: report.visibility === 'Shared' ? 'Shared' : 'Private',
   shared_at: report.shared_at || null,
@@ -57,6 +61,7 @@ export class AdminController {
     sessionRepository,
     notificationRepository,
     deviceTokenRepository,
+    malwareScanner,
   }) {
     this.userRepository = userRepository;
     this.hairTestRepository = hairTestRepository;
@@ -77,6 +82,7 @@ export class AdminController {
     this.sessionRepository = sessionRepository;
     this.notificationRepository = notificationRepository;
     this.deviceTokenRepository = deviceTokenRepository;
+    this.malwareScanner = malwareScanner || new MalwareScanner();
   }
 
   getCurrentAdmin = async (req, res, next) => {
@@ -345,25 +351,26 @@ export class AdminController {
   };
 
   uploadPatientReport = async (req, res, next) => {
-    let uploadedAsset;
+    let uploadedAsset = req.file?.key ? { public_id: req.file.key } : null;
     try {
       const patient = await this.userRepository.findById(req.params.userId);
       if (!patient || patient.role !== 'user') throw new NotFoundError('Patient not found.');
       if (!req.file) throw new BadRequestError('Choose a report file to upload.');
       const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
       if (!title || title.length > 160) throw new BadRequestError('Report title is required and must be at most 160 characters.');
-      const signatures = {
-        'application/pdf': req.file.buffer.subarray(0, 5).toString() === '%PDF-',
-        'application/msword': req.file.buffer.subarray(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])),
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': req.file.buffer.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])),
-        'image/jpeg': req.file.buffer[0] === 0xff && req.file.buffer[1] === 0xd8 && req.file.buffer[2] === 0xff,
-        'image/png': req.file.buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
-        'image/webp': req.file.buffer.subarray(0, 4).toString() === 'RIFF' && req.file.buffer.subarray(8, 12).toString() === 'WEBP',
-      };
-      if (!signatures[req.file.mimetype]) throw new BadRequestError('The report file content does not match its PDF, DOC, DOCX, or image type.');
       uploadedAsset = await uploadClinicalReport(req.file, patient.id, {
         compress: req.body?.compress_losslessly !== 'false',
       });
+      const scanResult = await this.malwareScanner.scanClinicalReport({
+        key: uploadedAsset.public_id,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+        patientId: patient.id,
+      });
+      const scanningStatus = normalizeScanStatus(scanResult);
+      if (scanningStatus === 'infected' || scanningStatus === 'error') {
+        throw new BadRequestError('The report could not be accepted because its security scan did not pass.');
+      }
       const uploadedBy = String(req.user?.email || req.user?.login || 'Super Admin');
       const report = await this.clinicalReportRepository.create({
         id: uploadedAsset.id,
@@ -371,10 +378,12 @@ export class AdminController {
         title,
         file_name: String(req.file.originalname || 'report').replace(/[\\/\u0000-\u001f]/g, '_').slice(0, 180),
         mime_type: req.file.mimetype,
-        format: ({ 'application/pdf': 'pdf', 'application/msword': 'doc', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' })[req.file.mimetype],
+        format: clinicalReportFormat(req.file.mimetype),
         bytes: req.file.size,
         stored_bytes: uploadedAsset.stored_bytes,
         compressed: uploadedAsset.compressed,
+        sha256: uploadedAsset.sha256 || req.file.sha256,
+        scanning_status: scanningStatus,
         public_id: uploadedAsset.public_id,
         uploaded_by: uploadedBy,
         visibility: 'Private',

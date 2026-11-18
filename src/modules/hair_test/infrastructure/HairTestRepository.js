@@ -72,10 +72,16 @@ export class HairTestRepository extends IHairTestRepository {
   }
 
   async findByReferenceNo(referenceNo) {
+    if (!referenceNo || (typeof referenceNo === 'string' && !referenceNo.trim())) return null;
+    const trimmed = typeof referenceNo === 'string' ? referenceNo.trim() : referenceNo;
+    const isNum = Number.isInteger(Number(trimmed)) && String(trimmed) !== '';
     if (isDatabaseConnected()) {
-      return toHairTest(await HairTestModel.findOne({ reference_no: referenceNo }).lean());
+      const query = isNum
+        ? { $or: [{ reference_no: String(trimmed) }, { id: Number(trimmed) }] }
+        : { reference_no: String(trimmed) };
+      return toHairTest(await HairTestModel.findOne(query).lean());
     }
-    const test = store.hairTests.find((t) => t.reference_no === referenceNo);
+    const test = store.hairTests.find((t) => String(t.reference_no) === String(trimmed) || String(t.id) === String(trimmed));
     return test ? new HairTest(test) : null;
   }
 
@@ -144,8 +150,17 @@ export class HairTestRepository extends IHairTestRepository {
       throw new BadRequestError(`Invalid assessment status: ${newStatus}. Allowed: ${validStatuses.join(', ')}.`);
     }
 
+    if (!referenceNo || (typeof referenceNo === 'string' && !referenceNo.trim())) {
+      throw new BadRequestError('Reference number is required.');
+    }
+    const trimmed = typeof referenceNo === 'string' ? referenceNo.trim() : referenceNo;
+    const isNum = Number.isInteger(Number(trimmed)) && String(trimmed) !== '';
+
     if (isDatabaseConnected()) {
-      const record = await HairTestModel.findOne({ reference_no: referenceNo });
+      const query = isNum
+        ? { $or: [{ reference_no: String(trimmed) }, { id: Number(trimmed) }] }
+        : { reference_no: String(trimmed) };
+      const record = await HairTestModel.findOne(query);
       if (!record) throw new NotFoundError('Assessment not found for that reference number.');
 
       const currentStatus = record.status || 'submitted';
@@ -168,7 +183,7 @@ export class HairTestRepository extends IHairTestRepository {
       return toHairTest(record);
     }
 
-    const test = store.hairTests.find((t) => t.reference_no === referenceNo);
+    const test = store.hairTests.find((t) => String(t.reference_no) === String(trimmed) || (isNum && Number(t.id) === Number(trimmed)));
     if (!test) throw new NotFoundError('Assessment not found for that reference number.');
 
     const currentStatus = test.status || 'submitted';

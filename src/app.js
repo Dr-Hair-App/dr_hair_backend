@@ -45,13 +45,19 @@ export const createApp = (overrides = {}) => {
 
   // Normalize client IP for serverless / Cloudflare Worker runtimes so rateLimiters have a valid key
   app.use((req, _res, next) => {
+    let fallbackIp = '127.0.0.1';
+    try {
+      if (req.socket?.remoteAddress) fallbackIp = req.socket.remoteAddress;
+      else if (req.ip) fallbackIp = req.ip;
+    } catch {
+      fallbackIp = '127.0.0.1';
+    }
     const rawIp = req.headers['cf-connecting-ip'] ||
                   req.headers['x-real-ip'] ||
                   (typeof req.headers['x-forwarded-for'] === 'string'
                     ? req.headers['x-forwarded-for'].split(',')[0]?.trim()
                     : null) ||
-                  req.ip ||
-                  '127.0.0.1';
+                  fallbackIp;
     try {
       Object.defineProperty(req, 'ip', {
         value: rawIp,
@@ -101,6 +107,12 @@ export const createApp = (overrides = {}) => {
   if (!process.env.DRHAIR_DEPLOYMENT_ENV) {
     app.use(compression({ threshold: 1024 }));
   }
+  // Cloudflare applies Brotli/Gzip at the edge for deployed Workers. Tell
+  // intermediate caches that the representation varies by client encoding.
+  app.use((_req, res, next) => {
+    res.vary('Accept-Encoding');
+    next();
+  });
   app.use(express.json({
     limit: '10mb',
     verify(req, res, buffer) {

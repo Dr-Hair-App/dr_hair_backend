@@ -1,13 +1,94 @@
-import { randomUUID, createHmac, timingSafeEqual } from 'node:crypto';
+import { randomUUID, createHmac, createHash, timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { BadRequestError, NotFoundError, PayloadTooLargeError } from '../../../shared/errors/index.js';
 import { config } from '../../../config/env.js';
 import { getMediaBucket } from '../../../shared/storage/runtime.js';
 
 const mediaPurposes = new Set(['general', 'profile', 'assessment', 'progress', 'content', 'product']);
-const extFor = (mime) => ({ 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif', 'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm', 'video/x-m4v': 'm4v', 'application/pdf': 'pdf' })[mime] || 'bin';
+const extFor = (mime) => ({ 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif', 'image/heic': 'heic', 'image/heif': 'heif', 'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm', 'video/x-m4v': 'm4v', 'application/pdf': 'pdf' })[mime] || 'bin';
 const objectKey = (key) => String(key || '').replace(/^\/+/, '').replace(/\\/g, '/');
 const mimeFor = (format) => ({ jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', avif: 'image/avif', pdf: 'application/pdf', mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', m4v: 'video/x-m4v' })[String(format || '').toLowerCase()] || 'application/octet-stream';
+
+export function detectImageMime(prefix) {
+  const bytes = Buffer.from(prefix || []);
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image/png';
+  const signature = bytes.subarray(0, 6).toString('ascii');
+  if (signature === 'GIF87a' || signature === 'GIF89a') return 'image/gif';
+  if (bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  if (bytes.subarray(4, 8).toString('ascii') === 'ftyp') {
+    const brands = bytes.subarray(8, Math.min(bytes.length, 32)).toString('ascii');
+    if (/avif|avis/.test(brands)) return 'image/avif';
+    if (/heic|heix|hevc|hevx/.test(brands)) return 'image/heic';
+    if (/heif|mif1|msf1/.test(brands)) return 'image/heif';
+  }
+  return null;
+}
+
+const isSafeImageSize = (width, height, maxPixels) => Number.isInteger(width) && Number.isInteger(height) &&
+  width > 0 && height > 0 && width <= 20_000 && height <= 20_000 && width * height <= maxPixels;
+
+/** Reads dimensions from bounded image headers without decoding image pixels. */
+export function readImageDimensions(mimeType, prefix) {
+  const bytes = Buffer.from(prefix || []);
+  let width;
+  let height;
+  if (mimeType === 'image/png' && bytes.length >= 24 && bytes.subarray(12, 16).toString() === 'IHDR') {
+    width = bytes.readUInt32BE(16);
+    height = bytes.readUInt32BE(20);
+  } else if (mimeType === 'image/gif' && bytes.length >= 10) {
+    width = bytes.readUInt16LE(6);
+    height = bytes.readUInt16LE(8);
+  } else if (mimeType === 'image/jpeg' && bytes.length >= 4) {
+    let offset = 2;
+    while (offset + 4 <= bytes.length) {
+      if (bytes[offset] !== 0xff) { offset += 1; continue; }
+      while (offset < bytes.length && bytes[offset] === 0xff) offset += 1;
+      if (offset >= bytes.length) break;
+      const marker = bytes[offset++];
+      if (marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+      if (offset + 2 > bytes.length) break;
+      const segmentLength = bytes.readUInt16BE(offset);
+      if (segmentLength < 2 || offset + segmentLength > bytes.length) break;
+      if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+        if (segmentLength < 7) return false;
+        height = bytes.readUInt16BE(offset + 3);
+        width = bytes.readUInt16BE(offset + 5);
+        break;
+      }
+      offset += segmentLength;
+    }
+  } else if (mimeType === 'image/webp' && bytes.length >= 30 && bytes.subarray(0, 4).toString() === 'RIFF') {
+    const chunkType = bytes.subarray(12, 16).toString();
+    if (chunkType === 'VP8X' && bytes.length >= 30) {
+      width = 1 + bytes.readUIntLE(24, 3);
+      height = 1 + bytes.readUIntLE(27, 3);
+    } else if (chunkType === 'VP8 ' && bytes.length >= 30 && bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a) {
+      width = bytes.readUInt16LE(26) & 0x3fff;
+      height = bytes.readUInt16LE(28) & 0x3fff;
+    } else if (chunkType === 'VP8L' && bytes.length >= 25 && bytes[20] === 0x2f) {
+      width = 1 + bytes[21] + ((bytes[22] & 0x3f) << 8);
+      height = 1 + (bytes[22] >> 6) + (bytes[23] << 2) + ((bytes[24] & 0x0f) << 10);
+    }
+  } else if (['image/avif', 'image/heic', 'image/heif'].includes(mimeType)) {
+    // ISO-BMFF image properties contain `ispe`, then version/flags + dimensions.
+    for (let offset = 4; offset + 16 <= bytes.length; offset += 1) {
+      if (bytes.subarray(offset, offset + 4).toString() === 'ispe') {
+        width = bytes.readUInt32BE(offset + 8);
+        height = bytes.readUInt32BE(offset + 12);
+        break;
+      }
+    }
+  }
+  return Number.isInteger(width) && Number.isInteger(height) ? { width, height } : null;
+}
+
+export function hasSafeImageDimensions(mimeType, prefix, { maxPixels = 40_000_000 } = {}) {
+  const dimensions = readImageDimensions(mimeType, prefix);
+  return Boolean(dimensions && isSafeImageSize(dimensions.width, dimensions.height, maxPixels));
+}
+
+const normalizedImageMime = (mime) => mime === 'image/jpg' ? 'image/jpeg' : mime;
 
 export async function compressLosslessly(buffer, enabled = true) {
   if (!enabled || typeof CompressionStream !== 'function' || !Buffer.isBuffer(buffer) || buffer.length === 0) {
@@ -40,12 +121,20 @@ export class R2MediaStorage {
     if (resourceType !== 'image' || !key || key.length > 400 || key.includes('..')) throw new BadRequestError('Provide a valid R2 image key. Video uploads are not supported.');
     const allowedPrefixes = isAdmin
       ? ['drhair/images/admin/general/', 'drhair/images/admin/product/']
-      : [`drhair/images/user-${Number(ownerId)}/general/`];
+      : [
+        `drhair/images/user-${Number(ownerId)}/general/`,
+        `drhair/images/user-${Number(ownerId)}/profile/`,
+        `drhair/images/profiles/user-${Number(ownerId)}.`,
+      ];
     if (!allowedPrefixes.some((prefix) => key.startsWith(prefix))) throw new BadRequestError('Only your unattached media can be deleted here.');
     const bucket = getMediaBucket();
     if (!bucket) throw new Error('R2 MEDIA_BUCKET is not configured.');
     const asset = await bucket.head(key);
     if (!asset) throw new NotFoundError('Uploaded media was not found.');
+    if (!isAdmin && (asset.customMetadata?.ownerId !== String(ownerId)
+      || !['general', 'profile'].includes(asset.customMetadata?.purpose))) {
+      throw new BadRequestError('Only your unattached media can be deleted here.');
+    }
     await bucket.delete(key);
   }
 
@@ -60,10 +149,19 @@ export class R2MediaStorage {
     const isAdmin = ['admin', 'super_admin'].includes(req.user?.role);
     const owner = isAdmin ? 'admin' : `user-${Number(req.user?.id)}`;
     const keyBase = `drhair/images/${owner}/${purpose}/${randomUUID()}.${extFor(file.mimetype)}`;
+    const contentType = normalizedImageMime(file.mimetype);
+    const visibility = ['assessment', 'progress'].includes(purpose) ? 'private' : 'public';
     const maxBytes = config.upload.maxFileSize;
-    const shouldCompress = req.headers['x-media-compression'] === 'lossless';
+    const partSize = 5 * 1024 * 1024;
     const chunks = [];
+    const uploadedParts = [];
+    const hash = createHash('sha256');
+    const prefixChunks = [];
+    let prefixBytes = 0;
     let bytes = 0;
+    let currentPartBytes = 0;
+    let multipartUpload = null;
+    let partNumber = 1;
     let completed = false;
     const finish = (error, info) => {
       if (completed) return;
@@ -75,43 +173,109 @@ export class R2MediaStorage {
       try {
         for await (const chunk of file.stream) {
           bytes += chunk.length;
+          req._drHairUploadedFileBytes = (req._drHairUploadedFileBytes || 0) + chunk.length;
+          if (req._drHairUploadedFileBytes > config.upload.maxRequestSize) {
+            throw new PayloadTooLargeError('The complete upload must be smaller than 90 MiB. Reduce the number or size of photos and try again.');
+          }
           if (bytes > maxBytes) throw new PayloadTooLargeError('Media file exceeds the configured upload size limit.');
-          chunks.push(Buffer.from(chunk));
+          hash.update(chunk);
+          if (prefixBytes < 65536) {
+            const prefixChunk = Buffer.from(chunk.subarray(0, 65536 - prefixBytes));
+            prefixChunks.push(prefixChunk);
+            prefixBytes += prefixChunk.length;
+          }
+
+          let offset = 0;
+          while (offset < chunk.length) {
+            const take = Math.min(partSize - currentPartBytes, chunk.length - offset);
+            chunks.push(Buffer.from(chunk.subarray(offset, offset + take)));
+            currentPartBytes += take;
+            offset += take;
+
+            if (currentPartBytes === partSize) {
+              if (!multipartUpload) {
+                multipartUpload = await bucket.createMultipartUpload(keyBase, {
+                  httpMetadata: {
+                    contentType,
+                    cacheControl: visibility === 'private' ? 'private, no-store' : 'public, max-age=86400',
+                  },
+                  customMetadata: {
+                    purpose,
+                    ownerId: String(req.user?.id || ''),
+                    resourceType,
+                    visibility,
+                    processingStatus: 'original_preserved',
+                  },
+                });
+              }
+              const part = await multipartUpload.uploadPart(partNumber++, Buffer.concat(chunks, currentPartBytes));
+              uploadedParts.push(part);
+              chunks.length = 0;
+              currentPartBytes = 0;
+            }
+          }
         }
         if (file.stream.truncated) throw new PayloadTooLargeError('Media file exceeds the configured upload size limit.');
-        const original = Buffer.concat(chunks, bytes);
-        const stored = await compressLosslessly(original, shouldCompress);
-        const key = `${keyBase}${stored.compressed ? '.gz' : ''}`;
-        const visibility = ['assessment', 'progress'].includes(purpose) ? 'private' : 'public';
-        await bucket.put(key, stored.buffer, {
-          httpMetadata: {
-            contentType: file.mimetype,
-            cacheControl: visibility === 'private' ? 'private, no-store' : 'public, max-age=86400',
-          },
-          customMetadata: {
-            purpose,
-            ownerId: String(req.user?.id || ''),
-            resourceType,
-            visibility,
-            compression: stored.compressed ? 'gzip' : 'none',
-            originalBytes: String(stored.originalBytes),
-          },
-        });
+        const prefix = Buffer.concat(prefixChunks, prefixBytes);
+        const detectedMime = detectImageMime(prefix);
+        if (!detectedMime || detectedMime !== normalizedImageMime(file.mimetype)) {
+          throw new BadRequestError('The image file contents do not match the selected file type.');
+        }
+        const dimensions = readImageDimensions(detectedMime, prefix);
+        const isHairAssessmentOriginal = req.route?.path === '/submit_form' &&
+          /^photo_(front|top|left|right|back)$/.test(file.fieldname || '');
+        const dimensionLimit = isHairAssessmentOriginal ? 100_000_000 : 40_000_000;
+        if (!dimensions || !isSafeImageSize(dimensions.width, dimensions.height, dimensionLimit)) {
+          const megapixelLimit = dimensionLimit / 1_000_000;
+          throw new BadRequestError(`The image dimensions could not be verified or exceed 20,000 pixels per side and ${megapixelLimit} megapixels. Please choose a standard image file.`);
+        }
+        if (bytes === 0) throw new BadRequestError('The uploaded image is empty.');
+
+        const finalPart = Buffer.concat(chunks, currentPartBytes);
+        const checksum = hash.digest('hex');
+        if (multipartUpload) {
+          if (finalPart.length > 0) {
+            uploadedParts.push(await multipartUpload.uploadPart(partNumber, finalPart));
+          }
+          await multipartUpload.complete(uploadedParts);
+        } else {
+          await bucket.put(keyBase, finalPart, {
+            httpMetadata: {
+              contentType,
+              cacheControl: visibility === 'private' ? 'private, no-store' : 'public, max-age=86400',
+            },
+            customMetadata: {
+              purpose,
+              ownerId: String(req.user?.id || ''),
+              resourceType,
+              visibility,
+              originalBytes: String(bytes),
+              sha256: checksum,
+              processingStatus: 'client_optimized_or_original',
+            },
+          });
+        }
         finish(null, {
-          key,
-          publicId: key,
-          secureUrl: this.createPublicUrl(key),
-          storageUrl: key,
+          key: keyBase,
+          publicId: keyBase,
+          secureUrl: this.createPublicUrl(keyBase),
+          storageUrl: keyBase,
           purpose,
           deliveryType: visibility,
           resourceType,
           format: extFor(file.mimetype),
-          mimetype: file.mimetype,
-          bytes: stored.buffer.length,
-          originalBytes: stored.originalBytes,
-          compressed: stored.compressed,
+          mimetype: contentType,
+          originalName: String(file.originalname || 'upload').replace(/[\\/\u0000-\u001f]/g, '_').slice(0, 180),
+          bytes,
+          originalBytes: bytes,
+          compressed: false,
+          sha256: checksum,
+          width: dimensions.width,
+          height: dimensions.height,
+          processingStatus: 'original_preserved',
         });
       } catch (error) {
+        if (multipartUpload) await multipartUpload.abort().catch(() => null);
         finish(error);
       }
     })();

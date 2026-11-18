@@ -7,7 +7,8 @@ const ownedProfilePublicId = (url, userId) => {
     const marker = '/api/v1/media/assets/';
     if (!['https:', 'http:'].includes(parsed.protocol) || !parsed.pathname.includes(marker)) return null;
     const key = parsed.pathname.slice(parsed.pathname.indexOf(marker) + marker.length).split('/').map(decodeURIComponent).join('/');
-    return key.startsWith(`drhair/images/profiles/user-${userId}.`) ? key : null;
+    return key.startsWith(`drhair/images/profiles/user-${userId}.`)
+      || key.startsWith(`drhair/images/user-${userId}/profile/`) ? key : null;
   } catch {
     return null;
   }
@@ -31,8 +32,8 @@ export class UpdateProfilePictureUseCase {
 
     if (action === 'remove') {
       const publicId = ownedProfilePublicId(user.profile_url, userId);
-      if (publicId) await this.imageStorage.deleteImage(publicId);
       const updatedUser = await this.userRepository.updateAvatar(userId, null);
+      if (publicId) await this.imageStorage.deleteImage(publicId);
       return {
         profileUrl: null,
         user: updatedUser,
@@ -55,7 +56,13 @@ export class UpdateProfilePictureUseCase {
       'user-' + userId,
       { contentType: file.mimetype || 'image/jpeg' },
     );
-    const updatedUser = await this.userRepository.updateAvatar(userId, stored.secureUrl);
+    let updatedUser;
+    try {
+      updatedUser = await this.userRepository.updateAvatar(userId, stored.secureUrl);
+    } catch (error) {
+      await this.imageStorage.deleteImage(stored.publicId).catch(() => null);
+      throw error;
+    }
 
     return {
       profileUrl: stored.secureUrl,

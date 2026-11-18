@@ -2,8 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import { setStorageBindings, clearStorageBindings } from '../src/shared/storage/runtime.js';
-import { R2MediaStorage, verifyPrivateMediaSignature } from '../src/modules/media/infrastructure/R2MediaStorage.js';
+import { hasSafeImageDimensions, R2MediaStorage, verifyPrivateMediaSignature } from '../src/modules/media/infrastructure/R2MediaStorage.js';
 import { R2ImageStorage as ImageStorage } from '../src/modules/media/infrastructure/R2ImageStorage.js';
+
+const pngHeader = (width = 1, height = 1) => {
+  const bytes = Buffer.alloc(24);
+  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes);
+  bytes.writeUInt32BE(13, 8);
+  bytes.write('IHDR', 12);
+  bytes.writeUInt32BE(width, 16);
+  bytes.writeUInt32BE(height, 20);
+  return bytes;
+};
 
 test('R2 stores clinical images privately and returns a bounded signed API URL', async () => {
   const objects = new Map();
@@ -22,7 +32,7 @@ test('R2 stores clinical images privately and returns a bounded signed API URL',
 
   try {
     const storage = new ImageStorage();
-    const uploaded = await storage.uploadImage(Buffer.from('test-image'), 'user-42/assessment', undefined, { deliveryType: 'authenticated', contentType: 'image/png' });
+    const uploaded = await storage.uploadImage(Buffer.concat([pngHeader(), Buffer.from('test-image')]), 'user-42/assessment', undefined, { deliveryType: 'authenticated', contentType: 'image/png' });
     assert.match(uploaded.publicId, /^drhair\/images\/user-42\/assessment\/[a-f0-9-]+\.png$/);
     assert.equal(objects.get(uploaded.publicId).options.customMetadata.visibility, 'private');
     assert.equal(objects.get(uploaded.publicId).options.customMetadata.purpose, 'assessment');
@@ -41,7 +51,37 @@ test('R2 stores clinical images privately and returns a bounded signed API URL',
   }
 });
 
-test('R2 media upload buffers multipart streams and stores only smaller lossless gzip data', async () => {
+test('profile image references and orphan deletion verify owner metadata', async () => {
+  const objects = new Map();
+  const key = 'drhair/images/user-42/profile/avatar.webp';
+  objects.set(key, {
+    customMetadata: { ownerId: '42', purpose: 'profile', visibility: 'public' },
+  });
+  setStorageBindings({ MEDIA_BUCKET: {
+    async put() {},
+    async head(objectKey) { return objects.get(objectKey) || null; },
+    async delete(objectKey) { objects.delete(objectKey); },
+  } });
+
+  try {
+    const images = new ImageStorage();
+    assert.equal(await images.hasOwnedProfileImage(key, 42), true);
+    assert.equal(await images.hasOwnedProfileImage(key, 41), false);
+
+    const media = new R2MediaStorage();
+    await assert.rejects(
+      media.deleteOwnedOrphan({ publicId: key, resourceType: 'image', ownerId: 41, isAdmin: false }),
+      /Only your unattached media/,
+    );
+    assert.equal(objects.has(key), true);
+    await media.deleteOwnedOrphan({ publicId: key, resourceType: 'image', ownerId: 42, isAdmin: false });
+    assert.equal(objects.has(key), false);
+  } finally {
+    clearStorageBindings();
+  }
+});
+
+test('R2 media upload validates image bytes and stores the original without gzip', async () => {
   let stored;
   setStorageBindings({ MEDIA_BUCKET: {
     async put(key, value, options) {
@@ -52,7 +92,7 @@ test('R2 media upload buffers multipart streams and stores only smaller lossless
 
   try {
     const storage = new R2MediaStorage();
-    const original = Buffer.from('lossless-media-content-'.repeat(300));
+    const original = Buffer.concat([pngHeader(), Buffer.from('media-content-'.repeat(300))]);
     const result = await new Promise((resolve, reject) => {
       storage._handleFile({
         headers: { 'x-media-purpose': 'product', 'x-media-compression': 'lossless' },
@@ -64,16 +104,113 @@ test('R2 media upload buffers multipart streams and stores only smaller lossless
     });
 
     assert.equal(stored.key, result.key);
-    assert.match(stored.key, /^drhair\/images\/admin\/product\/.*\.png\.gz$/);
-    assert.equal(stored.options.customMetadata.compression, 'gzip');
-    assert.equal(result.compressed, true);
+    assert.match(stored.key, /^drhair\/images\/admin\/product\/.*\.png$/);
+    assert.equal(stored.options.customMetadata.compression, undefined);
+    assert.equal(result.compressed, false);
     assert.equal(result.originalBytes, original.length);
-    assert.ok(result.bytes < original.length);
-    assert.deepEqual(
-      Buffer.from(await new Response(new Blob([stored.value]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer()),
-      original,
-    );
+    assert.equal(result.bytes, original.length);
+    assert.deepEqual(stored.value, original);
+    assert.equal(result.mimetype, 'image/png');
+    assert.equal(result.sha256.length, 64);
   } finally {
+    clearStorageBindings();
+  }
+});
+
+test('R2 media rejects a mismatched MIME signature before making an object', async () => {
+  let putCalled = false;
+  setStorageBindings({ MEDIA_BUCKET: {
+    async put() { putCalled = true; },
+  } });
+
+  try {
+    const storage = new R2MediaStorage();
+    await assert.rejects(new Promise((resolve, reject) => {
+      storage._handleFile({
+        headers: { 'x-media-purpose': 'product' },
+        user: { id: 7, role: 'admin' },
+      }, {
+        mimetype: 'image/png',
+        stream: Readable.from([Buffer.from('not a png')]),
+      }, (error, file) => error ? reject(error) : resolve(file));
+    }), /contents do not match/);
+    assert.equal(putCalled, false);
+  } finally {
+    clearStorageBindings();
+  }
+});
+
+test('bounded image dimension parsing rejects truncated and decompression-bomb headers', () => {
+  assert.equal(hasSafeImageDimensions('image/png', pngHeader(2048, 2048)), true);
+  assert.equal(hasSafeImageDimensions('image/png', pngHeader(20_000, 20_000)), false);
+  assert.equal(hasSafeImageDimensions('image/png', pngHeader(20_001, 1)), false);
+  assert.equal(hasSafeImageDimensions('image/png', pngHeader().subarray(0, 20)), false);
+});
+
+test('R2 media streams 5 MiB parts and enforces the 25 MiB file boundary', async () => {
+  const { config } = await import('../src/config/env.js');
+  const originalLimit = config.upload.maxFileSize;
+  config.upload.maxFileSize = 25 * 1024 * 1024;
+
+  const uploadSize = async (size) => {
+    let savedBytes = 0;
+    let aborted = false;
+    const bucket = {
+      async put(_key, value) { savedBytes = value.length; },
+      async createMultipartUpload() {
+        return {
+          async uploadPart(_partNumber, value) {
+            savedBytes += value.length;
+            return { partNumber: _partNumber, etag: `part-${_partNumber}` };
+          },
+          async complete(parts) { assert.ok(parts.length > 0); },
+          async abort() { aborted = true; },
+        };
+      },
+    };
+    setStorageBindings({ MEDIA_BUCKET: bucket });
+    const storage = new R2MediaStorage();
+    async function* chunks() {
+      let emitted = 0;
+      while (emitted < size) {
+        const length = Math.min(1024 * 1024, size - emitted);
+        const chunk = Buffer.alloc(length, 0x61);
+        if (emitted === 0) pngHeader().copy(chunk);
+        emitted += length;
+        yield chunk;
+      }
+    }
+    const result = await new Promise((resolve, reject) => {
+      storage._handleFile({
+        headers: { 'x-media-purpose': 'product' },
+        user: { id: 7, role: 'admin' },
+      }, {
+        mimetype: 'image/png',
+        stream: Readable.from(chunks()),
+      }, (error, file) => error ? reject(error) : resolve(file));
+    });
+    return { result, savedBytes, aborted };
+  };
+
+  try {
+    for (const size of [
+      1024,
+      5 * 1024 * 1024,
+      20 * 1024 * 1024,
+      24 * 1024 * 1024,
+    ]) {
+      const { result, savedBytes, aborted } = await uploadSize(size);
+      assert.equal(result.bytes, size);
+      assert.equal(savedBytes, size);
+      assert.equal(aborted, false);
+    }
+    const { result, savedBytes } = await uploadSize(25 * 1024 * 1024);
+    assert.equal(result.bytes, 25 * 1024 * 1024);
+    assert.equal(savedBytes, 25 * 1024 * 1024);
+
+    await assert.rejects(uploadSize(25 * 1024 * 1024 + 1), /configured upload size limit/);
+  } finally {
+    config.upload.maxFileSize = originalLimit;
     clearStorageBindings();
   }
 });

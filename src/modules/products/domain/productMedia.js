@@ -26,9 +26,13 @@ export function getProductR2MediaKeys(product) {
   const keys = new Set();
 
   for (const item of [...media, ...images]) {
-    const candidates = typeof item === 'string'
-      ? [item]
-      : [item?.public_id, item?.publicId, item?.asset_id, item?.name, item?.url, item?.secure_url];
+    const candidates = [];
+    const collect = (value) => {
+      if (typeof value === 'string') candidates.push(value);
+      else if (Array.isArray(value)) value.forEach(collect);
+      else if (value && typeof value === 'object') Object.values(value).forEach(collect);
+    };
+    collect(item);
     for (const candidate of candidates) {
       const key = normalizeKey(candidate);
       if (key) keys.add(key);

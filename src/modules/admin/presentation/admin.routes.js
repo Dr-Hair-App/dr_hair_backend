@@ -90,27 +90,27 @@ export const createAdminRouter = ({ adminController, notificationController, vid
   // Reviews
   router.get('/reviews', requireAnyPermission('content.edit', 'content.publish'), adminController.listReviews);
   router.patch('/reviews/status', requireAnyPermission('content.edit', 'content.publish'), adminController.updateReviewStatus);
-  router.post('/notifications/send-to-user', requireSuperAdmin, notificationController.sendToUser);
-  router.post('/notifications/broadcast', requireSuperAdmin, notificationController.broadcast);
-  router.get('/notifications/history', requireSuperAdmin, notificationController.listCampaigns);
-  router.get('/notifications/audience-count', requireSuperAdmin, notificationController.previewAudience);
-  router.post('/notifications/campaigns/:id/cancel', requireSuperAdmin, notificationController.cancelCampaign);
-  router.post('/media/videos/youtube', requireSuperAdmin, videoController.addYouTubeVideo);
-  router.get('/media/videos', requireSuperAdmin, videoController.listAdmin);
-  router.put('/media/videos/:publicId', requireSuperAdmin, videoController.updateVideo);
-  router.patch('/media/videos/:publicId', requireSuperAdmin, videoController.updateVideo);
-  router.put('/media/videos', requireSuperAdmin, videoController.updateVideo);
-  router.patch('/media/videos', requireSuperAdmin, videoController.updateVideo);
-  router.patch('/media/videos/status', requireSuperAdmin, videoController.updateStatus);
-  router.delete('/media/videos/:publicId', requireSuperAdmin, videoController.deleteVideo);
-  router.delete('/media/videos', requireSuperAdmin, videoController.deleteVideo);
+  router.post('/notifications/send-to-user', requireAnyPermission('notifications.manage'), notificationController.sendToUser);
+  router.post('/notifications/broadcast', requireAnyPermission('notifications.manage'), notificationController.broadcast);
+  router.get('/notifications/history', requireAnyPermission('notifications.manage'), notificationController.listCampaigns);
+  router.get('/notifications/audience-count', requireAnyPermission('notifications.manage'), notificationController.previewAudience);
+  router.post('/notifications/campaigns/:id/cancel', requireAnyPermission('notifications.manage'), notificationController.cancelCampaign);
+  router.post('/media/videos/youtube', requireAnyPermission('content.edit', 'content.publish'), videoController.addYouTubeVideo);
+  router.get('/media/videos', requireAnyPermission('content.edit', 'content.publish', 'media.upload'), videoController.listAdmin);
+  router.put('/media/videos/:publicId', requireAnyPermission('content.edit', 'content.publish'), videoController.updateVideo);
+  router.patch('/media/videos/:publicId', requireAnyPermission('content.edit', 'content.publish'), videoController.updateVideo);
+  router.put('/media/videos', requireAnyPermission('content.edit', 'content.publish'), videoController.updateVideo);
+  router.patch('/media/videos', requireAnyPermission('content.edit', 'content.publish'), videoController.updateVideo);
+  router.patch('/media/videos/status', requireAnyPermission('content.edit', 'content.publish'), videoController.updateStatus);
+  router.delete('/media/videos/:publicId', requireAnyPermission('content.edit', 'content.publish'), videoController.deleteVideo);
+  router.delete('/media/videos', requireAnyPermission('content.edit', 'content.publish'), videoController.deleteVideo);
 
   if (contentController) {
-    router.get('/content', requireSuperAdmin, contentController.listAdmin);
-    router.post('/content', requireSuperAdmin, contentController.createContent);
-    router.patch('/content/:id/status', requireSuperAdmin, contentController.updateStatus);
-    router.put('/content/:id', requireSuperAdmin, contentController.updateContent);
-    router.delete('/content/:id', requireSuperAdmin, contentController.deleteContent);
+    router.get('/content', requireAnyPermission('content.edit', 'content.publish'), contentController.listAdmin);
+    router.post('/content', requireAnyPermission('content.edit', 'content.publish'), contentController.createContent);
+    router.patch('/content/:id/status', requireAnyPermission('content.edit', 'content.publish'), contentController.updateStatus);
+    router.put('/content/:id', requireAnyPermission('content.edit', 'content.publish'), contentController.updateContent);
+    router.delete('/content/:id', requireAnyPermission('content.edit', 'content.publish'), contentController.deleteContent);
   }
 
   if (commerceController) {

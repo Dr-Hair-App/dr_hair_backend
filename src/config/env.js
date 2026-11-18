@@ -82,8 +82,19 @@ export const config = {
   },
   
   upload: {
-    maxFileSize: (parseInt(process.env.MAX_FILE_SIZE_MB, 10) || 10) * 1024 * 1024,
-    allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'],
+    maxFileSize: Math.min(Math.max(parseInt(process.env.MAX_FILE_SIZE_MB, 10) || 25, 1), 25) * 1024 * 1024,
+    maxFilesPerRequest: 10,
+    maxFieldsPerRequest: 64,
+    maxFieldSize: 16 * 1024,
+    // Ten upload parts plus a bounded questionnaire and multipart overhead.
+    maxPartsPerRequest: 80,
+    // Stay below Cloudflare's 100 MB request-body ceiling with room for
+    // multipart boundaries and fields. This applies to the full HTTP body.
+    maxRequestSize: 90 * 1024 * 1024,
+    allowedMimeTypes: [
+      'image/jpeg', 'image/jpg', 'image/png', 'image/webp',
+      'image/avif', 'image/heic', 'image/heif', 'image/gif',
+    ],
   },
 
   firebase: {

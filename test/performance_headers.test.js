@@ -66,15 +66,38 @@ describe('Performance Headers & Optimization Middleware', () => {
       const resGzip = await requestCompressed('gzip');
       assert.equal(resGzip.statusCode, 200);
       assert.equal(resGzip.headers['content-encoding'], 'gzip');
+      assert.match(resGzip.headers.vary, /Accept-Encoding/i);
       resGzip.resume();
 
       const resBr = await requestCompressed('br');
       assert.equal(resBr.statusCode, 200);
       assert.equal(resBr.headers['content-encoding'], 'br');
+      assert.match(resBr.headers.vary, /Accept-Encoding/i);
       resBr.resume();
     } finally {
       await new Promise((resolve) => server.close(resolve));
       store.products.splice(originalProductsLength);
+      if (deploymentEnv === undefined) delete process.env.DRHAIR_DEPLOYMENT_ENV;
+      else process.env.DRHAIR_DEPLOYMENT_ENV = deploymentEnv;
+    }
+  });
+
+  it('advertises encoding variants in Worker mode without adding duplicate compression middleware', async () => {
+    const deploymentEnv = process.env.DRHAIR_DEPLOYMENT_ENV;
+    process.env.DRHAIR_DEPLOYMENT_ENV = 'production';
+    const { app } = createApp();
+    const server = http.createServer(app);
+    await new Promise((resolve) => server.listen(0, resolve));
+    const port = server.address().port;
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/v1/products`, {
+        headers: { 'Accept-Encoding': 'br, gzip' },
+      });
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get('vary') || '', /Accept-Encoding/i);
+      assert.equal(response.headers.get('content-encoding'), null);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
       if (deploymentEnv === undefined) delete process.env.DRHAIR_DEPLOYMENT_ENV;
       else process.env.DRHAIR_DEPLOYMENT_ENV = deploymentEnv;
     }

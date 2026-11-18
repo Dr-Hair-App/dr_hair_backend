@@ -279,6 +279,10 @@ const project = (document, selection, excludedByDefault = []) => {
   }
   const output = { ...document };
   for (const path of excluded) unsetPath(output, path);
+  for (const path of forceIncluded) {
+    const value = getPath(document, path);
+    if (value !== undefined) setPath(output, path, value);
+  }
   return attachDocumentMethods(output);
 };
 
