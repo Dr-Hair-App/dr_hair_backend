@@ -501,5 +501,34 @@ export class HairTestRepository extends IHairTestRepository {
       limit: safeLimit,
     };
   }
+
+  async update(referenceNo, updates = {}) {
+    if (!referenceNo || (typeof referenceNo === 'string' && !referenceNo.trim())) {
+      throw new BadRequestError('Reference number is required.');
+    }
+    const trimmed = typeof referenceNo === 'string' ? referenceNo.trim() : referenceNo;
+    const isNum = Number.isInteger(Number(trimmed)) && String(trimmed) !== '';
+    const query = isNum
+      ? { $or: [{ reference_no: String(trimmed) }, { id: Number(trimmed) }] }
+      : { reference_no: String(trimmed) };
+
+    const sanitized = { ...updates, updated_at: new Date() };
+
+    if (isDatabaseConnected()) {
+      const record = await HairTestModel.findOneAndUpdate(
+        query,
+        { $set: sanitized },
+        { new: true }
+      ).lean();
+      if (!record) return null;
+      return toHairTest(record);
+    }
+
+    const test = store.hairTests.find((t) => String(t.reference_no) === String(trimmed) || (isNum && Number(t.id) === Number(trimmed)));
+    if (!test) return null;
+
+    Object.assign(test, sanitized, { updated_at: new Date().toISOString() });
+    return new HairTest(test);
+  }
 }
 

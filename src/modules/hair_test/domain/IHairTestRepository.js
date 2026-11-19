@@ -33,5 +33,9 @@ export class IHairTestRepository {
   async saveAiAssessment(referenceNo, aiAssessment) {
     throw new Error('Method not implemented');
   }
+
+  async update(referenceNo, updates) {
+    throw new Error('Method not implemented');
+  }
 }
 

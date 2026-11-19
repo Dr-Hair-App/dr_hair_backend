@@ -3,14 +3,17 @@ import { ipKeyGenerator, rateLimit } from 'express-rate-limit';
 import { sendError } from '../../../shared/utils/response.js';
 import { createHash } from 'node:crypto';
 import { createRateLimitStore } from '../../../shared/middlewares/rate-limit-store.js';
+import { config } from '../../../config/env.js';
 
 export const createAdminAuthRouter = ({ adminAuthController }) => {
   const router = Router();
+  const isDev = Boolean(config.isDev || process.env.DRHAIR_DEPLOYMENT_ENV === 'development');
   router.post(
     '/login',
     rateLimit({
       windowMs: 15 * 60 * 1000,
       limit: 20,
+      skip: () => isDev,
       standardHeaders: 'draft-8',
       legacyHeaders: false,
       store: createRateLimitStore('admin-login-ip'),
@@ -21,6 +24,7 @@ export const createAdminAuthRouter = ({ adminAuthController }) => {
     rateLimit({
       windowMs: 15 * 60 * 1000,
       limit: 10,
+      skip: () => isDev,
       standardHeaders: 'draft-8',
       legacyHeaders: false,
       store: createRateLimitStore('admin-login-id'),

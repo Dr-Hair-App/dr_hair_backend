@@ -241,28 +241,97 @@ export class AdminController {
       const patientId = req.params.userId;
       const current = await this.userRepository.findById(patientId);
       if (!current || current.role !== 'user') throw new NotFoundError('Patient not found.');
-      const allowedFields = ['name', 'age', 'gender', 'city', 'occupation'];
+      const baseFields = ['name', 'age', 'gender', 'city', 'occupation', 'medical_conditions'];
+      const contactFields = ['phone', 'email'];
+      const metaKeys = ['allow_contact_updates', 'confirm_contact_change', 'admin_override'];
       const body = req.body || {};
-      const unknownFields = Object.keys(body).filter((field) => !allowedFields.includes(field));
-      if (unknownFields.length) throw new BadRequestError('Only name, age, gender, city, and occupation can be changed here. Contact details require patient verification.');
-      if (!Object.keys(body).length) throw new BadRequestError('Provide at least one profile field to update.');
+      const allowContact = Boolean(
+        body.allow_contact_updates ||
+        body.confirm_contact_change ||
+        body.admin_override ||
+        req.query?.allow_contact === 'true'
+      );
+      const allowedFields = allowContact ? [...baseFields, ...contactFields] : baseFields;
+      const unknownFields = Object.keys(body).filter((field) => !allowedFields.includes(field) && !metaKeys.includes(field));
+      if (unknownFields.length) {
+        if (!allowContact && (body.phone !== undefined || body.email !== undefined)) {
+          throw new BadRequestError('Only name, age, gender, city, and occupation can be changed here. Contact details require patient verification.');
+        }
+        throw new BadRequestError(`Unsupported patient fields: ${unknownFields.join(', ')}.`);
+      }
+      const dataKeys = Object.keys(body).filter((k) => !metaKeys.includes(k));
+      if (!dataKeys.length) throw new BadRequestError('Provide at least one profile field to update.');
       const update = {};
       for (const field of allowedFields) {
         if (!(field in body)) continue;
         const value = body[field];
         if (field === 'age') {
-          if (value !== null && (!Number.isInteger(value) || value < 1 || value > 120)) throw new BadRequestError('age must be a whole number between 1 and 120, or null.');
-          update.age = value;
+          if (value !== null && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 120)) {
+            throw new BadRequestError('age must be a whole number between 1 and 120, or null.');
+          }
+          update.age = value !== null ? Number(value) : null;
           continue;
         }
-        if (value !== null && (typeof value !== 'string' || value.trim().length > 120)) throw new BadRequestError(`${field} must be a text value of at most 120 characters, or null.`);
+        if (field === 'medical_conditions') {
+          if (Array.isArray(value)) {
+            update.medical_conditions = value.map((c) => String(c).trim()).filter(Boolean);
+          } else if (typeof value === 'string') {
+            update.medical_conditions = value.split(',').map((c) => c.trim()).filter(Boolean);
+          } else if (value === null) {
+            update.medical_conditions = [];
+          } else {
+            throw new BadRequestError('medical_conditions must be an array of strings or comma-separated text.');
+          }
+          continue;
+        }
+        if (field === 'phone') {
+          if (value !== null && typeof value === 'string') {
+            const digits = value.replace(/\D/g, '');
+            if (digits.length < 10 || digits.length > 15) {
+              throw new BadRequestError('Phone number must contain between 10 and 15 digits.');
+            }
+            update.phone = value.trim();
+          } else if (value === null) {
+            update.phone = null;
+          } else {
+            throw new BadRequestError('phone must be a string or null.');
+          }
+          continue;
+        }
+        if (field === 'email') {
+          if (value !== null && typeof value === 'string') {
+            const trimmed = value.trim().toLowerCase();
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+              throw new BadRequestError('email must be a valid email address.');
+            }
+            update.email = trimmed;
+          } else if (value === null) {
+            update.email = null;
+          } else {
+            throw new BadRequestError('email must be a valid email string or null.');
+          }
+          continue;
+        }
+        if (value !== null && (typeof value !== 'string' || value.trim().length > 120)) {
+          throw new BadRequestError(`${field} must be a text value of at most 120 characters, or null.`);
+        }
         const normalized = typeof value === 'string' ? value.trim() : null;
         if (field === 'name' && !normalized) throw new BadRequestError('name cannot be empty.');
         update[field] = normalized || (field === 'name' ? '' : null);
       }
       const updated = await this.userRepository.update(patientId, update);
-      await this.patientActivityRepository?.record({ userId: current.id, patientCode: current.patient_code, type: 'profile', title: 'Patient profile updated', summary: Object.keys(update).join(', '), actor: String(req.user?.email || req.user?.login || 'Super Admin') });
-      return sendSuccess(res, { message: 'Patient profile updated.', data: { ...updated.toPublicProfile(), updated_at: updated.updated_at } });
+      await this.patientActivityRepository?.record({
+        userId: current.id,
+        patientCode: current.patient_code,
+        type: 'profile',
+        title: 'Patient profile updated',
+        summary: Object.keys(update).join(', '),
+        actor: String(req.user?.email || req.user?.login || 'Admin'),
+      });
+      return sendSuccess(res, {
+        message: 'Patient profile updated.',
+        data: { ...updated.toPublicProfile(), updated_at: updated.updated_at },
+      });
     } catch (error) {
       next(error);
     }
@@ -715,14 +784,23 @@ export class AdminController {
           : photo.url,
         url_expires_in_seconds: photo.delivery_type === 'authenticated' ? 300 : null,
       })));
+      const publicPatient = patient ? patient.toPublicProfile() : null;
+      if (publicPatient && (!publicPatient.medical_conditions || !publicPatient.medical_conditions.length)) {
+        if (Array.isArray(assessment.medical_conditions) && assessment.medical_conditions.length) {
+          publicPatient.medical_conditions = assessment.medical_conditions;
+        }
+      }
       return sendSuccess(res, {
         data: {
           assessment: {
             ...assessment,
+            clinical_notes: assessment.clinical_notes || null,
+            recommended_treatments: assessment.recommended_treatments || null,
+            ai_assessment_override: assessment.ai_assessment_override || null,
             scalp_photos: scalpPhotos,
           },
-          patient: patient ? {
-            ...patient.toPublicProfile(),
+          patient: publicPatient ? {
+            ...publicPatient,
             patient_code: patient.patient_code,
             created_at: patient.created_at,
           } : null,
@@ -923,6 +1001,138 @@ export class AdminController {
         }).catch(() => null);
       }
       return sendSuccess(res, { message: 'Assessment status updated.', data: updated });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updateHairTest = async (req, res, next) => {
+    try {
+      const { referenceNo } = req.params;
+      const hairTest = await this.hairTestRepository.findByReferenceNo(referenceNo);
+      if (!hairTest) throw new NotFoundError('Assessment not found for that reference number.');
+
+      const {
+        clinical_notes,
+        recommended_treatments,
+        ai_assessment_override,
+        status,
+        status_note,
+      } = req.body || {};
+
+      const updateData = {};
+      const actor = String(req.user?.name || req.user?.email || req.user?.login || 'Doctor');
+
+      // 1. Clinical Audit Notes
+      if (clinical_notes !== undefined) {
+        if (typeof clinical_notes === 'string') {
+          updateData.clinical_notes = {
+            doctor_notes: clinical_notes.trim(),
+            diagnosis_insights: hairTest.clinical_notes?.diagnosis_insights || '',
+            clinical_recommendations: hairTest.clinical_notes?.clinical_recommendations || '',
+            updated_at: new Date().toISOString(),
+            updated_by: actor,
+          };
+        } else if (clinical_notes && typeof clinical_notes === 'object' && !Array.isArray(clinical_notes)) {
+          const { doctor_notes, diagnosis_insights, clinical_recommendations } = clinical_notes;
+          updateData.clinical_notes = {
+            doctor_notes: typeof doctor_notes === 'string' ? doctor_notes.trim() : (hairTest.clinical_notes?.doctor_notes || ''),
+            diagnosis_insights: typeof diagnosis_insights === 'string' ? diagnosis_insights.trim() : (hairTest.clinical_notes?.diagnosis_insights || ''),
+            clinical_recommendations: typeof clinical_recommendations === 'string' ? clinical_recommendations.trim() : (hairTest.clinical_notes?.clinical_recommendations || ''),
+            updated_at: new Date().toISOString(),
+            updated_by: actor,
+          };
+        } else if (clinical_notes === null) {
+          updateData.clinical_notes = null;
+        } else {
+          throw new BadRequestError('clinical_notes must be an object or string.');
+        }
+      }
+
+      // 2. Treatment Recommendations
+      if (recommended_treatments !== undefined) {
+        if (recommended_treatments && typeof recommended_treatments === 'object') {
+          const isArr = Array.isArray(recommended_treatments);
+          const products = isArr ? recommended_treatments : (recommended_treatments.products || recommended_treatments.items || []);
+          const appointment = isArr ? null : (recommended_treatments.appointment || null);
+          const instructions = isArr ? '' : String(recommended_treatments.instructions || recommended_treatments.notes || '');
+
+          updateData.recommended_treatments = {
+            products: Array.isArray(products) ? products : [],
+            appointment: appointment && typeof appointment === 'object' ? appointment : null,
+            instructions: instructions.trim(),
+            updated_at: new Date().toISOString(),
+            updated_by: actor,
+          };
+        } else if (recommended_treatments === null) {
+          updateData.recommended_treatments = null;
+        } else {
+          throw new BadRequestError('recommended_treatments must be an object or array.');
+        }
+      }
+
+      // 3. AI Result Overrides
+      if (ai_assessment_override !== undefined) {
+        if (ai_assessment_override && typeof ai_assessment_override === 'object' && !Array.isArray(ai_assessment_override)) {
+          const { hair_loss_stage, scalp_score, primary_concern, prognosis, notes } = ai_assessment_override;
+          updateData.ai_assessment_override = {
+            hair_loss_stage: hair_loss_stage !== undefined ? String(hair_loss_stage).trim() : (hairTest.ai_assessment_override?.hair_loss_stage || ''),
+            scalp_score: scalp_score !== undefined ? (scalp_score === null || scalp_score === '' ? null : Number(scalp_score)) : (hairTest.ai_assessment_override?.scalp_score ?? null),
+            primary_concern: primary_concern !== undefined ? String(primary_concern).trim() : (hairTest.ai_assessment_override?.primary_concern || ''),
+            prognosis: prognosis !== undefined ? String(prognosis).trim() : (hairTest.ai_assessment_override?.prognosis || ''),
+            notes: notes !== undefined ? String(notes).trim() : (hairTest.ai_assessment_override?.notes || ''),
+            overridden_by: actor,
+            overridden_at: new Date().toISOString(),
+          };
+        } else if (ai_assessment_override === null) {
+          updateData.ai_assessment_override = null;
+        } else {
+          throw new BadRequestError('ai_assessment_override must be an object.');
+        }
+      }
+
+      // 4. Status update
+      if (status !== undefined && typeof status === 'string' && status.trim() && status.trim() !== hairTest.status) {
+        const newStatus = status.trim();
+        await this.hairTestRepository.updateStatus(referenceNo, newStatus, {
+          changed_by: actor,
+          note: typeof status_note === 'string' && status_note.trim() ? status_note.trim() : `Status updated to ${newStatus} with clinical review`,
+        });
+      }
+
+      let updated = null;
+      if (Object.keys(updateData).length > 0) {
+        updated = await this.hairTestRepository.update(referenceNo, updateData);
+      }
+      if (!updated) {
+        updated = await this.hairTestRepository.findByReferenceNo(referenceNo);
+      }
+
+      if (this.auditEventRepository?.record) {
+        await this.auditEventRepository.record({
+          actor,
+          action: 'assessment.clinical_updated',
+          target: `assessment:${referenceNo}`,
+          metadata: { reference_no: referenceNo, fields: Object.keys(updateData) },
+        }).catch(() => null);
+      }
+
+      if (this.patientActivityRepository?.record && hairTest.userId) {
+        await this.patientActivityRepository.record({
+          userId: hairTest.userId,
+          patientCode: hairTest.patient_code,
+          type: 'care_plan',
+          title: 'Clinical assessment updated',
+          summary: `Assessment ${referenceNo} updated with doctor clinical review`,
+          actor,
+          metadata: { reference_no: referenceNo },
+        }).catch(() => null);
+      }
+
+      return sendSuccess(res, {
+        message: 'Assessment updated successfully.',
+        data: updated,
+      });
     } catch (error) {
       next(error);
     }

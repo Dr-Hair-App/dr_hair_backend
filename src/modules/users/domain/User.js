@@ -18,6 +18,7 @@ export class User {
     gender = null,
     city = null,
     occupation = null,
+    medical_conditions = [],
     platform = 'app',
     profile_url = null,
     role = 'user',
@@ -42,6 +43,9 @@ export class User {
     this.gender = gender;
     this.city = city;
     this.occupation = occupation;
+    this.medical_conditions = Array.isArray(medical_conditions)
+      ? medical_conditions
+      : (medical_conditions ? [medical_conditions] : []);
     this.platform = platform;
     this.profile_url = profile_url;
     this.role = role;
@@ -65,6 +69,7 @@ export class User {
       gender: this.gender,
       city: this.city,
       occupation: this.occupation,
+      medical_conditions: this.medical_conditions,
       platform: this.platform,
       profile_url: this.profile_url,
       role: this.role,

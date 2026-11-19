@@ -336,7 +336,7 @@ export const createContainer = (overrides = {}) => {
   const createAdminAccountUseCase = new CreateAdminAccountUseCase({ adminAccountRepository });
   const listProductsUseCase = new ListProductsUseCase({ productRepository });
   const getProductByIdUseCase = new GetProductByIdUseCase({ productRepository });
-  const createProductUseCase = new CreateProductUseCase({ productRepository });
+  const createProductUseCase = new CreateProductUseCase({ productRepository, imageStorage });
   const updateProductUseCase = new UpdateProductUseCase({ productRepository, imageStorage, mediaReferenceRepository });
   const deleteProductUseCase = new DeleteProductUseCase({ productRepository, imageStorage, mediaReferenceRepository });
   const listCategoriesUseCase =
@@ -468,6 +468,7 @@ export const createContainer = (overrides = {}) => {
     updateProductUseCase,
     deleteProductUseCase,
     listCategoriesUseCase,
+    imageStorage,
   });
   const cartController = new CartController({
     getCartUseCase,

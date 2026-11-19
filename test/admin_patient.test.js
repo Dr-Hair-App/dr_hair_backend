@@ -199,4 +199,112 @@ describe('Admin patient record', () => {
     assert.equal(result.error?.statusCode, 400);
     assert.equal(saved, false);
   });
+
+  it('updates complete patient profile details including contact and medical conditions when confirmed', async () => {
+    let saved;
+    const controller = new AdminController({
+      userRepository: {
+        findById: async () => patient,
+        update: async (_id, fields) => {
+          saved = fields;
+          return { toPublicProfile: () => ({ ...patient.toPublicProfile(), ...fields }) };
+        },
+      },
+    });
+    const result = await invoke(controller.updatePatient, {
+      params: { userId: '42' },
+      body: {
+        name: 'Jane Doe',
+        phone: '9876543210',
+        email: 'jane@example.com',
+        gender: 'female',
+        age: 28,
+        medical_conditions: ['Thyroid', 'PCOS'],
+        city: 'Mumbai',
+        confirm_contact_change: true,
+      },
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.body.status, 'success');
+    assert.equal(saved.name, 'Jane Doe');
+    assert.equal(saved.phone, '9876543210');
+    assert.equal(saved.email, 'jane@example.com');
+    assert.equal(saved.gender, 'female');
+    assert.equal(saved.age, 28);
+    assert.deepEqual(saved.medical_conditions, ['Thyroid', 'PCOS']);
+    assert.equal(saved.city, 'Mumbai');
+  });
+
+  it('updates hair test with clinical audit notes, treatment recommendations, and AI result overrides', async () => {
+    const mockAssessment = {
+      id: 101,
+      reference_no: 'HT-2026-0101',
+      userId: 42,
+      status: 'submitted',
+      clinical_notes: null,
+      recommended_treatments: null,
+      ai_assessment_override: null,
+    };
+    let updatedFields = null;
+    let updatedStatus = null;
+    const controller = new AdminController({
+      hairTestRepository: {
+        findByReferenceNo: async (ref) => (ref === 'HT-2026-0101' ? mockAssessment : null),
+        updateStatus: async (ref, status) => {
+          updatedStatus = status;
+          mockAssessment.status = status;
+          return mockAssessment;
+        },
+        update: async (ref, data) => {
+          updatedFields = data;
+          Object.assign(mockAssessment, data);
+          return mockAssessment;
+        },
+      },
+    });
+
+    const result = await invoke(controller.updateHairTest, {
+      params: { referenceNo: 'HT-2026-0101' },
+      body: {
+        status: 'under_review',
+        clinical_notes: {
+          doctor_notes: 'Patient exhibits early telogen effluvium triggered by nutritional deficit.',
+          diagnosis_insights: 'Scalp micro-vascularity is intact; minoxidil response projected to be positive.',
+          clinical_recommendations: 'Prescribe biotin supplements and peptide scalp lotion.',
+        },
+        recommended_treatments: {
+          products: [
+            { id: 'prod-01', name: 'Dr. Hair Follicle Activator Serum', dosage: '1ml nightly' },
+            { id: 'prod-02', name: 'Dr. Hair Biotin Gummies', dosage: '1 gummy daily' },
+          ],
+          appointment: {
+            recommended: true,
+            type: 'video_teleconsultation',
+            notes: 'Follow-up trichology assessment in 30 days',
+          },
+        },
+        ai_assessment_override: {
+          hair_loss_stage: 'Stage 2',
+          scalp_score: 72,
+          primary_concern: 'Diffuse thinning at crown',
+          prognosis: 'Good reversibility with consistent care',
+          notes: 'Doctor adjusted scalp score based on dermatoscope findings',
+        },
+      },
+      user: { name: 'Dr. Jai Bansal', email: 'dr.jai@drhairindia.com' },
+    });
+
+    assert.equal(result.error, undefined);
+    assert.equal(result.body.status, 'success');
+    assert.equal(updatedStatus, 'under_review');
+    assert.ok(updatedFields.clinical_notes);
+    assert.equal(updatedFields.clinical_notes.doctor_notes, 'Patient exhibits early telogen effluvium triggered by nutritional deficit.');
+    assert.equal(updatedFields.clinical_notes.updated_by, 'Dr. Jai Bansal');
+    assert.ok(updatedFields.recommended_treatments);
+    assert.equal(updatedFields.recommended_treatments.products.length, 2);
+    assert.equal(updatedFields.recommended_treatments.appointment.recommended, true);
+    assert.ok(updatedFields.ai_assessment_override);
+    assert.equal(updatedFields.ai_assessment_override.hair_loss_stage, 'Stage 2');
+    assert.equal(updatedFields.ai_assessment_override.scalp_score, 72);
+  });
 });

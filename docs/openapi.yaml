@@ -1842,7 +1842,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
     post:
       tags: [Admin]
-      summary: Create a new clinical product in the catalog
+      summary: Create a product and upload its images in one multipart request
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -1851,9 +1851,27 @@ paths:
             schema:
               type: object
               required: [name, category, price]
+              description: Legacy metadata-only create request. New Admin clients should use multipart/form-data.
+          multipart/form-data:
+            schema:
+              type: object
+              required: [product]
+              properties:
+                product:
+                  type: string
+                  description: JSON product metadata. `media` is the desired ordered list; each new image is represented by a pending_upload placeholder with a unique zero-based upload_index.
+                files:
+                  type: array
+                  maxItems: 10
+                  description: New image files in the same order as their upload_index values.
+                  items: { type: string, format: binary }
+            encoding:
+              product:
+                contentType: application/json
       responses:
         '201': { $ref: '#/components/responses/Success' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /api/v1/admin/products/{id}:
@@ -1864,11 +1882,35 @@ paths:
         schema: { type: string }
     patch:
       tags: [Admin]
-      summary: Update product details, inventory stock, or pricing
+      summary: Update product details and replace, retain, or remove images
       security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Legacy metadata-only patch. Use multipart/form-data to update image files.
+          multipart/form-data:
+            schema:
+              type: object
+              required: [product]
+              properties:
+                product:
+                  type: string
+                  description: JSON product metadata with the final ordered media list. Use an empty media array to remove every image; retained media must already belong to this product.
+                files:
+                  type: array
+                  maxItems: 10
+                  description: New image files paired one-to-one with pending_upload media placeholders by upload_index.
+                  items: { type: string, format: binary }
+            encoding:
+              product:
+                contentType: application/json
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
@@ -4082,6 +4124,11 @@ components:
           schema: { $ref: '#/components/schemas/SuccessEnvelope' }
     BadRequest:
       description: Invalid request data
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    PayloadTooLarge:
+      description: The multipart request or an individual image exceeds the configured upload size limit
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }

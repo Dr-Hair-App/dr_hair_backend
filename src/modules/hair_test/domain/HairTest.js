@@ -53,6 +53,11 @@ export class HairTest {
     ai_assessment = null,
     ai_assessment_status = ai_assessment ? 'ready' : 'queued',
     ai_assessment_updated_at = null,
+    // Clinical Audit & Doctor Overrides
+    clinical_notes = null,
+    recommended_treatments = null,
+    ai_assessment_override = null,
+    updated_at = null,
   }) {
     this.id = id;
     this.userId = userId;
@@ -98,6 +103,10 @@ export class HairTest {
     this.ai_assessment = ai_assessment;
     this.ai_assessment_status = ai_assessment_status;
     this.ai_assessment_updated_at = ai_assessment_updated_at;
+    this.clinical_notes = clinical_notes;
+    this.recommended_treatments = recommended_treatments;
+    this.ai_assessment_override = ai_assessment_override;
+    this.updated_at = updated_at;
   }
 
   toSummary() {
@@ -112,6 +121,10 @@ export class HairTest {
       ai_assessment: this.ai_assessment,
       ai_assessment_status: this.ai_assessment_status,
       ai_assessment_updated_at: this.ai_assessment_updated_at,
+      clinical_notes: this.clinical_notes,
+      recommended_treatments: this.recommended_treatments,
+      ai_assessment_override: this.ai_assessment_override,
+      updated_at: this.updated_at,
     };
   }
 }

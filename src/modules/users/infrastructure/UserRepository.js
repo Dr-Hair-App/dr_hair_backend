@@ -248,9 +248,21 @@ export class UserRepository extends IUserRepository {
     const index = store.users.findIndex((u) => u.id === numericId);
     if (index === -1) return null;
 
+    const normalizedStore = { ...updateData };
+    if ('email' in normalizedStore) normalizedStore.email = cleanEmail(normalizedStore.email) || undefined;
+    if ('phone' in normalizedStore) {
+      normalizedStore.phoneNormalized = cleanPhone(normalizedStore.phone) || undefined;
+      normalizedStore.phone = normalizedStore.phone ? String(normalizedStore.phone).trim() : null;
+    }
+    if ('medical_conditions' in normalizedStore) {
+      normalizedStore.medical_conditions = Array.isArray(normalizedStore.medical_conditions)
+        ? normalizedStore.medical_conditions
+        : (normalizedStore.medical_conditions ? [normalizedStore.medical_conditions] : []);
+    }
+
     store.users[index] = {
       ...store.users[index],
-      ...updateData,
+      ...normalizedStore,
       updated_at: new Date().toISOString(),
     };
 

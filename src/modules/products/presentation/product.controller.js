@@ -1,4 +1,24 @@
 import { sendSuccess } from '../../../shared/utils/response.js';
+import { BadRequestError } from '../../../shared/errors/index.js';
+import { cleanupUploadedProductFiles } from '../application/product-media-input.js';
+
+function getProductPayload(req) {
+  if (!req.is('multipart/form-data')) return req.body || {};
+  const raw = req.body?.product;
+  if (typeof raw !== 'string' || !raw.trim()) {
+    throw new BadRequestError('Include product metadata in the multipart "product" field.');
+  }
+  let payload;
+  try { payload = JSON.parse(raw); } catch {
+    throw new BadRequestError('The multipart "product" field must contain valid JSON.');
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new BadRequestError('The multipart "product" field must contain a JSON object.');
+  }
+  return payload;
+}
+
+const uploadedImagesFrom = (req) => Array.isArray(req.files?.files) ? req.files.files : [];
 
 export class ProductController {
   constructor({
@@ -8,6 +28,7 @@ export class ProductController {
     updateProductUseCase,
     deleteProductUseCase,
     listCategoriesUseCase,
+    imageStorage,
   }) {
     this.listProductsUseCase = listProductsUseCase;
     this.getProductByIdUseCase = getProductByIdUseCase;
@@ -15,6 +36,7 @@ export class ProductController {
     this.updateProductUseCase = updateProductUseCase;
     this.deleteProductUseCase = deleteProductUseCase;
     this.listCategoriesUseCase = listCategoriesUseCase;
+    this.imageStorage = imageStorage;
   }
 
   listCategories = async (req, res, next) => {
@@ -106,27 +128,41 @@ export class ProductController {
   };
 
   create = async (req, res, next) => {
+    const files = uploadedImagesFrom(req);
+    const multipart = req.is('multipart/form-data');
+    let delegatedToUseCase = false;
     try {
-      const product = await this.createProductUseCase.execute(req.body);
+      const payload = getProductPayload(req);
+      delegatedToUseCase = true;
+      const product = await this.createProductUseCase.execute(payload, { uploadedFiles: files, replaceMedia: multipart });
       return sendSuccess(res, {
         message: 'Product created successfully.',
         data: product,
         statusCode: 201,
       });
     } catch (error) {
+      if (!delegatedToUseCase) await cleanupUploadedProductFiles(files, this.imageStorage);
       next(error);
     }
   };
 
   update = async (req, res, next) => {
+    const files = uploadedImagesFrom(req);
+    let delegatedToUseCase = false;
     try {
       const { id } = req.params;
-      const product = await this.updateProductUseCase.execute({ id, ...req.body });
+      const payload = getProductPayload(req);
+      delegatedToUseCase = true;
+      const product = await this.updateProductUseCase.execute(
+        { id, ...payload },
+        { uploadedFiles: files, replaceMedia: req.is('multipart/form-data') },
+      );
       return sendSuccess(res, {
         message: 'Product updated successfully.',
         data: product,
       });
     } catch (error) {
+      if (!delegatedToUseCase) await cleanupUploadedProductFiles(files, this.imageStorage);
       next(error);
     }
   };
