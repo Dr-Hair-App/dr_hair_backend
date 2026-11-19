@@ -130,6 +130,47 @@ test('clinical report R2 upload streams supported document and image formats pri
   }
 });
 
+test('clinical report R2 upload resolves patient codes before choosing the private owner path', async () => {
+  const stored = [];
+  setStorageBindings({ MEDIA_BUCKET: {
+    async put(key, value, options) { stored.push({ key, options }); },
+  } });
+  try {
+    const storage = new R2ClinicalReportUploadStorage();
+    const file = await new Promise((resolve, reject) => {
+      storage._handleFile({ params: { userId: 'DHP0001' } }, {
+        mimetype: 'image/webp',
+        originalname: 'product.webp',
+        stream: Readable.from([WEBP]),
+      }, (error, result) => error ? reject(error) : resolve(result));
+    });
+    assert.match(file.key, /^drhair\/private-reports\/user-1\//);
+    assert.equal(stored[0].options.customMetadata.ownerId, '1');
+  } finally {
+    clearStorageBindings();
+  }
+});
+
+test('clinical report R2 upload still rejects malformed patient identifiers', async () => {
+  let putCalled = false;
+  setStorageBindings({ MEDIA_BUCKET: {
+    async put() { putCalled = true; },
+  } });
+  try {
+    const storage = new R2ClinicalReportUploadStorage();
+    await assert.rejects(new Promise((resolve, reject) => {
+      storage._handleFile({ params: { userId: 'DHP-not-a-patient' } }, {
+        mimetype: 'image/webp',
+        originalname: 'product.webp',
+        stream: Readable.from([WEBP]),
+      }, (error, result) => error ? reject(error) : resolve(result));
+    }), /valid patient is required/);
+    assert.equal(putCalled, false);
+  } finally {
+    clearStorageBindings();
+  }
+});
+
 test('clinical report R2 upload rejects false MIME and malformed OOXML without storing an object', async () => {
   let putCalled = false;
   setStorageBindings({ MEDIA_BUCKET: {

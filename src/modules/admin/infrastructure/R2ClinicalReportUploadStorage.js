@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { BadRequestError, PayloadTooLargeError } from '../../../shared/errors/index.js';
 import { config } from '../../../config/env.js';
 import { getMediaBucket } from '../../../shared/storage/runtime.js';
+import { resolvePatientId } from '../../../shared/utils/patient-code.js';
 import { compressLosslessly, detectImageMime, hasSafeImageDimensions } from '../../media/infrastructure/R2MediaStorage.js';
 
 const reportFormats = new Map([
@@ -76,8 +77,8 @@ export function validateReportSignature(mimeType, prefix, textIsValid = true, ta
 }
 
 function safeOwnerId(value) {
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new BadRequestError('A valid patient is required for report upload.');
+  const parsed = resolvePatientId(value);
+  if (!parsed) throw new BadRequestError('A valid patient is required for report upload.');
   return String(parsed);
 }
 
