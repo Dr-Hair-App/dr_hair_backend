@@ -18,6 +18,8 @@ import {
 
 export const clinicalReportUploadPermissions = ['documents.upload', 'reports.approve', 'hair-tests.upload'];
 export const clinicalReportReadPermissions = ['documents.view', 'reports.approve'];
+export const clinicalReportListPermissions = [...clinicalReportReadPermissions, 'documents.share', 'reports.share'];
+export const clinicalReportMinePermissions = clinicalReportUploadPermissions;
 
 export const createAdminRouter = ({ adminController, notificationController, videoController, appointmentController, contentController, commerceController, supportController }) => {
   const router = Router();
@@ -77,8 +79,8 @@ export const createAdminRouter = ({ adminController, notificationController, vid
   router.delete('/users/:userId', requireSuperAdmin, adminController.deleteUser);
 
   // Clinical reports
-  router.get('/reports/mine', requireAnyPermission(...clinicalReportUploadPermissions), adminController.listMyReports);
-  router.get('/reports', requireAnyPermission(...clinicalReportReadPermissions), adminController.listAllReports);
+  router.get('/reports/mine', requireAnyPermission(...clinicalReportMinePermissions), adminController.listMyReports);
+  router.get('/reports', requireAnyPermission(...clinicalReportListPermissions), adminController.listAllReports);
   router.post('/users/:userId/reports', requireAnyPermission(...clinicalReportUploadPermissions), uploadClinicalReportFile, adminController.uploadPatientReport);
   router.delete('/users/:userId/reports/:reportId', requireAnyPermission('documents.upload', 'reports.approve'), adminController.deletePatientReport);
   router.post('/users/:userId/reports/:reportId/restore', requireAnyPermission('documents.upload', 'reports.approve'), adminController.restorePatientReport);

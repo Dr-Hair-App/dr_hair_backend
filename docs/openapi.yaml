@@ -2204,6 +2204,28 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/v1/admin/reports:
+    get:
+      tags: [Admin]
+      summary: List clinical report metadata
+      description: Requires documents.view, reports.approve, documents.share, or reports.share. This returns report metadata only; signed download URLs remain protected by the separate report read permission.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/admin/reports/mine:
+    get:
+      tags: [Admin]
+      summary: List reports uploaded by the authenticated admin
+      description: Requires documents.upload, reports.approve, or hair-tests.upload. Results are scoped to exact uploaded_by identity from the authenticated admin email/login and exclude deleted reports. This endpoint does not grant access to reports uploaded by other admins and does not authorize downloads.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /api/v1/admin/users/{userId}/reports:
     parameters:
       - name: userId
