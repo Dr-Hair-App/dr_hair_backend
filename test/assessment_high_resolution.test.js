@@ -119,3 +119,36 @@ test('assessment accepts a high-resolution original paired with a smaller optimi
   assert.equal(saved.scalp_photos[0].file_name, 'drhair/images/user-42/assessment/front.png');
   assert.equal(saved.scalp_photos[0].optimized_file_name, 'drhair/images/user-42/assessment/front.webp');
 });
+
+test('assessment accepts smartphone images even when dimensions are unverified in header', async () => {
+  const objects = new Map();
+  setStorageBindings({ MEDIA_BUCKET: {
+    async put(key, value, options) { objects.set(key, { value, options }); },
+  } });
+  try {
+    // Construct a JPEG header with SOI (ffd8ffe0) followed by a large dummy APP1 block (>70KB)
+    const largeExifJpeg = Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff, 0xe1]),
+      Buffer.from([0x01, 0x00]), // 256 bytes APP1
+      Buffer.alloc(254, 0xaa),
+      Buffer.from([0xff, 0xd9]), // EOI
+    ]);
+    const file = await new Promise((resolve, reject) => {
+      new R2MediaStorage()._handleFile({
+        route: { path: '/submit_form' },
+        originalUrl: '/api/v1/hair-tests/submit_form',
+        headers: { 'x-media-purpose': 'assessment' },
+        user: { id: 99, role: 'user' },
+      }, {
+        fieldname: 'photo_front',
+        mimetype: 'image/jpeg',
+        originalname: 'phone_camera.jpg',
+        stream: Readable.from([largeExifJpeg]),
+      }, (error, res) => error ? reject(error) : resolve(res));
+    });
+    assert.ok(file);
+    assert.equal(file.mimetype, 'image/jpeg');
+  } finally {
+    clearStorageBindings();
+  }
+});

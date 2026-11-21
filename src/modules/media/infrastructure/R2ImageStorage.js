@@ -34,7 +34,7 @@ export class R2ImageStorage {
     if (detectImageMime(buffer.subarray(0, 32)) !== normalizedContentType) {
       throw new Error('The image file contents do not match the selected file type.');
     }
-    if (!hasSafeImageDimensions(normalizedContentType, buffer.subarray(0, 65536))) {
+    if (!hasSafeImageDimensions(normalizedContentType, buffer.subarray(0, Math.min(buffer.length, 2 * 1024 * 1024)))) {
       throw new Error('The image dimensions could not be verified or exceed the 40 megapixel upload limit.');
     }
     let key = String(publicId || '').startsWith('drhair/') ? publicId : `drhair/images/${folder}/${publicId ? `${publicId}.${formatFor(normalizedContentType)}` : `${randomUUID()}.${formatFor(normalizedContentType)}`}`;

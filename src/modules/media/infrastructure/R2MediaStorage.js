@@ -49,14 +49,33 @@ export function readImageDimensions(mimeType, prefix) {
       if (marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7)) continue;
       if (offset + 2 > bytes.length) break;
       const segmentLength = bytes.readUInt16BE(offset);
-      if (segmentLength < 2 || offset + segmentLength > bytes.length) break;
+      if (segmentLength < 2) { offset += 1; continue; }
       if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
         if (segmentLength < 7) return false;
-        height = bytes.readUInt16BE(offset + 3);
-        width = bytes.readUInt16BE(offset + 5);
-        break;
+        if (offset + 7 <= bytes.length) {
+          height = bytes.readUInt16BE(offset + 3);
+          width = bytes.readUInt16BE(offset + 5);
+          break;
+        }
       }
       offset += segmentLength;
+    }
+    // Fallback scanner for SOF in JPEG with large EXIF or thumbnail segments
+    if (!Number.isInteger(width) || !Number.isInteger(height)) {
+      for (let i = 2; i + 8 <= bytes.length; i++) {
+        if (bytes[i] === 0xff && [0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(bytes[i + 1])) {
+          const segLen = bytes.readUInt16BE(i + 2);
+          if (segLen >= 8) {
+            const h = bytes.readUInt16BE(i + 5);
+            const w = bytes.readUInt16BE(i + 7);
+            if (w > 0 && h > 0 && w <= 20_000 && h <= 20_000) {
+              width = w;
+              height = h;
+              break;
+            }
+          }
+        }
+      }
     }
   } else if (mimeType === 'image/webp' && bytes.length >= 30 && bytes.subarray(0, 4).toString() === 'RIFF') {
     const chunkType = bytes.subarray(12, 16).toString();
@@ -244,8 +263,9 @@ export class R2MediaStorage {
           }
           if (bytes > maxBytes) throw new PayloadTooLargeError('Media file exceeds the configured upload size limit.');
           hash.update(chunk);
-          if (prefixBytes < 65536) {
-            const prefixChunk = Buffer.from(chunk.subarray(0, 65536 - prefixBytes));
+          if (prefixBytes < 2 * 1024 * 1024) {
+            const takeBytes = Math.min(chunk.length, 2 * 1024 * 1024 - prefixBytes);
+            const prefixChunk = Buffer.from(chunk.subarray(0, takeBytes));
             prefixChunks.push(prefixChunk);
             prefixBytes += prefixChunk.length;
           }
@@ -283,14 +303,26 @@ export class R2MediaStorage {
         if (file.stream.truncated) throw new PayloadTooLargeError('Media file exceeds the configured upload size limit.');
         const prefix = Buffer.concat(prefixChunks, prefixBytes);
         const detectedMime = detectImageMime(prefix);
-        if (!detectedMime || detectedMime !== normalizedImageMime(file.mimetype)) {
+        if (!detectedMime) {
           throw new BadRequestError('The image file contents do not match the selected file type.');
         }
+        const clientMime = normalizedImageMime(file.mimetype);
+        const isCompatibleMime = (det, cli) => {
+          if (!cli || cli === 'application/octet-stream' || cli === 'image/*') return true;
+          if (det === cli) return true;
+          if ((det === 'image/jpeg' || det === 'image/jpg') && (cli === 'image/jpeg' || cli === 'image/jpg')) return true;
+          if ((det === 'image/heic' || det === 'image/heif') && (cli === 'image/heic' || cli === 'image/heif')) return true;
+          return false;
+        };
+        if (!isCompatibleMime(detectedMime, clientMime)) {
+          throw new BadRequestError('The image file contents do not match the selected file type.');
+        }
+        contentType = detectedMime;
         const dimensions = readImageDimensions(detectedMime, prefix);
         const isHairAssessmentOriginal = req.route?.path === '/submit_form' &&
           /^photo_(front|top|left|right|back)$/.test(file.fieldname || '');
         const dimensionLimit = isHairAssessmentOriginal ? 100_000_000 : 40_000_000;
-        if (!dimensions || !isSafeImageSize(dimensions.width, dimensions.height, dimensionLimit)) {
+        if (dimensions && !isSafeImageSize(dimensions.width, dimensions.height, dimensionLimit)) {
           const megapixelLimit = dimensionLimit / 1_000_000;
           throw new BadRequestError(`The image dimensions could not be verified or exceed 20,000 pixels per side and ${megapixelLimit} megapixels. Please choose a standard image file.`);
         }
@@ -351,8 +383,8 @@ export class R2MediaStorage {
           originalBytes: bytes,
           compressed: storedCompressed,
           sha256: checksum,
-          width: dimensions.width,
-          height: dimensions.height,
+          width: dimensions?.width ?? null,
+          height: dimensions?.height ?? null,
           processingStatus,
         });
       } catch (error) {
