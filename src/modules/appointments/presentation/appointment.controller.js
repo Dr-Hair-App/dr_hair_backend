@@ -56,7 +56,17 @@ export class AppointmentController {
     this.auditEventRepository = auditEventRepository;
     this.paymentGatewayService = paymentGatewayService;
     this.featureFlagRepository = featureFlagRepository;
+    this._cachedBilling = null;
+    this._cachedBillingAt = 0;
+    this._cachedSchedule = null;
+    this._cachedScheduleAt = 0;
+    this._cachedAvailability = new Map();
+    this._cachedAvailabilityTtl = 20000;
   }
+
+  invalidateAvailabilityCache = () => {
+    this._cachedAvailability?.clear();
+  };
 
   notifyPatient = async ({ userId, appointmentId, title, body }) => {
     if (!this.notificationRepository || !userId) return;
@@ -82,6 +92,9 @@ export class AppointmentController {
   };
 
   getBillingConfig = async () => {
+    if (this._cachedBilling && (Date.now() - this._cachedBillingAt < 60000)) {
+      return this._cachedBilling;
+    }
     if (this.featureFlagRepository) {
       try {
         const flag = await this.featureFlagRepository.getFlag('clinic_appointment_billing');
@@ -91,18 +104,33 @@ export class AppointmentController {
             ? Number(rawFee)
             : null;
           const configured = fee !== null && Number.isFinite(fee) && fee >= 0;
-          return {
+          const pay_at_clinic_enabled = flag.metadata?.pay_at_clinic_enabled != null
+            ? Boolean(flag.metadata.pay_at_clinic_enabled)
+            : (flag.metadata?.payment_required != null ? !flag.metadata.payment_required : true);
+          const online_pay_enabled = flag.metadata?.online_pay_enabled != null
+            ? Boolean(flag.metadata.online_pay_enabled)
+            : (flag.metadata?.payment_required != null ? Boolean(flag.metadata.payment_required) : true);
+          const effectivePayAtClinic = pay_at_clinic_enabled || !online_pay_enabled;
+          const effectiveOnlinePay = online_pay_enabled;
+          const result = {
             configured,
-            payment_required: Boolean(flag.enabled),
+            pay_at_clinic_enabled: configured ? effectivePayAtClinic : true,
+            online_pay_enabled: configured ? effectiveOnlinePay : true,
+            payment_required: configured ? (effectiveOnlinePay && !effectivePayAtClinic) : false,
             consultation_fee: configured ? fee : null,
             currency: String(flag.metadata?.currency ?? 'INR'),
             first_appointment_free: Boolean(flag.metadata?.first_appointment_free ?? false),
           };
+          this._cachedBilling = result;
+          this._cachedBillingAt = Date.now();
+          return result;
         }
       } catch (_) {}
     }
     return {
       configured: false,
+      pay_at_clinic_enabled: true,
+      online_pay_enabled: true,
       payment_required: false,
       consultation_fee: null,
       currency: 'INR',
@@ -111,31 +139,47 @@ export class AppointmentController {
   };
 
   getScheduleConfig = async () => {
+    if (this._cachedSchedule && (Date.now() - this._cachedScheduleAt < 60000)) {
+      return this._cachedSchedule;
+    }
     const flag = await this.featureFlagRepository?.getFlag('clinic_appointment_schedule');
     const metadata = flag?.metadata;
-    const slotInterval = Number(metadata?.slot_interval_minutes);
-    const appointmentDuration = Number(metadata?.appointment_duration_minutes);
-    if (!flag || !Array.isArray(metadata?.sessions) || metadata.sessions.length === 0 ||
-        !Array.isArray(metadata.appointment_services) || metadata.appointment_services.length === 0 ||
-        !Number.isInteger(appointmentDuration) || appointmentDuration < 5 ||
-        !Number.isInteger(slotInterval) || slotInterval < 5 || slotInterval > 60 || 60 % slotInterval !== 0 ||
-        slotInterval < appointmentDuration) return null;
-    const timezone = String(metadata.timezone || 'Asia/Kolkata');
-    if (!isValidTimeZone(timezone)) return null;
-    return {
-      timezone,
-      booking_window_days: Number(metadata.booking_window_days) || 0,
-      weekly_closed_weekdays: Array.isArray(metadata.weekly_closed_weekdays) ? metadata.weekly_closed_weekdays : [7],
-      slot_interval_minutes: slotInterval,
-      sessions: metadata.sessions,
-      clinic_name: String(metadata.clinic_name || ''),
-      clinic_address: String(metadata.clinic_address || ''),
-      doctor_name: String(metadata.doctor_name || ''),
-      room: String(metadata.room || ''),
-      appointment_duration_minutes: appointmentDuration,
-      appointment_services: Array.isArray(metadata.appointment_services) ? metadata.appointment_services : [],
+    const slotInterval = Number(metadata?.slot_interval_minutes || 30);
+    const appointmentDuration = Number(metadata?.appointment_duration_minutes || 30);
+    const rawSessions = Array.isArray(metadata?.sessions) && metadata.sessions.length > 0
+      ? metadata.sessions
+      : [
+          { label: 'Morning OPD', opens_at: '09:00', closes_at: '13:00' },
+          { label: 'Evening OPD', opens_at: '16:00', closes_at: '20:00' },
+        ];
+    const rawServices = Array.isArray(metadata?.appointment_services) && metadata.appointment_services.length > 0
+      ? metadata.appointment_services
+      : [
+          'General hair & scalp consultation',
+          'PRP / GFC Hair Therapy Assessment',
+          'Trichoscopy Diagnostic Scan',
+          'Hair Loss & Scalp Density Check',
+        ];
+    const timezone = String(metadata?.timezone || 'Asia/Kolkata');
+    const validTz = isValidTimeZone(timezone) ? timezone : 'Asia/Kolkata';
+
+    const result = {
+      timezone: validTz,
+      booking_window_days: Number(metadata?.booking_window_days) || 30,
+      weekly_closed_weekdays: Array.isArray(metadata?.weekly_closed_weekdays) ? metadata.weekly_closed_weekdays : [7],
+      slot_interval_minutes: Number.isInteger(slotInterval) && slotInterval >= 5 && slotInterval <= 60 ? slotInterval : 30,
+      sessions: rawSessions,
+      clinic_name: String(metadata?.clinic_name || 'Dr. Hair & Cosmodent Clinic'),
+      clinic_address: String(metadata?.clinic_address || 'SCO 42, Sector 11, Panchkula, Haryana 134109'),
+      doctor_name: String(metadata?.doctor_name || 'Dr. Jai Bansal'),
+      room: String(metadata?.room || 'Consultation Room 1'),
+      appointment_duration_minutes: Number.isInteger(appointmentDuration) && appointmentDuration >= 5 ? appointmentDuration : 30,
+      appointment_services: rawServices,
       is_configured: true,
     };
+    this._cachedSchedule = result;
+    this._cachedScheduleAt = Date.now();
+    return result;
   };
 
   getScheduleConfigAdmin = async (_req, res, next) => {
@@ -221,6 +265,9 @@ export class AppointmentController {
         },
         updatedBy: actor,
       });
+      this._cachedSchedule = null;
+      this._cachedScheduleAt = 0;
+      this.invalidateAvailabilityCache();
       if (this.auditEventRepository?.record) await this.auditEventRepository.record({
         actor, action: 'appointment_schedule.updated', target: 'clinic_appointment_schedule',
         metadata: updated.metadata,
@@ -243,6 +290,8 @@ export class AppointmentController {
       const isFirstFree = billing.first_appointment_free && isFirstAppointment;
       const effectiveFee = isFirstFree ? 0 : billing.consultation_fee;
       const effectivePaymentRequired = isFirstFree ? false : billing.payment_required;
+      const effectivePayAtClinic = isFirstFree ? true : billing.pay_at_clinic_enabled;
+      const effectiveOnlinePay = isFirstFree ? false : billing.online_pay_enabled;
 
       return sendSuccess(res, {
         data: {
@@ -250,6 +299,8 @@ export class AppointmentController {
           is_first_appointment: isFirstAppointment,
           effective_fee: effectiveFee,
           effective_payment_required: effectivePaymentRequired,
+          pay_at_clinic_enabled: effectivePayAtClinic,
+          online_pay_enabled: effectiveOnlinePay,
         },
       });
     } catch (error) { next(error); }
@@ -265,29 +316,49 @@ export class AppointmentController {
   updateBillingConfigAdmin = async (req, res, next) => {
     try {
       if (!this.featureFlagRepository) throw new BadRequestError('Feature flag repository not configured.');
-      const payment_required = req.body?.payment_required != null ? Boolean(req.body.payment_required) : false;
+      const pay_at_clinic_enabled = req.body?.pay_at_clinic_enabled != null
+        ? Boolean(req.body.pay_at_clinic_enabled)
+        : (req.body?.payment_required != null ? !req.body.payment_required : true);
+      const online_pay_enabled = req.body?.online_pay_enabled != null
+        ? Boolean(req.body.online_pay_enabled)
+        : (req.body?.payment_required != null ? Boolean(req.body.payment_required) : true);
+
+      if (!pay_at_clinic_enabled && !online_pay_enabled) {
+        throw new BadRequestError('At least one payment option (Pay at Clinic or Online Payment) must be active.');
+      }
       const consultation_fee = Number(req.body?.consultation_fee);
       if (!Number.isFinite(consultation_fee) || consultation_fee < 0) {
         throw new BadRequestError('Set a valid non-negative consultation fee before saving appointment billing.');
       }
       const first_appointment_free = req.body?.first_appointment_free != null ? Boolean(req.body.first_appointment_free) : false;
       const actor = req.user?.email || req.user?.login || 'Super Admin';
+      const payment_required = online_pay_enabled && !pay_at_clinic_enabled;
 
       const updated = await this.featureFlagRepository.setFlag('clinic_appointment_billing', {
         title: 'Clinic Appointment Billing',
-        description: 'Control whether online payment via Razorpay is required for appointments and set consultation fee.',
+        description: 'Payment options (Pay at clinic & online payment) and consultation fee configuration.',
         group: 'Appointments',
         enabled: payment_required,
-        metadata: { consultation_fee, currency: 'INR', payment_required, first_appointment_free },
+        metadata: {
+          configured: true,
+          consultation_fee,
+          currency: 'INR',
+          pay_at_clinic_enabled,
+          online_pay_enabled,
+          payment_required,
+          first_appointment_free,
+        },
         updatedBy: actor,
       });
 
+      this._cachedBilling = null;
+      this._cachedBillingAt = 0;
       if (this.auditEventRepository?.record) {
         await this.auditEventRepository.record({
           actor,
           action: 'appointment_billing.updated',
           target: 'clinic_appointment_billing',
-          metadata: { payment_required, consultation_fee, first_appointment_free },
+          metadata: { pay_at_clinic_enabled, online_pay_enabled, payment_required, consultation_fee, first_appointment_free },
         }).catch(() => null);
       }
 
@@ -295,7 +366,9 @@ export class AppointmentController {
         message: 'Appointment billing settings updated.',
         data: {
           configured: true,
-          payment_required: Boolean(updated.enabled),
+          pay_at_clinic_enabled,
+          online_pay_enabled,
+          payment_required,
           consultation_fee: Number(updated.metadata?.consultation_fee ?? consultation_fee),
           currency: 'INR',
           first_appointment_free: Boolean(updated.metadata?.first_appointment_free ?? first_appointment_free),
@@ -326,8 +399,12 @@ export class AppointmentController {
         throw new BadRequestError('Your first consultation is free! Online payment is not required.');
       }
 
+      if (!billing.online_pay_enabled) {
+        throw new BadRequestError('Online payment is currently disabled. Please choose Pay at clinic.');
+      }
+
       const fee = billing.consultation_fee;
-      if (fee <= 0 || !billing.payment_required) {
+      if (fee <= 0) {
         throw new BadRequestError('Consultation fee is ₹0 or online payment is not required.');
       }
 
@@ -498,6 +575,8 @@ export class AppointmentController {
           transaction_id: razorpay_payment_id,
         },
       });
+
+      this.invalidateAvailabilityCache();
 
       if (this.notificationRepository) {
         try {
@@ -883,10 +962,13 @@ export class AppointmentController {
         isFirstAppointment = nonCancelled.length === 0;
       }
       const isFirstAppointmentFree = billing.first_appointment_free && isFirstAppointment;
-      const isOnlineRequired = billing.payment_required && !isFirstAppointmentFree;
+      const isOnlineRequired = billing.online_pay_enabled && !billing.pay_at_clinic_enabled && !isFirstAppointmentFree;
 
       if (isOnlineRequired) {
         throw new BadRequestError('Online payment is required to book an appointment. Please complete Razorpay checkout.');
+      }
+      if (!billing.pay_at_clinic_enabled && !isFirstAppointmentFree) {
+        throw new BadRequestError('Pay at clinic is disabled by admin. Please complete online payment to book your appointment.');
       }
 
       const consultation_fee = isFirstAppointmentFree ? 0 : billing.consultation_fee;
@@ -927,6 +1009,8 @@ export class AppointmentController {
         actor: 'Patient app',
         metadata: { appointment_id: appointment.id, opd_token: appointment.opd_token },
       });
+
+      this.invalidateAvailabilityCache();
 
       // Automated push & in-app notification trigger for appointment booking
       if (this.notificationRepository) {
@@ -999,6 +1083,7 @@ export class AppointmentController {
       const updated = await this.appointmentRepository.update(appointment.id, patch, event, req.user.id);
       await this.patientActivityRepository.record({ userId: req.user.id, patientCode: appointment.patient_code, type: 'appointment', title: action === 'cancel' ? 'Appointment cancelled' : 'Appointment rescheduled', summary: patch.starts_at || appointment.starts_at, actor: 'Patient app', metadata: { appointment_id: appointment.id } });
       const patient = await this.userRepository.findById(appointment.userId);
+      this.invalidateAvailabilityCache();
       return sendSuccess(res, { message: action === 'cancel' ? 'Appointment request cancelled.' : 'Reschedule request sent to the clinic.', data: this.serialize(updated, patient) });
     } catch (error) { next(error); }
   };
@@ -1092,6 +1177,7 @@ export class AppointmentController {
           metadata: { patient_id: patient.id, starts_at, reason, payment_status, consultation_fee },
         }).catch(() => null);
       }
+      this.invalidateAvailabilityCache();
       return sendSuccess(res, { message: 'Clinic appointment scheduled.', data: this.serialize(appointment, patient), statusCode: 201 });
     } catch (error) { next(error); }
   };
@@ -1395,6 +1481,7 @@ export class AppointmentController {
       }
 
       const patient = await this.userRepository.findById(appointment.userId);
+      this.invalidateAvailabilityCache();
       return sendSuccess(res, { message: 'Appointment updated.', data: this.serialize(updated, patient) });
     } catch (error) { next(error); }
   };
@@ -1416,6 +1503,12 @@ export class AppointmentController {
       const rangeDays = Math.round((toUtc - fromUtc) / (24 * 60 * 60 * 1000));
       if (rangeDays > 40) throw new BadRequestError('Availability range cannot exceed 41 calendar days.');
 
+      const cacheKey = `${from}_${to}`;
+      const cached = this._cachedAvailability.get(cacheKey);
+      if (cached && (Date.now() - cached.timestamp < this._cachedAvailabilityTtl)) {
+        return sendSuccess(res, { data: cached.data });
+      }
+
       const [closedDates, schedule] = await Promise.all([
         this.appointmentRepository.listClosedDates(),
         this.getScheduleConfig(),
@@ -1427,19 +1520,19 @@ export class AppointmentController {
         .filter((item) => item.date >= from && item.date <= to)
         .map(({ date }) => ({ date }));
       const bookedSlots = bookedAppointments.map((item) => toClinicSlotKey(item.starts_at, schedule.timezone));
-      return sendSuccess(res, {
-        data: {
-          ...(schedule || {
-            timezone: 'Asia/Kolkata', booking_window_days: null, weekly_closed_weekdays: [7],
-            slot_interval_minutes: null, sessions: [], clinic_name: '', clinic_address: '', doctor_name: '', room: '',
-            appointment_duration_minutes: null, appointment_services: [], is_configured: false,
-          }),
-          from,
-          to,
-          closed_dates: closedDateItems,
-          booked_slots: bookedSlots,
-        },
-      });
+      const responseData = {
+        ...(schedule || {
+          timezone: 'Asia/Kolkata', booking_window_days: null, weekly_closed_weekdays: [7],
+          slot_interval_minutes: null, sessions: [], clinic_name: '', clinic_address: '', doctor_name: '', room: '',
+          appointment_duration_minutes: null, appointment_services: [], is_configured: false,
+        }),
+        from,
+        to,
+        closed_dates: closedDateItems,
+        booked_slots: bookedSlots,
+      };
+      this._cachedAvailability.set(cacheKey, { timestamp: Date.now(), data: responseData });
+      return sendSuccess(res, { data: responseData });
     } catch (error) { next(error); }
   };
 
@@ -1456,6 +1549,7 @@ export class AppointmentController {
       }
       const actor = String(req.user?.email || req.user?.login || 'Clinic admin');
       const record = await this.appointmentRepository.addClosedDate({ date, reason: String(req.body?.reason || '').trim().slice(0, 200), created_by: actor });
+      this.invalidateAvailabilityCache();
       if (this.auditEventRepository?.record) {
         await this.auditEventRepository.record({
           actor,
@@ -1473,6 +1567,7 @@ export class AppointmentController {
       if (!validateDateKey(req.params.date)) throw new BadRequestError('date must use YYYY-MM-DD format.');
       const removed = await this.appointmentRepository.removeClosedDate(req.params.date);
       if (!removed) throw new NotFoundError('Closed date not found.');
+      this.invalidateAvailabilityCache();
       const actor = String(req.user?.email || req.user?.login || 'Clinic admin');
       if (this.auditEventRepository?.record) {
         await this.auditEventRepository.record({

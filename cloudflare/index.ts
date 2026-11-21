@@ -5,7 +5,7 @@ import { runWithDatabaseBinding, setWorkerBindings } from "../src/shared/databas
 import { setStorageBindings } from "../src/shared/storage/runtime.js";
 import { processExpiredData } from "../src/shared/database/maintenance.js";
 
-export { DailyUsageQuota } from "./DailyUsageQuota";
+export { DailyUsageQuota } from "./DailyUsageQuota.ts";
 
 const configureBindings = (runtimeEnv: typeof env): void => {
   // Populate process.env with runtimeEnv secrets and variables so express modules can access them
@@ -21,7 +21,11 @@ const configureBindings = (runtimeEnv: typeof env): void => {
   if (runtimeEnv.DB && typeof runtimeEnv.DB.prepare === "function") {
     setWorkerBindings(runtimeEnv);
   }
-  if (runtimeEnv.MEDIA_BUCKET && typeof runtimeEnv.MEDIA_BUCKET.put === "function") {
+  if (
+    (runtimeEnv.MEDIA_BUCKET && typeof runtimeEnv.MEDIA_BUCKET.put === "function") ||
+    (runtimeEnv.ADMIN_MEDIA_BUCKET && typeof runtimeEnv.ADMIN_MEDIA_BUCKET.put === "function") ||
+    (runtimeEnv.USER_MEDIA_BUCKET && typeof runtimeEnv.USER_MEDIA_BUCKET.put === "function")
+  ) {
     setStorageBindings(runtimeEnv);
   }
 };
@@ -33,16 +37,58 @@ const { app, container } = createApp();
 app.listen(3000);
 const expressHandler = httpServerHandler({ port: 3000 });
 
-const publicReadPath = (request: Request): boolean => {
-  if (request.method !== "GET") return false;
-  if (request.headers.has("authorization") || request.headers.has("cookie")) return false;
-  const path = new URL(request.url).pathname;
-  return [
-    "/api/v1/categories",
-    "/api/v1/products",
-    "/api/v1/videos",
-    "/api/v1/content",
-  ].some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+const PUBLIC_PREFIXES = [
+  "/api/v1/categories",
+  "/categories",
+  "/api/v1/products",
+  "/products",
+  "/api/v1/videos",
+  "/api/v1/content",
+  "/policies",
+  "/faqs",
+  "/stories",
+  "/tips",
+  "/services",
+  "/api/v1/services",
+  "/api/v1/reviews",
+  "/Review/review_get",
+  "/review/review_get",
+];
+
+const PUBLIC_EXACT_PATHS = [
+  "/api/v1/app/config",
+  "/api/v1/app/version",
+  "/api/v1/appointments/closed-dates",
+  "/api/v1/appointments/availability",
+  "/api/v1/commerce/coupons",
+];
+
+export const publicReadPath = (request: Request): boolean => {
+  if (request.method !== "GET" && request.method !== "HEAD") return false;
+  const url = new URL(request.url);
+  const path = url.pathname;
+
+  if (PUBLIC_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) {
+    return true;
+  }
+  if (PUBLIC_EXACT_PATHS.includes(path)) {
+    return true;
+  }
+  if (path.startsWith("/api/v1/media/assets/") && !url.searchParams.has("sig")) {
+    return true;
+  }
+  return false;
+};
+
+export const createCacheKey = (request: Request): Request => {
+  const url = new URL(request.url);
+  const headers = new Headers(request.headers);
+  headers.delete("authorization");
+  headers.delete("cookie");
+  return new Request(url.toString(), {
+    method: "GET",
+    headers,
+  });
 };
 
 export default {
@@ -65,14 +111,30 @@ export default {
     if (!isPublicRead) return respond();
 
     return (async () => {
-      const cache = caches.default;
-      const cached = await cache.match(request);
+      const cache = typeof caches !== "undefined" ? caches.default : null;
+      if (!cache) return respond();
+
+      const cacheKey = createCacheKey(request);
+      const cached = await cache.match(cacheKey);
       if (cached) {
-        const headers = new Headers(cached.headers);
-        const cacheControl = headers.get("Cache-Control");
-        if (cacheControl) {
-          headers.set("Cache-Control", cacheControl.replace(/max-age=\d+/, "max-age=0"));
+        const clientEtag = request.headers.get("if-none-match");
+        const cachedEtag = cached.headers.get("etag");
+        if (clientEtag && cachedEtag) {
+          const targetEtag = cachedEtag.replace(/^W\//, "").trim();
+          const isMatch = clientEtag.split(",").some((token) => {
+            const clean = token.trim();
+            return clean === "*" || clean === cachedEtag || clean.replace(/^W\//, "") === targetEtag;
+          });
+          if (isMatch) {
+            return new Response(null, {
+              status: 304,
+              statusText: "Not Modified",
+              headers: new Headers(cached.headers),
+            });
+          }
         }
+
+        const headers = new Headers(cached.headers);
         return new Response(cached.body, {
           status: cached.status,
           statusText: cached.statusText,
@@ -87,7 +149,7 @@ export default {
         cacheControl.includes("public") &&
         !response.headers.has("Set-Cookie")
       ) {
-        ctx.waitUntil(cache.put(request, response.clone()));
+        ctx.waitUntil(cache.put(cacheKey, response.clone()));
       }
       return response;
     })();

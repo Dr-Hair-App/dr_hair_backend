@@ -1,2 +1,4 @@
+const SANDBOX_ENVIRONMENTS = new Set(['staging', 'testing']);
+
 export const isSandboxCommerceDeployment = (env = process.env) =>
-  env.DRHAIR_DEPLOYMENT_ENV?.trim().toLowerCase() === 'staging';
+  SANDBOX_ENVIRONMENTS.has(env.DRHAIR_DEPLOYMENT_ENV?.trim().toLowerCase());

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import { setStorageBindings, clearStorageBindings } from '../src/shared/storage/runtime.js';
-import { hasSafeImageDimensions, R2MediaStorage, verifyPrivateMediaSignature } from '../src/modules/media/infrastructure/R2MediaStorage.js';
+import { hasSafeImageDimensions, optimizeImageForStorage, R2MediaStorage, verifyPrivateMediaSignature } from '../src/modules/media/infrastructure/R2MediaStorage.js';
 import { R2ImageStorage as ImageStorage } from '../src/modules/media/infrastructure/R2ImageStorage.js';
 
 const pngHeader = (width = 1, height = 1) => {
@@ -117,6 +117,49 @@ test('R2 media upload validates image bytes and stores the original without gzip
   }
 });
 
+test('R2 media upload stores the smaller lossless WebP returned by the shared backend optimizer', async () => {
+  let stored;
+  const webp = Buffer.alloc(16);
+  webp.write('RIFF', 0);
+  webp.write('WEBP', 8);
+  setStorageBindings({
+    MEDIA_BUCKET: {
+      async put(key, value, options) { stored = { key, value: Buffer.from(value), options }; },
+    },
+    IMAGES: {
+      input(bytes) {
+        assert.ok(Buffer.isBuffer(bytes));
+        return { output: async (options) => {
+          assert.deepEqual(options, { format: 'image/webp', quality: 100 });
+          return { response: async () => new Response(webp) };
+        } };
+      },
+    },
+  });
+
+  try {
+    const original = Buffer.concat([pngHeader(), Buffer.from('image-pixels-'.repeat(20))]);
+    const result = await new Promise((resolve, reject) => {
+      new R2MediaStorage()._handleFile({
+        headers: { 'x-media-purpose': 'content' },
+        user: { id: 7, role: 'admin' },
+      }, { mimetype: 'image/png', stream: Readable.from([original]) },
+      (error, file) => error ? reject(error) : resolve(file));
+    });
+
+    assert.equal(result.compressed, true);
+    assert.equal(result.processingStatus, 'lossless_webp');
+    assert.equal(result.originalBytes, original.length);
+    assert.equal(result.bytes, webp.length);
+    assert.equal(result.mimetype, 'image/webp');
+    assert.match(stored.key, /\.webp$/);
+    assert.deepEqual(stored.value, webp);
+    assert.equal(stored.options.customMetadata.originalBytes, String(original.length));
+  } finally {
+    clearStorageBindings();
+  }
+});
+
 test('R2 media rejects a mismatched MIME signature before making an object', async () => {
   let putCalled = false;
   setStorageBindings({ MEDIA_BUCKET: {
@@ -145,6 +188,43 @@ test('bounded image dimension parsing rejects truncated and decompression-bomb h
   assert.equal(hasSafeImageDimensions('image/png', pngHeader(20_000, 20_000)), false);
   assert.equal(hasSafeImageDimensions('image/png', pngHeader(20_001, 1)), false);
   assert.equal(hasSafeImageDimensions('image/png', pngHeader().subarray(0, 20)), false);
+});
+
+test('shared backend image optimizer uses lossless WebP only when smaller and otherwise preserves source bytes', async () => {
+  const source = Buffer.from('original image bytes');
+  const webp = Buffer.alloc(16);
+  webp.write('RIFF', 0);
+  webp.write('WEBP', 8);
+  const calls = [];
+  const binding = {
+    input(bytes) {
+      calls.push(Buffer.from(bytes));
+      return {
+        output(options) {
+          assert.deepEqual(options, { format: 'image/webp', quality: 100 });
+          return Promise.resolve({ response: async () => new Response(webp) });
+        },
+      };
+    },
+  };
+
+  const result = await optimizeImageForStorage(source, 'image/jpeg', binding);
+  assert.equal(result.compressed, true);
+  assert.equal(result.contentType, 'image/webp');
+  assert.equal(result.format, 'webp');
+  assert.equal(result.originalBytes, source.length);
+  assert.deepEqual(result.buffer, webp);
+  assert.equal(calls.length, 1);
+
+  const unavailable = await optimizeImageForStorage(source, 'image/jpeg', null);
+  assert.equal(unavailable.compressed, false);
+  assert.deepEqual(unavailable.buffer, source);
+
+  const bigger = await optimizeImageForStorage(source, 'image/jpeg', {
+    input() { return { output: async () => ({ response: async () => new Response(Buffer.alloc(128, 1)) }) }; },
+  });
+  assert.equal(bigger.compressed, false);
+  assert.deepEqual(bigger.buffer, source);
 });
 
 test('R2 media streams 5 MiB parts and enforces the 25 MiB file boundary', async () => {

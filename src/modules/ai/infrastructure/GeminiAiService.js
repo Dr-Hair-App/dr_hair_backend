@@ -302,8 +302,7 @@ export class GeminiAiService {
         parsedData.scalp_health_score <= 100 &&
         String(parsedData.stage_classification || '').trim().length > 0 &&
         String(parsedData.summary || '').trim().length > 0 &&
-        parsedData.recommended_regimen &&
-        Array.isArray(parsedData.recommended_regimen.daily_steps);
+        typeof parsedData.summary === 'string';
       if (!hasRequiredAssessment) {
         return {
           ...this.generateFallbackAssessment(patientData),
@@ -338,26 +337,6 @@ export class GeminiAiService {
         };
       })();
       const isClinicianPriority = nextStepRecommendation.type === 'doctor_appointment';
-      const parsedSteps = Array.isArray(parsedData.recommended_regimen?.daily_steps)
-        ? parsedData.recommended_regimen.daily_steps.filter((step) => {
-            const instruction = String(step?.action || step?.instruction || step?.step || '');
-            return !/\b(tablet|supplement|medicine|medication|prescription|dosage|mg|ml|minoxidil|capsule)\b/i.test(instruction);
-          })
-        : [];
-      const recommendedRegimen = isClinicianPriority
-        ? {
-            summary: parsedData.recommended_regimen?.summary || 'Follow in-clinic doctor advice.',
-            daily_steps: parsedSteps,
-            target_products: [],
-          }
-        : {
-            ...parsedData.recommended_regimen,
-            daily_steps: parsedSteps,
-            target_products: Array.isArray(parsedData.recommended_regimen?.target_products)
-              ? parsedData.recommended_regimen.target_products
-              : [],
-          };
-
       return {
         ai_status: isClinicianPriority ? 'clinician_review_required' : 'available',
         scalp_health_score: Number(parsedData.scalp_health_score) || (isClinicianPriority ? 55 : 70),
@@ -366,9 +345,10 @@ export class GeminiAiService {
           ? 'Clinical AI evaluation indicates advanced thinning or sensitive symptoms. In-person clinician consultation is strongly advised.'
           : 'Clinical AI evaluation completed based on reported symptoms.')),
         root_causes: Array.isArray(parsedData.root_causes) ? parsedData.root_causes : [],
-        diet_plan: parsedData.diet_plan || {},
+        // Plans are generated only after the patient taps their explicit CTA.
+        diet_plan: {},
         lifestyle_guidance: parsedData.lifestyle_guidance || {},
-        recommended_regimen: recommendedRegimen,
+        recommended_regimen: { summary: '', daily_steps: [], target_products: [] },
         next_step_recommendation: nextStepRecommendation,
         generated_by: `Dr. Hair Assistant (${activeModel})`,
         generated_at: new Date().toISOString(),
@@ -440,33 +420,31 @@ export class GeminiAiService {
   }
 
   async generatePersonalizedRoutine(patientData = {}) {
-    const defaultSteps = [
-      { title: 'Morning Gentle Scalp Cleansing', subtitle: 'Wash with lukewarm water and a pH-balanced gentle cleanser', category: 'Cleansing', time_of_day: 'Morning' },
-      { title: 'Follicular Stimulation Massage', subtitle: '4 minutes gentle fingertip circular motion to enhance microcirculation', category: 'Massage', time_of_day: 'Morning' },
-      { title: 'Mid-Day Hydration & Scalp Protection', subtitle: 'Drink 500ml water and protect hair from harsh direct sun or pollution', category: 'Lifestyle', time_of_day: 'Afternoon' },
-      { title: 'Evening Botanical Regrowth Tonic', subtitle: 'Apply nourishing botanical/peptide scalp serum on thinning regions', category: 'Nourishment', time_of_day: 'Evening' },
-      { title: 'Pre-Sleep Follicle Rest & Care', subtitle: 'Avoid tight hairstyles, use smooth pillowcase, and aim for 7-8h restful sleep', category: 'Sleep', time_of_day: 'Night' },
-    ];
-
-    if (!this.apiKey) {
-      return {
-        summary: 'Clinical routine designed to support scalp barrier health and nutrient flow.',
-        steps: defaultSteps,
-        generated_by: 'Dr. Hair Assistant',
-        generated_at: new Date().toISOString(),
-      };
-    }
+    if (!this.apiKey) throw new Error('AI routine generation is unavailable. Please try again later.');
 
     try {
       const prompt = `You are Dr. Hair Assistant. Create a practical daily hair care routine tailored to this patient's hair loss profile:
 ${JSON.stringify({
   age: patientData.age,
   gender: patientData.gender,
-  hair_fall_pattern: patientData.hair_fall_pattern,
+  selected_concern: patientData.main_concern || patientData.primary_concern || patientData.hair_fall_pattern,
+  reported_stage: patientData.hair_loss_stage,
+  duration: patientData.duration || patientData.hair_fall_start,
+  hair_fall_increasing: patientData.hair_fall_increasing,
   daily_hair_fall: patientData.daily_hair_fall,
   scalp_condition: patientData.scalp_condition,
+  scalp_symptoms: patientData.scalp_symptoms,
   stress_level: patientData.stress_level,
   dandruff: patientData.dandruff,
+  gut_health: patientData.gut_health,
+  family_history: patientData.family_history,
+  medical_conditions: patientData.medical_conditions,
+  allergy_status: patientData.allergy_status,
+  allergy_details: patientData.allergy_details,
+  current_medications: patientData.current_medications,
+  assessment_summary: patientData.ai_assessment?.summary,
+  possible_contributors: patientData.ai_assessment?.root_causes,
+  clinician_review_recommendation: patientData.ai_assessment?.next_step_recommendation,
 })}
 Return ONLY valid JSON with this format:
 {
@@ -475,7 +453,7 @@ Return ONLY valid JSON with this format:
     { "title": "<Clear action>", "subtitle": "<Specific instruction>", "category": "Cleansing|Massage|Nourishment|Lifestyle|Sleep", "time_of_day": "Morning|Afternoon|Evening|Night" }
   ]
 }
-Include 4 to 5 daily steps across morning, afternoon, evening, and night. Do not prescribe prescription drugs or minoxidil.`;
+Include 4 to 5 daily steps across morning, afternoon, evening, and night. Do not prescribe medicines, supplements, doses, or products. Do not invent missing answers. If the assessment says clinician review is required, return an empty steps array and explain that clinician review comes first.`;
 
       const response = await this.fetchFn(
         `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`,
@@ -506,13 +484,8 @@ Include 4 to 5 daily steps across morning, afternoon, evening, and night. Do not
         generated_by: 'Dr. Hair Assistant',
         generated_at: new Date().toISOString(),
       };
-    } catch {
-      return {
-        summary: 'Clinical routine designed to support scalp barrier health and nutrient flow.',
-        steps: defaultSteps,
-        generated_by: 'Dr. Hair Assistant',
-        generated_at: new Date().toISOString(),
-      };
+    } catch (error) {
+      throw new Error('AI routine generation failed. Please try again later.', { cause: error });
     }
   }
 
@@ -523,21 +496,22 @@ Include 4 to 5 daily steps across morning, afternoon, evening, and night. Do not
     const age = patientData.age || 'Not specified';
     const gender = patientData.gender || 'Not specified';
     const duration = patientData.duration || patientData.hair_fall_start || 'Not specified';
-    const pattern = patientData.hair_fall_pattern || 'Diffuse thinning';
-    const dailyFall = patientData.daily_hair_fall || '50-100 hairs';
-    const dandruff = patientData.dandruff || 'None';
-    const scalpCondition = patientData.scalp_condition || 'Normal';
-    const symptoms = Array.isArray(patientData.scalp_symptoms) ? patientData.scalp_symptoms.join(', ') : (patientData.scalp_symptoms || 'None');
-    const stress = patientData.stress_level || 'Moderate';
-    const gut = patientData.gut_health || 'Good';
-    const sleep = patientData.sleep_quality || 'Fair';
-    const diet = patientData.diet_type || 'Vegetarian';
-    const protein = patientData.protein_intake || 'Moderate';
-    const family = patientData.family_history || 'No reported family history';
-    const medical = Array.isArray(patientData.medical_conditions) ? patientData.medical_conditions.join(', ') : (patientData.medical_conditions || 'None');
-    const allergy = patientData.allergy_details || patientData.allergy_status || 'No known allergies';
-    const meds = patientData.current_medications || patientData.current_medications_status || 'None';
-    const increasing = patientData.hair_fall_increasing || 'Not specified';
+    const unknown = 'Unknown / not provided';
+    const pattern = patientData.hair_fall_pattern || patientData.primary_concern || patientData.main_concern || unknown;
+    const dailyFall = patientData.daily_hair_fall || unknown;
+    const dandruff = patientData.dandruff || unknown;
+    const scalpCondition = patientData.scalp_condition || unknown;
+    const symptoms = Array.isArray(patientData.scalp_symptoms) ? patientData.scalp_symptoms.join(', ') : (patientData.scalp_symptoms || unknown);
+    const stress = patientData.stress_level || unknown;
+    const gut = patientData.gut_health || unknown;
+    const sleep = patientData.sleep_quality || unknown;
+    const diet = patientData.diet_type || unknown;
+    const protein = patientData.protein_intake || unknown;
+    const family = patientData.family_history || unknown;
+    const medical = Array.isArray(patientData.medical_conditions) ? patientData.medical_conditions.join(', ') : (patientData.medical_conditions || unknown);
+    const allergy = patientData.allergy_details || patientData.allergy_status || unknown;
+    const meds = patientData.current_medications || patientData.current_medications_status || unknown;
+    const increasing = patientData.hair_fall_increasing || unknown;
 
     return `
 You are "Dr. Hair Assistant", the Clinical AI Trichologist for Dr. Hair Clinic (guided by Dr. Jai Bansal's hair recovery protocols).
@@ -547,6 +521,7 @@ PATIENT PROFILE & ASSESSMENT RESPONSES:
 - Age: ${age}
 - Gender: ${gender}
 - Hair Loss Duration: ${duration}
+- Patient's selected concern / reported stage: ${patientData.primary_concern || patientData.main_concern || patientData.stage || unknown}
 - Hair Fall Pattern: ${pattern}
 - Hair Fall Increasing: ${increasing}
 - Estimated Daily Hair Fall: ${dailyFall}
@@ -586,48 +561,14 @@ Return a single strictly valid JSON object matching this schema exactly:
       "explanation": "<Specific reason explaining how this factor impacts this specific patient's follicles>"
     }
   ],
-  "diet_plan": {
-    "summary": "<1-2 sentence dietary strategy tailored to their diet type and protein level>",
-    "foods_to_eat": ["<Item 1 with hair benefit>", "<Item 2>", "<Item 3>", "<Item 4>"],
-    "foods_to_avoid": ["<Item 1 with reason>", "<Item 2>", "<Item 3>"],
-    "hydration_target": "<Daily water intake recommendation in Litres>",
-    "key_nutrients": ["<Nutrient 1 (e.g. Biotin)>", "<Nutrient 2 (e.g. Zinc)>", "<Nutrient 3>", "<Nutrient 4>"]
-  },
+  "diet_plan": {},
   "lifestyle_guidance": {
     "summary": "<1-2 sentence lifestyle and routine optimization strategy>",
     "scalp_care_tips": ["<Tip 1>", "<Tip 2>", "<Tip 3>"],
     "oiling_rules": ["<Rule 1 regarding oiling frequency & dandruff management>", "<Rule 2>"],
     "sleep_and_stress": ["<Practical action 1>", "<Practical action 2>"]
   },
-  "recommended_regimen": {
-    "summary": "<Practical daily care plan based on the reported answers; do not describe it as a complete medical treatment>",
-    "daily_steps": [
-      {
-        "step": "Morning",
-        "instruction": "<Simple non-prescription self-care habit; do not prescribe medicine, supplements, or product dosage>"
-      },
-      {
-        "step": "Afternoon",
-        "instruction": "<Simple nutrition or wellbeing habit; do not prescribe medicine, supplements, or product dosage>"
-      },
-      {
-        "step": "Night",
-        "instruction": "<Simple non-prescription self-care habit; do not prescribe medicine, supplements, or product dosage>"
-      }
-    ],
-    "target_products": [
-      {
-        "name": "<Use the same broad label as category; do not invent a brand or catalog item>",
-        "category": "<Choose one: Hair Care, Serums, or Supplements>",
-        "reason": "<Optional reason for considering this category; keep it non-medical>"
-      },
-      {
-        "name": "<Broad category label>",
-        "category": "<Choose one: Hair Care, Serums, or Supplements>",
-        "reason": "<Optional reason>"
-      }
-    ]
-  }
+  "recommended_regimen": { "summary": "", "daily_steps": [], "target_products": [] }
 }
 
 NEXT-STEP DECISION:

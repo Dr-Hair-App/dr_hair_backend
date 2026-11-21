@@ -196,6 +196,7 @@ export class PatientClinicalController {
       const sharedReports = (reports || [])
         .filter((r) => (r.visibility === 'Shared' || !r.visibility) && !r.deleted_at)
         .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+      const latestSharedReport = sharedReports[0] || null;
 
       const activeCarePlans = (carePlans || [])
         .sort((a, b) => new Date(b.created_at || b.date || 0).getTime() - new Date(a.created_at || a.date || 0).getTime());
@@ -365,6 +366,15 @@ export class PatientClinicalController {
       return sendSuccess(res, {
         data: {
           action_cards: actionCards,
+          latest_report: latestSharedReport ? {
+            id: String(latestSharedReport.id),
+            title: latestSharedReport.title || 'Clinical Report',
+            file_name: latestSharedReport.file_name || 'report',
+            bytes: latestSharedReport.bytes || 0,
+            uploaded_by: latestSharedReport.uploaded_by || 'Dr. Jai Bansal',
+            created_at: latestSharedReport.created_at || new Date().toISOString(),
+            mime_type: latestSharedReport.mime_type || '',
+          } : null,
           patient_status: {
             has_completed_assessment: Boolean(latestAssessment),
             assessment_status: latestAssessment?.status || (hasDraftData ? 'draft' : 'none'),
@@ -483,9 +493,11 @@ export class PatientClinicalController {
         if (!publicId.startsWith(ownedPrefix) || publicId.includes('..')) {
           throw new BadRequestError('Progress photos must be uploaded to this patient’s progress media folder.');
         }
-        let asset;
-        try { asset = await this.imageStorage.getAuthenticatedImage(publicId); }
-        catch { throw new BadRequestError('Progress photos must reference private images uploaded to this patient’s progress media folder.'); }
+        let asset = req._directProgressAssets?.get(publicId);
+        if (!asset) {
+          try { asset = await this.imageStorage.getAuthenticatedImage(publicId); }
+          catch { throw new BadRequestError('Progress photos must reference private images uploaded to this patient’s progress media folder.'); }
+        }
         if (asset.type !== 'authenticated' || asset.public_id !== publicId || !Number.isFinite(asset.bytes) || asset.bytes <= 0) {
           throw new BadRequestError('Progress photos must reference private images uploaded to this patient’s progress media folder.');
         }
@@ -526,6 +538,9 @@ export class PatientClinicalController {
     } catch (error) {
       if (!persisted && cleanPhotos.length > 0) {
         await Promise.all(cleanPhotos.map((photo) => this.imageStorage.deleteImage(photo.public_id, { deliveryType: photo.delivery_type }).catch(() => null)));
+        if (req._directProgressAssets) {
+          req._patientMediaCleanedKeys = new Set(cleanPhotos.map((photo) => photo.public_id));
+        }
       }
       next(error);
     }

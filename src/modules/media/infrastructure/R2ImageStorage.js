@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { getMediaBucket } from '../../../shared/storage/runtime.js';
-import { createPrivateDownloadUrl, detectImageMime, hasSafeImageDimensions, R2MediaStorage } from './R2MediaStorage.js';
+import { getBucketsForKey, getMediaBucket } from '../../../shared/storage/runtime.js';
+import { createPrivateDownloadUrl, detectImageMime, hasSafeImageDimensions, optimizeImageForStorage, R2MediaStorage } from './R2MediaStorage.js';
 
 const mimeByFormat = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', avif: 'image/avif', heic: 'image/heic', heif: 'image/heif' };
 const formatFor = (type) => Object.entries(mimeByFormat).find(([, mime]) => mime === type)?.[0] || 'bin';
@@ -13,7 +13,11 @@ export class R2ImageStorage {
       `drhair/images/user-${Number(userId)}/profile/`,
     ];
     if (!ownedPrefixes.some((prefix) => key.startsWith(prefix))) return false;
-    const asset = await getMediaBucket()?.head(key);
+    let asset = null;
+    for (const bucket of getBucketsForKey(key)) {
+      asset = await bucket.head(key);
+      if (asset) break;
+    }
     return Boolean(asset
       && asset.customMetadata?.ownerId === String(userId)
       && asset.customMetadata?.purpose === 'profile'
@@ -33,27 +37,38 @@ export class R2ImageStorage {
     if (!hasSafeImageDimensions(normalizedContentType, buffer.subarray(0, 65536))) {
       throw new Error('The image dimensions could not be verified or exceed the 40 megapixel upload limit.');
     }
-    const format = formatFor(normalizedContentType);
-    const key = String(publicId || '').startsWith('drhair/') ? publicId : `drhair/images/${folder}/${publicId ? `${publicId}.${format}` : `${randomUUID()}.${format}`}`;
+    let key = String(publicId || '').startsWith('drhair/') ? publicId : `drhair/images/${folder}/${publicId ? `${publicId}.${formatFor(normalizedContentType)}` : `${randomUUID()}.${formatFor(normalizedContentType)}`}`;
     const purpose = key.includes('/assessment/') ? 'assessment' : key.includes('/progress/') ? 'progress' : key.includes('/profile') ? 'profile' : 'generated';
+    const optimized = await optimizeImageForStorage(buffer, normalizedContentType, undefined, { preserveSource: ['assessment', 'progress'].includes(purpose) });
+    const format = optimized.format;
+    if (optimized.compressed) key = key.replace(/\.[^.]+$/, '.webp');
     const visibility = deliveryType === 'private' || deliveryType === 'authenticated' ? 'private' : 'public';
-    await bucket.put(key, buffer, { httpMetadata: { contentType: normalizedContentType, cacheControl: visibility === 'private' ? 'private, no-store' : 'public, max-age=86400' }, customMetadata: { purpose, ownerId: key.match(/user-(\d+)/)?.[1] || '', visibility } });
+    await bucket.put(key, optimized.buffer, { httpMetadata: { contentType: optimized.contentType, cacheControl: visibility === 'private' ? 'private, no-store' : 'public, max-age=86400' }, customMetadata: { purpose, ownerId: key.match(/user-(\d+)/)?.[1] || '', visibility, originalBytes: String(optimized.originalBytes), compressed: String(optimized.compressed), processingStatus: optimized.processingStatus } });
     const secureUrl = visibility === 'private' ? createPrivateDownloadUrl(key, format) : new R2MediaStorage().createPublicUrl(key);
     return { publicId: key, secureUrl, storageUrl: key, deliveryType, format };
   }
 
   async deleteImage(publicId) {
     if (typeof publicId !== 'string' || !publicId.trim()) throw new Error('An R2 object key is required for deletion.');
-    const bucket = getMediaBucket();
-    if (!bucket) throw new Error('R2 MEDIA_BUCKET is not configured.');
-    await bucket.delete(publicId);
+    const buckets = getBucketsForKey(publicId);
+    if (!buckets.length) throw new Error('R2 USER_MEDIA_BUCKET is not configured.');
+    for (const bucket of buckets) {
+      if (typeof bucket.head === 'function' && !(await bucket.head(publicId))) continue;
+      await bucket.delete(publicId);
+      return { result: 'ok' };
+    }
+    await buckets[0].delete(publicId);
     return { result: 'ok' };
   }
 
   createPrivateDownloadUrl(publicId, format, options = {}) { return createPrivateDownloadUrl(publicId, format, options); }
 
   async getAuthenticatedImage(publicId) {
-    const object = await getMediaBucket()?.get(publicId);
+    let object = null;
+    for (const bucket of getBucketsForKey(publicId)) {
+      object = await bucket.get(publicId);
+      if (object) break;
+    }
     if (!object || object.customMetadata?.visibility !== 'private' || !['assessment', 'progress'].includes(object.customMetadata?.purpose)) {
       throw Object.assign(new Error('Private R2 image was not found.'), { status: 404 });
     }
@@ -62,7 +77,11 @@ export class R2ImageStorage {
   }
 
   async downloadAuthenticatedImage(publicId, format, { maxBytes = 2 * 1024 * 1024 } = {}) {
-    const object = await getMediaBucket()?.get(publicId);
+    let object = null;
+    for (const bucket of getBucketsForKey(publicId)) {
+      object = await bucket.get(publicId);
+      if (object) break;
+    }
     if (!object || object.customMetadata?.visibility !== 'private') throw new Error('Private image was not found.');
     if (object.size <= 0 || object.size > maxBytes) throw new Error('Private image is empty or exceeds the AI analysis size limit.');
     const mimeType = mimeByFormat[String(format).toLowerCase()];

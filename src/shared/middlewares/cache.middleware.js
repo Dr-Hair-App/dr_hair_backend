@@ -12,6 +12,14 @@ export const cacheControl = ({ maxAge = 60, sMaxAge = 300, staleWhileRevalidate 
         'Cache-Control',
         `public, max-age=${maxAge}, s-maxage=${sMaxAge}, stale-while-revalidate=${staleWhileRevalidate}`,
       );
+      res.setHeader(
+        'CDN-Cache-Control',
+        `max-age=${sMaxAge}, stale-while-revalidate=${staleWhileRevalidate}`,
+      );
+      res.setHeader(
+        'Cloudflare-CDN-Cache-Control',
+        `max-age=${sMaxAge * 2}, stale-while-revalidate=${staleWhileRevalidate * 2}`,
+      );
     }
     next();
   };

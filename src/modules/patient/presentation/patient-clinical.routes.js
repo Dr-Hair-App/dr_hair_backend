@@ -1,7 +1,12 @@
 import { Router } from 'express';
 import { authenticateToken } from '../../../shared/middlewares/auth.middleware.js';
 import { requireRegisteredUser } from '../../../shared/middlewares/registered-user.middleware.js';
-import { uploadScalpPhotos } from '../../../shared/middlewares/upload.middleware.js';
+import { enforceUploadRequestSize, uploadScalpPhotos } from '../../../shared/middlewares/upload.middleware.js';
+import {
+  cleanupPatientUploadOnError,
+  parseProgressCheckInMultipart,
+  uploadProgressPhotos,
+} from '../../../shared/middlewares/patient-media-upload.middleware.js';
 
 export const createPatientClinicalRouter = ({ patientClinicalController, appointmentController, treatmentController }) => {
   const router = Router();
@@ -35,7 +40,7 @@ export const createPatientClinicalRouter = ({ patientClinicalController, appoint
   router.post('/assessment/submit', scalpUploadFields, patientClinicalController.submitAssessment);
 
   router.get('/progress-checkins', patientClinicalController.listProgressCheckIns);
-  router.post('/progress-checkins', patientClinicalController.createProgressCheckIn);
+  router.post('/progress-checkins', enforceUploadRequestSize, uploadProgressPhotos, parseProgressCheckInMultipart, patientClinicalController.createProgressCheckIn, cleanupPatientUploadOnError);
   router.delete('/progress-checkins/:checkInId', patientClinicalController.deleteProgressCheckIn);
   router.delete('/progress-checkins/:checkInId/photos/:angle', patientClinicalController.deleteProgressPhoto);
   router.get('/reports/:reportId/download', patientClinicalController.downloadReport);

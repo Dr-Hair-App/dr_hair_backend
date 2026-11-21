@@ -13,14 +13,18 @@ describe('Performance Headers & Optimization Middleware', () => {
 
     try {
       const endpoints = [
-        { path: '/services', expected: 'public, max-age=60, s-maxage=120, stale-while-revalidate=300' },
-        { path: '/api/v1/services', expected: 'public, max-age=60, s-maxage=120, stale-while-revalidate=300' },
-        { path: '/api/v1/appointments/closed-dates', expected: 'public, max-age=60, s-maxage=300, stale-while-revalidate=600' },
-        { path: '/api/v1/app/config', expected: 'public, max-age=60, s-maxage=120, stale-while-revalidate=300' },
-        { path: '/api/v1/categories', expected: 'public, max-age=120, s-maxage=300, stale-while-revalidate=600' },
-        { path: '/api/v1/products', expected: 'public, max-age=30, s-maxage=60, stale-while-revalidate=120' },
-        { path: '/api/v1/videos', expected: 'public, max-age=30, s-maxage=60, stale-while-revalidate=120' },
-        { path: '/api/v1/content', expected: 'public, max-age=60, s-maxage=120, stale-while-revalidate=300' },
+        { path: '/services', expected: 'public, max-age=60, s-maxage=120, stale-while-revalidate=300', cdnExpected: 'max-age=120, stale-while-revalidate=300', cfExpected: 'max-age=240, stale-while-revalidate=600' },
+        { path: '/api/v1/services', expected: 'public, max-age=60, s-maxage=120, stale-while-revalidate=300', cdnExpected: 'max-age=120, stale-while-revalidate=300', cfExpected: 'max-age=240, stale-while-revalidate=600' },
+        { path: '/api/v1/appointments/closed-dates', expected: 'public, max-age=60, s-maxage=300, stale-while-revalidate=600', cdnExpected: 'max-age=300, stale-while-revalidate=600', cfExpected: 'max-age=600, stale-while-revalidate=1200' },
+        { path: '/api/v1/app/config', expected: 'public, max-age=60, s-maxage=120, stale-while-revalidate=300', cdnExpected: 'max-age=120, stale-while-revalidate=300', cfExpected: 'max-age=240, stale-while-revalidate=600' },
+        { path: '/api/v1/categories', expected: 'public, max-age=120, s-maxage=300, stale-while-revalidate=600', cdnExpected: 'max-age=300, stale-while-revalidate=600', cfExpected: 'max-age=600, stale-while-revalidate=1200' },
+        { path: '/api/v1/products', expected: 'public, max-age=30, s-maxage=60, stale-while-revalidate=120', cdnExpected: 'max-age=60, stale-while-revalidate=120', cfExpected: 'max-age=120, stale-while-revalidate=240' },
+        { path: '/api/v1/videos', expected: 'public, max-age=30, s-maxage=60, stale-while-revalidate=120', cdnExpected: 'max-age=60, stale-while-revalidate=120', cfExpected: 'max-age=120, stale-while-revalidate=240' },
+        { path: '/api/v1/content', expected: 'public, max-age=60, s-maxage=120, stale-while-revalidate=300', cdnExpected: 'max-age=120, stale-while-revalidate=300', cfExpected: 'max-age=240, stale-while-revalidate=600' },
+        { path: '/api/v1/commerce/coupons', expected: 'public, max-age=60, s-maxage=180, stale-while-revalidate=360', cdnExpected: 'max-age=180, stale-while-revalidate=360', cfExpected: 'max-age=360, stale-while-revalidate=720' },
+        { path: '/api/v1/reviews/review_get', expected: 'public, max-age=60, s-maxage=300, stale-while-revalidate=600', cdnExpected: 'max-age=300, stale-while-revalidate=600', cfExpected: 'max-age=600, stale-while-revalidate=1200' },
+        { path: '/Review/review_get', expected: 'public, max-age=60, s-maxage=300, stale-while-revalidate=600', cdnExpected: 'max-age=300, stale-while-revalidate=600', cfExpected: 'max-age=600, stale-while-revalidate=1200' },
+        { path: '/api/v1/reviews', expected: 'public, max-age=60, s-maxage=300, stale-while-revalidate=600', cdnExpected: 'max-age=300, stale-while-revalidate=600', cfExpected: 'max-age=600, stale-while-revalidate=1200' },
       ];
 
       for (const ep of endpoints) {
@@ -31,6 +35,20 @@ describe('Performance Headers & Optimization Middleware', () => {
           ep.expected,
           `Expected cache-control header for ${ep.path}`,
         );
+        if (ep.cdnExpected) {
+          assert.equal(
+            res.headers.get('cdn-cache-control'),
+            ep.cdnExpected,
+            `Expected cdn-cache-control header for ${ep.path}`,
+          );
+        }
+        if (ep.cfExpected) {
+          assert.equal(
+            res.headers.get('cloudflare-cdn-cache-control'),
+            ep.cfExpected,
+            `Expected cloudflare-cdn-cache-control header for ${ep.path}`,
+          );
+        }
       }
     } finally {
       await new Promise((resolve) => server.close(resolve));

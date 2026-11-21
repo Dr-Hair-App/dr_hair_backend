@@ -2,7 +2,7 @@ import { randomUUID, createHmac, createHash, timingSafeEqual } from 'node:crypto
 import { Readable } from 'node:stream';
 import { BadRequestError, NotFoundError, PayloadTooLargeError } from '../../../shared/errors/index.js';
 import { config } from '../../../config/env.js';
-import { getMediaBucket } from '../../../shared/storage/runtime.js';
+import { getBucketsForKey, getImageOptimizationBinding, getUploadBucket } from '../../../shared/storage/runtime.js';
 
 const mediaPurposes = new Set(['general', 'profile', 'assessment', 'progress', 'content', 'product']);
 const extFor = (mime) => ({ 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif', 'image/heic': 'heic', 'image/heif': 'heif', 'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm', 'video/x-m4v': 'm4v', 'application/pdf': 'pdf' })[mime] || 'bin';
@@ -90,6 +90,31 @@ export function hasSafeImageDimensions(mimeType, prefix, { maxPixels = 40_000_00
 
 const normalizedImageMime = (mime) => mime === 'image/jpg' ? 'image/jpeg' : mime;
 
+/** One backend-only image path. Lossless WebP is kept only when it is smaller;
+ * no binding, unsupported input, transform error, or larger output preserves
+ * the original bytes. Cloudflare Images accepts up to 20 MB per input. */
+export async function optimizeImageForStorage(buffer, mimeType, binding = getImageOptimizationBinding(), { preserveSource = false } = {}) {
+  const original = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
+  const normalizedMime = normalizedImageMime(mimeType);
+  if (preserveSource || !binding || typeof binding.input !== 'function' || original.length === 0 || original.length > 20 * 1024 * 1024
+    || !['image/jpeg', 'image/png', 'image/webp'].includes(normalizedMime)) {
+    return { buffer: original, contentType: normalizedMime, format: extFor(normalizedMime), compressed: false, originalBytes: original.length, processingStatus: 'original_preserved' };
+  }
+  try {
+    const output = await binding.input(original)
+      .output({ format: 'image/webp', quality: 100 })
+      .then((result) => result.response());
+    if (!output?.ok) throw new Error('Image transform returned a non-success response.');
+    const candidate = Buffer.from(await output.arrayBuffer());
+    if (!candidate.length || candidate.length >= original.length || detectImageMime(candidate.subarray(0, 32)) !== 'image/webp') {
+      return { buffer: original, contentType: normalizedMime, format: extFor(normalizedMime), compressed: false, originalBytes: original.length, processingStatus: 'original_preserved' };
+    }
+    return { buffer: candidate, contentType: 'image/webp', format: 'webp', compressed: true, originalBytes: original.length, processingStatus: 'lossless_webp' };
+  } catch {
+    return { buffer: original, contentType: normalizedMime, format: extFor(normalizedMime), compressed: false, originalBytes: original.length, processingStatus: 'original_preserved' };
+  }
+}
+
 export async function compressLosslessly(buffer, enabled = true) {
   if (!enabled || typeof CompressionStream !== 'function' || !Buffer.isBuffer(buffer) || buffer.length === 0) {
     return { buffer, compressed: false, originalBytes: buffer?.length || 0 };
@@ -120,16 +145,21 @@ export class R2MediaStorage {
     const key = objectKey(publicId);
     if (resourceType !== 'image' || !key || key.length > 400 || key.includes('..')) throw new BadRequestError('Provide a valid R2 image key. Video uploads are not supported.');
     const allowedPrefixes = isAdmin
-      ? ['drhair/images/admin/general/', 'drhair/images/admin/product/']
+      ? ['drhair/images/admin/general/', 'drhair/images/admin/content/', 'drhair/images/admin/product/']
       : [
         `drhair/images/user-${Number(ownerId)}/general/`,
         `drhair/images/user-${Number(ownerId)}/profile/`,
         `drhair/images/profiles/user-${Number(ownerId)}.`,
       ];
     if (!allowedPrefixes.some((prefix) => key.startsWith(prefix))) throw new BadRequestError('Only your unattached media can be deleted here.');
-    const bucket = getMediaBucket();
-    if (!bucket) throw new Error('R2 MEDIA_BUCKET is not configured.');
-    const asset = await bucket.head(key);
+    const buckets = getBucketsForKey(key);
+    if (buckets.length === 0) throw new Error(isAdmin ? 'R2 ADMIN_MEDIA_BUCKET is not configured.' : 'R2 USER_MEDIA_BUCKET is not configured.');
+    let bucket = null;
+    let asset = null;
+    for (const candidate of buckets) {
+      asset = await candidate.head(key);
+      if (asset) { bucket = candidate; break; }
+    }
     if (!asset) throw new NotFoundError('Uploaded media was not found.');
     if (!isAdmin && (asset.customMetadata?.ownerId !== String(ownerId)
       || !['general', 'profile'].includes(asset.customMetadata?.purpose))) {
@@ -139,21 +169,24 @@ export class R2MediaStorage {
   }
 
   _handleFile(req, file, callback) {
-    const bucket = getMediaBucket();
-    if (!bucket) return callback(new Error('R2 MEDIA_BUCKET is not configured.'));
     const resourceType = 'image';
     const purposeHeader = req.headers['x-media-purpose'];
     const purpose = typeof purposeHeader === 'string' ? purposeHeader.trim().toLowerCase() : 'general';
     if (!mediaPurposes.has(purpose)) return callback(new BadRequestError('X-Media-Purpose must be general, profile, assessment, progress, content, or product.'));
     if ((purpose === 'profile' || purpose === 'progress' || purpose === 'assessment') && resourceType !== 'image') return callback(new BadRequestError(`${purpose} media must be an image.`));
     const isAdmin = ['admin', 'super_admin'].includes(req.user?.role);
+    const bucket = getUploadBucket({ isAdmin });
+    if (!bucket) return callback(new Error(isAdmin ? 'R2 ADMIN_MEDIA_BUCKET is not configured.' : 'R2 USER_MEDIA_BUCKET is not configured.'));
     const owner = isAdmin ? 'admin' : `user-${Number(req.user?.id)}`;
-    const keyBase = `drhair/images/${owner}/${purpose}/${randomUUID()}.${extFor(file.mimetype)}`;
-    const contentType = normalizedImageMime(file.mimetype);
+    let keyBase = `drhair/images/${owner}/${purpose}/${randomUUID()}.${extFor(file.mimetype)}`;
+    let contentType = normalizedImageMime(file.mimetype);
     const visibility = ['assessment', 'progress'].includes(purpose) ? 'private' : 'public';
     const maxBytes = config.upload.maxFileSize;
     const partSize = 5 * 1024 * 1024;
     const chunks = [];
+    const optimizationChunks = [];
+    const imageBinding = getImageOptimizationBinding();
+    let canOptimize = Boolean(imageBinding) && !['assessment', 'progress'].includes(purpose);
     const uploadedParts = [];
     const hash = createHash('sha256');
     const prefixChunks = [];
@@ -163,6 +196,9 @@ export class R2MediaStorage {
     let multipartUpload = null;
     let partNumber = 1;
     let completed = false;
+    let storedBytes = 0;
+    let storedCompressed = false;
+    let processingStatus = 'original_preserved';
     const finish = (error, info) => {
       if (completed) return;
       completed = true;
@@ -173,6 +209,10 @@ export class R2MediaStorage {
       try {
         for await (const chunk of file.stream) {
           bytes += chunk.length;
+          if (canOptimize) {
+            if (bytes <= 20 * 1024 * 1024) optimizationChunks.push(Buffer.from(chunk));
+            else { optimizationChunks.length = 0; canOptimize = false; }
+          }
           req._drHairUploadedFileBytes = (req._drHairUploadedFileBytes || 0) + chunk.length;
           if (req._drHairUploadedFileBytes > config.upload.maxRequestSize) {
             throw new PayloadTooLargeError('The complete upload must be smaller than 90 MiB. Reduce the number or size of photos and try again.');
@@ -233,15 +273,30 @@ export class R2MediaStorage {
 
         const finalPart = Buffer.concat(chunks, currentPartBytes);
         const checksum = hash.digest('hex');
+        let stored = canOptimize
+          ? await optimizeImageForStorage(Buffer.concat(optimizationChunks, bytes), contentType, imageBinding, { preserveSource: ['assessment', 'progress'].includes(purpose) })
+          : { buffer: finalPart, contentType, compressed: false, originalBytes: bytes, processingStatus: 'original_preserved' };
+        if (stored.compressed && multipartUpload) {
+          await multipartUpload.abort();
+          multipartUpload = null;
+          uploadedParts.length = 0;
+          chunks.length = 0;
+        }
+        if (stored.compressed) {
+          keyBase = keyBase.replace(/\.[^.]+$/, '.webp');
+          contentType = stored.contentType;
+        }
+        storedBytes = stored.buffer.length;
+        storedCompressed = stored.compressed;
+        processingStatus = stored.processingStatus;
+
         if (multipartUpload) {
-          if (finalPart.length > 0) {
-            uploadedParts.push(await multipartUpload.uploadPart(partNumber, finalPart));
-          }
+          if (finalPart.length > 0) uploadedParts.push(await multipartUpload.uploadPart(partNumber, finalPart));
           await multipartUpload.complete(uploadedParts);
         } else {
-          await bucket.put(keyBase, finalPart, {
+          await bucket.put(keyBase, stored.buffer, {
             httpMetadata: {
-              contentType,
+              contentType: stored.contentType,
               cacheControl: visibility === 'private' ? 'private, no-store' : 'public, max-age=86400',
             },
             customMetadata: {
@@ -249,9 +304,10 @@ export class R2MediaStorage {
               ownerId: String(req.user?.id || ''),
               resourceType,
               visibility,
-              originalBytes: String(bytes),
+              originalBytes: String(stored.originalBytes),
               sha256: checksum,
-              processingStatus: 'client_optimized_or_original',
+              processingStatus: stored.processingStatus,
+              compressed: String(stored.compressed),
             },
           });
         }
@@ -263,16 +319,16 @@ export class R2MediaStorage {
           purpose,
           deliveryType: visibility,
           resourceType,
-          format: extFor(file.mimetype),
+          format: extFor(contentType),
           mimetype: contentType,
           originalName: String(file.originalname || 'upload').replace(/[\\/\u0000-\u001f]/g, '_').slice(0, 180),
-          bytes,
+          bytes: multipartUpload ? bytes : storedBytes,
           originalBytes: bytes,
-          compressed: false,
+          compressed: storedCompressed,
           sha256: checksum,
           width: dimensions.width,
           height: dimensions.height,
-          processingStatus: 'original_preserved',
+          processingStatus,
         });
       } catch (error) {
         if (multipartUpload) await multipartUpload.abort().catch(() => null);
@@ -281,10 +337,18 @@ export class R2MediaStorage {
     })();
   }
 
-  _removeFile(_req, file, callback) {
-    const bucket = getMediaBucket();
-    if (!bucket || !file.key) return callback(null);
-    bucket.delete(file.key).then(() => callback(null), callback);
+  _removeFile(req, file, callback) {
+    if (!file.key) return callback(null);
+    const buckets = getBucketsForKey(file.key);
+    if (!buckets.length) return callback(null);
+    const cleanup = async () => {
+      for (const bucket of buckets) {
+        if (typeof bucket.head === 'function' && !(await bucket.head(file.key))) continue;
+        await bucket.delete(file.key);
+        return;
+      }
+    };
+    cleanup().then(() => callback(null), callback);
   }
 
   createPublicUrl(key) { return `${config.baseUrl.replace(/\/$/, '')}/api/v1/media/assets/${objectKey(key).split('/').map(encodeURIComponent).join('/')}`; }
@@ -293,15 +357,31 @@ export class R2MediaStorage {
     try {
       const key = objectKey(req.params.objectKey);
       if (!key || key.includes('..') || key.length > 400) throw new BadRequestError('Invalid media key.');
-      const bucket = getMediaBucket();
-      const object = await bucket?.get(key);
+      let object = null;
+      for (const bucket of getBucketsForKey(key)) {
+        object = await bucket.get(key);
+        if (object) break;
+      }
       if (!object) throw new NotFoundError('Media was not found.');
       const attachment = req.query.attachment === '1';
       if (object.customMetadata?.visibility !== 'public' && !verifyPrivateMediaSignature(key, req.query.exp, attachment, req.query.sig)) throw new NotFoundError('Media was not found.');
+      const etag = object.httpEtag || `"${object.etag || object.size}"`;
+      res.setHeader('ETag', etag);
+      res.setHeader('Cache-Control', object.customMetadata?.visibility === 'public' ? 'public, max-age=86400' : 'private, no-store');
+      const clientEtag = req.headers['if-none-match'];
+      if (clientEtag && etag) {
+        const targetEtag = etag.replace(/^W\//, '').trim();
+        const isMatch = clientEtag.split(',').some((token) => {
+          const clean = token.trim();
+          return clean === '*' || clean === etag || clean.replace(/^W\//, '') === targetEtag;
+        });
+        if (isMatch) {
+          return res.status(304).end();
+        }
+      }
       res.setHeader('Content-Type', object.httpMetadata?.contentType || mimeFor(key.split('.').pop()));
       const compressed = object.customMetadata?.compression === 'gzip';
       if (!compressed) res.setHeader('Content-Length', String(object.size));
-      res.setHeader('Cache-Control', object.customMetadata?.visibility === 'public' ? 'public, max-age=86400' : 'private, no-store');
       if (attachment) res.setHeader('Content-Disposition', `attachment; filename="${key.split('/').pop().replace(/\.gz$/i, '').replace(/["\\\r\n]/g, '')}"`);
       const body = compressed ? object.body.pipeThrough(new DecompressionStream('gzip')) : object.body;
       Readable.fromWeb(body).pipe(res);

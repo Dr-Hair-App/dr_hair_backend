@@ -4,19 +4,9 @@ import { GenerateAssessmentRoutineUseCase } from '../src/modules/hair_test/appli
 import { GeminiAiService } from '../src/modules/ai/infrastructure/GeminiAiService.js';
 
 describe('AI Assessment Care Routine UseCase & Gemini Service', () => {
-  it('generates a personalized routine via GeminiAiService fallback when no API key', async () => {
+  it('does not return a fabricated routine when AI is unavailable', async () => {
     const service = new GeminiAiService({ apiKey: '' });
-    const routine = await service.generatePersonalizedRoutine({
-      age: 28,
-      gender: 'Male',
-      hair_fall_pattern: 'Receding hairline',
-    });
-
-    assert.ok(routine);
-    assert.ok(Array.isArray(routine.steps));
-    assert.ok(routine.steps.length >= 4);
-    assert.equal(routine.steps[0].category, 'Cleansing');
-    assert.ok(routine.summary);
+    await assert.rejects(service.generatePersonalizedRoutine({}), /unavailable/i);
   });
 
   it('executes GenerateAssessmentRoutineUseCase and persists custom_routine', async () => {
@@ -69,8 +59,7 @@ describe('AI Assessment Care Routine UseCase & Gemini Service', () => {
     assert.equal(result.reference_no, 'HT-TEST-001');
     assert.equal(savedReferenceNo, 'HT-TEST-001');
     assert.equal(savedAssessment.custom_routine.summary, 'Custom test routine');
-    assert.equal(addedSteps.length, 2);
-    assert.equal(addedSteps[0].step.title, 'Morning Tonic');
+    assert.equal(addedSteps.length, 0, 'patient must choose before a routine is added to the tracker');
   });
 
   it('rejects routine generation when user is unauthorized', async () => {

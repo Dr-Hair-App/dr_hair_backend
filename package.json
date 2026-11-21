@@ -5,13 +5,13 @@
   "type": "module",
   "main": "src/server.js",
   "scripts": {
-    "start": "wrangler dev --local --ip 0.0.0.0 --var NODE_ENV:development --var DRHAIR_DEPLOYMENT_ENV:development --var BASE_URL:http://localhost:8787 --var CORS_ORIGINS:http://localhost:3001",
-    "dev": "wrangler dev --local --var NODE_ENV:development --var DRHAIR_DEPLOYMENT_ENV:development --var BASE_URL:http://localhost:8787 --var CORS_ORIGINS:http://localhost:3001",
+    "start": "wrangler dev --env testing --ip 0.0.0.0",
+    "dev": "wrangler dev --env testing",
     "admin:setup": "node src/scripts/setup-super-admin.js",
     "test": "node --test test/**/*.test.js",
-    "build:cloudflare": "wrangler deploy --dry-run",
-    "deploy:cloudflare": "wrangler deploy",
-    "deploy": "wrangler deploy",
+    "build:cloudflare": "wrangler deploy --dry-run --env=\"\"",
+    "deploy:cloudflare": "wrangler deploy --env=\"\"",
+    "deploy": "wrangler deploy --env=\"\"",
     "postinstall": "node scripts/patch-iconv-lite.js"
   },
   "keywords": [

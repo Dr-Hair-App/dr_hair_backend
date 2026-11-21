@@ -19,10 +19,11 @@ function isolateEnvironment(t, values) {
   Object.assign(process.env, values);
 }
 
-test('staging uses an explicit Shiprocket simulator and never credentials for the live API', async (t) => {
+for (const deploymentEnvironment of ['staging', 'testing']) {
+test(`${deploymentEnvironment} uses an explicit Shiprocket simulator and never credentials for the live API`, async (t) => {
   isolateEnvironment(t, {
     NODE_ENV: 'production',
-    DRHAIR_DEPLOYMENT_ENV: 'staging',
+    DRHAIR_DEPLOYMENT_ENV: deploymentEnvironment,
     SHIPROCKET_STAGING_MODE: 'mock',
     SHIPROCKET_API_ENV: 'production',
     SHIPROCKET_API_EMAIL: 'live@example.invalid',
@@ -46,6 +47,7 @@ test('staging uses an explicit Shiprocket simulator and never credentials for th
   assert.equal(quotes[0].courier, 'Staging Test Courier');
   assert.equal(quotes[0].rate, 79);
 });
+}
 
 test('staging simulator exercises forward shipment, pickup, cancellation, and returns without network access', async (t) => {
   isolateEnvironment(t, {
@@ -93,20 +95,22 @@ test('staging simulator exercises forward shipment, pickup, cancellation, and re
   assert.ok(returned.awbCode.startsWith('STG'));
 });
 
-test('staging disables Shiprocket when the explicit simulator flag is absent', (t) => {
-  isolateEnvironment(t, {
-    NODE_ENV: 'production',
-    DRHAIR_DEPLOYMENT_ENV: 'staging',
-    SHIPROCKET_API_ENV: 'production',
-    SHIPROCKET_API_EMAIL: 'live@example.invalid',
-    SHIPROCKET_API_PASSWORD: 'live-password',
-  });
+for (const deploymentEnvironment of ['staging', 'testing']) {
+  test(`${deploymentEnvironment} disables Shiprocket when the explicit simulator flag is absent`, (t) => {
+    isolateEnvironment(t, {
+      NODE_ENV: 'production',
+      DRHAIR_DEPLOYMENT_ENV: deploymentEnvironment,
+      SHIPROCKET_API_ENV: 'production',
+      SHIPROCKET_API_EMAIL: 'live@example.invalid',
+      SHIPROCKET_API_PASSWORD: 'live-password',
+    });
 
-  const configuration = new ShiprocketService().getConfiguration();
-  assert.equal(configuration.environment, 'disabled');
-  assert.equal(configuration.apiBase, '');
-  assert.equal(configuration.configured, false);
-});
+    const configuration = new ShiprocketService().getConfiguration();
+    assert.equal(configuration.environment, 'disabled');
+    assert.equal(configuration.apiBase, '');
+    assert.equal(configuration.configured, false);
+  });
+}
 
 test('production honors explicit Shiprocket live configuration', (t) => {
   isolateEnvironment(t, {

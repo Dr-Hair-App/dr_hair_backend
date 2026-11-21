@@ -111,7 +111,7 @@ Retrieves the authenticated patient's profile details.
 ```
 
 ### `POST /api/v1/users/updateProfile`
-Updates the authenticated patient's demographics.
+Updates the authenticated patient's demographics and optional profile photo. JSON remains supported. For a new photo, send multipart form data with `payload` containing the profile JSON and an optional `profile` image part; the photo and profile fields are saved in one request. To remove the existing photo, send `profile_url: null` without a file.
 - **Headers:** `Authorization: Bearer <token>`
 - **Body (`application/json`):**
 ```json
@@ -219,19 +219,23 @@ Fetches monthly progress photo check-ins submitted by the patient.
 ```
 
 ### `POST /api/v1/patient/progress-checkins`
-Creates a monthly photo check-in.
+Creates a photo check-in. JSON requests may continue to reference previously uploaded progress assets. To upload photos and create the record in one request, send multipart form data with a `payload` JSON field containing `id`, `date`, `scalp_region`, `shedding_level`, `notes`, and `density_rating`, plus any of `photo_front`, `photo_top`, and `photo_back` image parts (one per angle, at most 25 MiB each). The patient ID and private R2 keys are assigned by the server. The response includes signed image URLs; the `id` remains the idempotency key.
 - **Headers:** `Authorization: Bearer <token>`
-- **Body (`application/json`):**
+- **Body (`application/json`, legacy asset-reference flow):**
 ```json
 {
-  "month": 2,
-  "scalpPhotos": {
-    "front": "https://...",
-    "crown": "https://..."
-  },
-  "notes": "Hair density feels thicker around hairline."
+  "id": "chk_2026_11_20_a1b2c3",
+  "date": "2026-11-20T10:00:00.000Z",
+  "scalp_region": "Scalp",
+  "shedding_level": "Moderate",
+  "notes": "Hair density feels thicker around hairline.",
+  "density_rating": 3,
+  "photos": [
+    { "angle": "front", "public_id": "drhair/images/user-123/progress/previous-upload.jpg" }
+  ]
 }
 ```
+- **Body (`multipart/form-data`, direct upload):** Include a `payload` JSON string with the record fields above except `photos`, then attach image parts named `photo_front`, `photo_top`, and/or `photo_back`.
 
 ---
 
@@ -344,35 +348,13 @@ Fetches published video stories and clinical case demonstrations.
 
 ## 9. Media & Document Uploads
 
-### `POST /api/v1/media/upload`
-Shared authenticated endpoint for uploading one to ten images per request to R2. Each file is limited to 25 MiB, the full request to 90 MiB, and multipart text to 64 fields of at most 16 KiB each (80 total parts). The API checks the actual image signature and bounded header dimensions (maximum 40 megapixels), preserves the uploaded original bytes, computes a SHA-256 checksum, and streams large files to R2 with bounded memory. It does not gzip image files. Browser/app optimization may send original and derivative files together; each remains a separately addressed R2 asset.
-- **Headers:** `Authorization: Bearer <token>`, `Content-Type: multipart/form-data`
-- **Purpose:** `X-Media-Purpose: general | profile | assessment | progress | content | product` (optional; defaults to `general`)
-- **Fields:**
-  - `file` or `files`: JPEG, PNG, WebP, AVIF, HEIC, HEIF, or GIF image parts. GIF animation is preserved.
-- **Response (201 Created):**
-```json
-{
-  "status": "success",
-  "data": {
-    "items": [{
-      "asset_id": "drhair/images/user-123/assessment/uuid.webp",
-      "public_id": "drhair/images/user-123/assessment/uuid.webp",
-      "url": "https://api.example.com/api/v1/media/assets/...",
-      "format": "webp",
-      "mime_type": "image/webp",
-      "bytes": 245100,
-      "original_bytes": 245100,
-      "sha256": "<64-character checksum>",
-      "processing_status": "original_preserved"
-    }]
-  }
-}
-```
+Standalone media upload is no longer available. Uploads now travel with their domain save request: Admin content and reviews use their multipart create/update routes, profile photos use `POST /api/v1/users/updateProfile`, and progress photos use `POST /api/v1/patient/progress-checkins`. Media asset GET and unattached asset DELETE routes remain.
 
 Clinical reports are uploaded by the authenticated admin route `POST /api/v1/admin/users/{userId}/reports`. It accepts PDF, DOC/DOCX, XLS/XLSX, PPT/PPTX, TXT, JPEG, PNG, WebP, GIF, AVIF, HEIC, and HEIF files up to 25 MiB, with multipart text limited to 64 fields of at most 16 KiB each and 80 total parts (including the report title). It streams files to private R2, records metadata/checksum in the existing D1 report record, and returns `scanning_status`. Reports remain `not_scanned` unless an actual malware scanner adapter is configured; an infected or failed scan rejects the upload rather than marking the file safe.
 
-Uploads use the existing authenticated Worker APIs and stream parts to the configured `MEDIA_BUCKET` binding. This Worker binding does not mint S3 presigned PUT URLs; enabling direct-to-R2 uploads would require restricted R2 S3 credentials and a separate security/configuration change. Existing assessment, product, content, and report records already persist asset references/metadata, so this flow adds no duplicate upload table or migration.
+Admin banner and patient-story avatar routes (`POST /api/v1/admin/content`, `PUT /api/v1/admin/content/{id}`, `POST /api/v1/admin/reviews`, and `PUT /api/v1/admin/reviews/{id}`) accept JSON when no image is selected. For new images, send one multipart request with `payload` containing the JSON record and repeated `files` parts. The original image must be first, followed by optional optimized variants. Each route stores the images in the Admin R2 bucket and saves their URLs and IDs with the content/review record, removing the separate upload round trip.
+
+Uploads use the existing authenticated Worker APIs. Admin catalog/content media streams to `ADMIN_MEDIA_BUCKET`; patient-origin images and private reports stream to `USER_MEDIA_BUCKET`. Production keeps `MEDIA_BUCKET` as a legacy read/delete fallback, while the testing environment omits it. This Worker does not mint S3 presigned PUT URLs; enabling direct-to-R2 uploads would require restricted R2 S3 credentials and a separate security/configuration change. Existing assessment, product, content, and report records already persist asset references/metadata, so this flow adds no duplicate upload table or migration.
 
 ---
 

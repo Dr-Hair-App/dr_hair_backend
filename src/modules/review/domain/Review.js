@@ -9,6 +9,7 @@ export class Review {
     category,
     message,
     avatar,
+    media_assets = null,
     is_verified = false,
     consent_verified = false,
     treatment = '',
@@ -25,6 +26,7 @@ export class Review {
     this.category = category;
     this.message = message;
     this.avatar = avatar;
+    this.media_assets = media_assets;
     this.is_verified = Boolean(is_verified);
     this.consent_verified = Boolean(consent_verified);
     this.treatment = treatment;

@@ -26,7 +26,7 @@
     "traces": { "enabled": true, "head_sampling_rate": 0.1 }
   },
   "triggers": {
-    "crons": ["*/2 * * * *"]
+    "crons": ["*/10 * * * *"]
   },
   "d1_databases": [
     {
@@ -38,6 +38,14 @@
   ],
   "r2_buckets": [
     {
+      "binding": "ADMIN_MEDIA_BUCKET",
+      "bucket_name": "dr-hair-production-media"
+    },
+    {
+      "binding": "USER_MEDIA_BUCKET",
+      "bucket_name": "dr-hair-production-user-media"
+    },
+    {
       "binding": "MEDIA_BUCKET",
       "bucket_name": "dr-hair-production-media"
     }
@@ -47,5 +55,53 @@
   ],
   "routes": [
     { "pattern": "api.drhairindia.com", "custom_domain": true }
-  ]
+  ],
+  "env": {
+    "testing": {
+      "name": "dr-hair-backend-testing",
+      "workers_dev": true,
+      "vars": {
+        "NODE_ENV": "development",
+        "DRHAIR_DEPLOYMENT_ENV": "testing",
+        "SHIPROCKET_STAGING_MODE": "mock",
+        "SHIPROCKET_STAGING_PICKUP_NAME": "Dr Hair Testing",
+        "SHIPROCKET_STAGING_PICKUP_PIN": "110001",
+        "BASE_URL": "http://localhost:8787",
+        "CORS_ORIGINS": "http://localhost:3001",
+        "SUPER_ADMIN_ID": "dr.hair@admin",
+        "SUPER_ADMIN_NAME": "Dr. Jai Bansal"
+      },
+      "durable_objects": { "bindings": [] },
+      "ratelimits": [],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_id": "2317b007-58b9-4fa5-84af-aa8c46eb6bd2",
+          "database_name": "dr-hair-testing",
+          "migrations_dir": "migrations",
+          "remote": true
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "ADMIN_MEDIA_BUCKET",
+          "bucket_name": "dr-hair-testing-admin-media",
+          "remote": true
+        },
+        {
+          "binding": "USER_MEDIA_BUCKET",
+          "bucket_name": "dr-hair-testing-user-media",
+          "remote": true
+        }
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "PUBLIC_CONFIG_KV",
+          "id": "abdb1cc18e744adab1fe2a23596c3436",
+          "remote": true
+        }
+      ],
+      "routes": []
+    }
+  }
 }

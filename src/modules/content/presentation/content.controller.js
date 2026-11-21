@@ -11,8 +11,17 @@ export class ContentController {
 
   listPublishedContent = async (req, res, next) => {
     try {
-      const { type, placement, limit } = req.query || {};
-      const items = await this.contentRepository.listPublished({ type, placement, limit });
+      const { type, types, placement, limit } = req.query || {};
+      const normalizedTypes = String(types || '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean);
+      const items = await this.contentRepository.listPublished({
+        type,
+        types: normalizedTypes,
+        placement,
+        limit,
+      });
       return sendSuccess(res, { data: items });
     } catch (error) {
       next(error);

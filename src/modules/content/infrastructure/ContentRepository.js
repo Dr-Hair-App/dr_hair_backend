@@ -125,17 +125,25 @@ export class ContentRepository {
     return this.update(id, updates);
   }
 
-  async listPublished({ type, placement, limit = 50 } = {}) {
+  async listPublished({ type, types = [], placement, limit = 50 } = {}) {
     const parsedLimit = Math.max(1, Math.min(100, parseInt(limit, 10) || 50));
+    const normalizedTypes = Array.isArray(types)
+      ? [...new Set(types.map((value) => String(value || '').trim()).filter(Boolean))]
+      : [];
 
     if (isDatabaseConnected()) {
       const query = { status: 'published' };
       if (type) query.type = type;
+      else if (normalizedTypes.length) query.type = { $in: normalizedTypes };
       if (placement && placement !== 'all') {
         query.$or = [{ placement }, { placement: 'all' }];
       }
       if (type === 'story') {
         query['provenance.consent_verified'] = true;
+      } else if (!type && normalizedTypes.includes('story')) {
+        query.$and = [
+          { $or: [{ type: { $ne: 'story' } }, { 'provenance.consent_verified': true }] },
+        ];
       }
 
       return ContentItemModel.find(query)
@@ -147,11 +155,14 @@ export class ContentRepository {
     store.contentItems = store.contentItems || [];
     let items = store.contentItems.filter((item) => item.status === 'published');
     if (type) items = items.filter((item) => item.type === type);
+    else if (normalizedTypes.length) items = items.filter((item) => normalizedTypes.includes(item.type));
     if (placement && placement !== 'all') {
       items = items.filter((item) => item.placement === placement || item.placement === 'all');
     }
-    if (type === 'story') {
-      items = items.filter((item) => item.provenance?.consent_verified === true);
+    if (type === 'story' || (!type && normalizedTypes.includes('story'))) {
+      items = items.filter(
+        (item) => item.type !== 'story' || item.provenance?.consent_verified === true,
+      );
     }
 
     items.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || new Date(b.created_at) - new Date(a.created_at));

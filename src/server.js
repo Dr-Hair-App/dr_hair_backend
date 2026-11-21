@@ -22,7 +22,6 @@ const server = app.listen(config.port, '0.0.0.0', () => {
   logger.info(` - POST /Admin/loginSignup`);
   logger.info(` - POST /Admin/get_profile`);
   logger.info(` - POST /Admin/updateProfile`);
-  logger.info(` - POST /Admin/profileUpdate`);
   logger.info(` - POST /HairTest/submit_form`);
   logger.info(` - POST /HairTest/hair_test`);
   logger.info(` - GET  /HairTest/get_treatment_history/:reference_no`);

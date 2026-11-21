@@ -115,7 +115,8 @@ export class UserController {
         gender,
         city,
         occupation,
-        profileUrl,
+        profileUrl: req.file?.secureUrl || profileUrl,
+        profileUrlIsTrustedUpload: Boolean(req.file?.key),
         verifiedLogin: req.user?.login || req.user?.email || req.user?.phone,
       });
 

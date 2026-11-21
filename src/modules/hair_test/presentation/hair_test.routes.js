@@ -19,6 +19,14 @@ export const createHairTestRouter = ({ hairTestController }) => {
     { name: 'photo_back', maxCount: 1 },
     { name: 'photo_back_optimized', maxCount: 1 },
   ]);
+  // This route stores patient assessment photos as private, ownership-scoped
+  // assets. Do not trust a client supplied purpose header: the streaming R2
+  // storage adapter uses this value to select both the object prefix and its
+  // visibility metadata.
+  const markAssessmentPhotoPurpose = (req, _res, next) => {
+    req.headers['x-media-purpose'] = 'assessment';
+    next();
+  };
   // One inexpensive Durable Object counter protects the R2 and Gemini work
   // from repeated submissions while leaving ample room for legitimate retests.
   const assessmentSubmitDailyLimit = dailyUsageLimit({
@@ -29,7 +37,7 @@ export const createHairTestRouter = ({ hairTestController }) => {
 
   // Legacy & Flutter App routes:
   // POST /HairTest/submit_form
-  router.post('/submit_form', authenticateToken, requireRegisteredUser, enforceUploadRequestSize, assessmentSubmitDailyLimit, scalpUploadFields, hairTestController.submitForm);
+  router.post('/submit_form', authenticateToken, requireRegisteredUser, enforceUploadRequestSize, assessmentSubmitDailyLimit, markAssessmentPhotoPurpose, scalpUploadFields, hairTestController.submitForm);
 
   // POST /HairTest/hair_test
   router.post('/hair_test', authenticateToken, requireRegisteredUser, hairTestController.getHairTests);

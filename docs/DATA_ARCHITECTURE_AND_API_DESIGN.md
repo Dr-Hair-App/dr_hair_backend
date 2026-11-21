@@ -2,14 +2,15 @@
 
 ## Runtime and storage
 
-The API is a Cloudflare Worker that runs the existing Express route/controller/use-case structure. Runtime bindings provide D1 (`DB`) and R2 (`MEDIA_BUCKET`). KV is provisioned for a future explicitly public, short-lived configuration use case; it is not used for patient or admin data.
+The API is a Cloudflare Worker that runs the existing Express route/controller/use-case structure. Runtime bindings provide D1 (`DB`), Admin catalog/content R2 (`ADMIN_MEDIA_BUCKET`), patient media/report R2 (`USER_MEDIA_BUCKET`), and usage-policy KV (`PUBLIC_CONFIG_KV`). Production keeps `MEDIA_BUCKET` as a legacy read/delete fallback; testing omits it to keep buckets isolated.
 
 ```mermaid
 flowchart LR
   App[Flutter app] --> API[Cloudflare Worker / Express]
   Admin[Admin panel] --> API
   API --> D1[(D1: indexed domain tables + JSON records)]
-  API --> R2[(Private R2 images and reports)]
+  API --> AdminR2[(Private Admin catalog/content R2)]
+  API --> UserR2[(Private patient media and reports R2)]
   API --> FCM[Firebase Cloud Messaging]
   Content[YouTube content] --> App
 ```
@@ -31,7 +32,7 @@ Use direct SQL for hot aggregate and concurrency-sensitive paths. Inventory rele
 
 ## Local and environment setup
 
-- Wrangler local bindings isolate local D1/R2/KV state. Apply the SQL migration before starting the local Worker.
-- Dev and staging resources are separate; staging uses Razorpay test credentials and an explicit Shiprocket simulator. Shiprocket's documented external API is live, so staging must never receive its live credentials.
+- The named testing environment uses dedicated remote D1/R2/KV resources from the locally running Wrangler Worker; apply the testing D1 migrations before using the app. The Worker has no testing Durable Object/rate-limit binding.
+- Testing and production resources are separate. Configure payment/shipping integrations with testing credentials and do not copy production credentials into the testing environment.
 - Production resource bindings/secrets are configured separately and remain gated. Do not copy development data or credentials into production.
 - See `CLOUDFLARE_MIGRATION.md` for CI/CD, environment bindings, and required secrets.

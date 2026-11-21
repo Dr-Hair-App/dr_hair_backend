@@ -2,14 +2,11 @@ import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { authenticateToken } from '../../../shared/middlewares/auth.middleware.js';
 import { requireRegisteredUser } from '../../../shared/middlewares/registered-user.middleware.js';
-import { requireSuperAdmin, requireAnyPermission } from '../../../shared/middlewares/admin.middleware.js';
-import { uploadMediaFiles } from '../../../shared/middlewares/media-upload.middleware.js';
-import { enforceUploadRequestSize } from '../../../shared/middlewares/upload.middleware.js';
 import { createRateLimitStore } from '../../../shared/middlewares/rate-limit-store.js';
 
 export const createMediaRouter = ({ mediaController }) => {
   const router = Router();
-  const mediaUploadLimiter = rateLimit({
+  const mediaOperationLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 30,
     standardHeaders: 'draft-8',
@@ -17,7 +14,7 @@ export const createMediaRouter = ({ mediaController }) => {
     store: createRateLimitStore('media-upload-ip'),
     passOnStoreError: true,
   });
-  const mediaUploadAccountLimiter = rateLimit({
+  const mediaAccountOperationLimiter = rateLimit({
     windowMs: 24 * 60 * 60 * 1000,
     limit: 100,
     standardHeaders: 'draft-8',
@@ -27,24 +24,6 @@ export const createMediaRouter = ({ mediaController }) => {
     keyGenerator: (req) => String(req.user?.id || 'unknown'),
   });
   router.get('/assets/:objectKey(*)', mediaController.serveAsset);
-  router.post(
-    '/upload',
-    authenticateToken,
-    enforceUploadRequestSize,
-    (req, res, next) => {
-      if (req.user?.role === 'super_admin' || req.user?.role === 'admin') {
-        return uploadMediaFiles(req, res, next);
-      }
-      return requireRegisteredUser(req, res, () => {
-        mediaUploadLimiter(req, res, () => {
-          mediaUploadAccountLimiter(req, res, () => {
-            uploadMediaFiles(req, res, next);
-          });
-        });
-      });
-    },
-    mediaController.upload,
-  );
   router.delete(
     '/',
     authenticateToken,
@@ -53,8 +32,8 @@ export const createMediaRouter = ({ mediaController }) => {
         return next();
       }
       return requireRegisteredUser(req, res, () => {
-        mediaUploadLimiter(req, res, () => {
-          mediaUploadAccountLimiter(req, res, next);
+        mediaOperationLimiter(req, res, () => {
+          mediaAccountOperationLimiter(req, res, next);
         });
       });
     },

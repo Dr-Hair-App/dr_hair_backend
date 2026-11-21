@@ -9,10 +9,12 @@ Requirements: Node.js 22 or later and npm.
 ```sh
 npm ci
 npm run dev
-npx wrangler d1 migrations apply dr-hair-dev --local
+npx wrangler d1 migrations apply dr-hair-testing --env testing --remote
 ```
 
-Wrangler local development uses local D1, R2, and KV emulators. `npm run build:cloudflare` performs a Wrangler dry-run. `npm run deploy` targets the single production Worker `dr-hair-backend` and its custom domain `api.drhairindia.com`; do not run it for routine local work.
+`npm run dev` and `npm start` run the Worker locally with the `testing` environment. That environment binds the isolated remote D1 database `dr-hair-testing`, R2 buckets `dr-hair-testing-admin-media` and `dr-hair-testing-user-media`, and KV namespace `dr-hair-testing-public-config`; uploads and database changes from local development persist in those test resources, not in `.wrangler/state` or production. Shiprocket uses the explicit local simulator in this environment; it never calls Shiprocket's live API. It deliberately has no production `MEDIA_BUCKET` compatibility binding, Durable Object binding, or rate-limit binding. Use only test accounts and test data. The test resources must be provisioned before running these commands.
+
+`npm run build:cloudflare` performs a Wrangler dry-run. `npm run deploy` targets the production Worker and its custom domain `api.drhairindia.com`; do not run it for routine local work.
 
 The production D1 database is `dr-hair-production`. Create catalog, clinic, and admin configuration through the application/admin APIs. Do not seed historical production data. Migration `0004_admin_module_flags.sql` creates the initial admin navigation flags. Configure the first Super Admin ID and display name as Worker variables (`SUPER_ADMIN_ID`, `SUPER_ADMIN_NAME`). Generate its password hash with `npm run admin:setup`, then store it as the Worker secret `SUPER_ADMIN_PASSWORD_HASH` on `dr-hair-backend`. Never put the hash in `wrangler.jsonc` or commit it.
 
@@ -20,7 +22,7 @@ The production D1 database is `dr-hair-production`. Create catalog, clinic, and 
 
 D1 is authoritative for users, appointments, assessments, treatments, products, carts, orders, payments, inventory, webhooks, notifications, and admin settings. Migrations are in `migrations/`. High-use fields have SQLite expression indexes; all D1 statements bind request values.
 
-The R2 bucket is private. Image uploads use `/api/v1/media/upload`; public catalog images are served through the backend, while clinical photos and reports use short-lived signed URLs. Video upload/storage is disabled: admin video entries must use YouTube URLs and play through YouTube streaming. Admin and patient API data is not shared-cached. The public config KV binding is reserved and currently unused.
+R2 buckets are private. `ADMIN_MEDIA_BUCKET` stores Admin-managed catalog and content images; in production it retains the existing `dr-hair-production-media` bucket so saved media remains available. `USER_MEDIA_BUCKET` stores patient-origin images, scalp/assessment images, and private clinical reports. `MEDIA_BUCKET` is a production-only legacy read/delete fallback for objects written before the split; new writes use the purpose-specific bucket. Testing uses separate Admin and user buckets without the legacy fallback. Public catalog images are served through the backend, while clinical photos and reports use short-lived signed URLs. Video upload/storage is disabled: admin video entries must use YouTube URLs and play through YouTube streaming. Admin and patient API data is not shared-cached. `PUBLIC_CONFIG_KV` stores optional usage-policy limits; an empty testing namespace uses application defaults.
 
 ## Worker secrets
 

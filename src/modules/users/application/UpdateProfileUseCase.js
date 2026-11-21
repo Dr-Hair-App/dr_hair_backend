@@ -43,7 +43,7 @@ export class UpdateProfileUseCase {
     this.imageStorage = imageStorage;
   }
 
-  async execute({ userId, name, email, contact, age, gender, city, occupation, profileUrl, verifiedLogin }) {
+  async execute({ userId, name, email, contact, age, gender, city, occupation, profileUrl, profileUrlIsTrustedUpload = false, verifiedLogin }) {
     const cleanName = String(name || '').trim();
     const cleanEmail = String(email || '').trim();
     const cleanContact = String(contact || '').trim();
@@ -88,13 +88,32 @@ export class UpdateProfileUseCase {
     if (typeof gender !== 'undefined') updatePayload.gender = String(gender || '').trim() || null;
     if (typeof city !== 'undefined') updatePayload.city = String(city || '').trim() || null;
     if (typeof occupation !== 'undefined') updatePayload.occupation = String(occupation || '').trim() || null;
-    if (typeof profileUrl !== 'undefined') updatePayload.profile_url = await validateProfileUrl(profileUrl, userId, this.imageStorage);
+    if (typeof profileUrl !== 'undefined') {
+      updatePayload.profile_url = profileUrlIsTrustedUpload
+        ? profileUrl
+        : await validateProfileUrl(profileUrl, userId, this.imageStorage);
+    }
 
     if (Object.keys(updatePayload).length === 0) {
       throw new BadRequestError('At least one profile field must be provided.');
     }
 
+    const previousProfileKey = Object.hasOwn(updatePayload, 'profile_url')
+      ? (() => {
+        try { return profileKeyFromUrl(user.profile_url); }
+        catch { return null; }
+      })()
+      : null;
+    const nextProfileKey = Object.hasOwn(updatePayload, 'profile_url')
+      ? (() => {
+        try { return profileKeyFromUrl(updatePayload.profile_url); }
+        catch { return null; }
+      })()
+      : null;
     const updatedUser = await this.userRepository.update(userId, updatePayload);
+    if (previousProfileKey && previousProfileKey !== nextProfileKey) {
+      await this.imageStorage.deleteImage(previousProfileKey).catch(() => null);
+    }
 
     return {
       user: updatedUser,

@@ -8,11 +8,16 @@ export class ReviewController {
 
   getReviews = async (req, res, next) => {
     try {
-      const { review_type, page } = req.body || {};
-      const data = await this.getReviewsUseCase.execute({
-        review_type,
-        page,
-      });
+      const review_type =
+        req.query?.category ||
+        req.query?.review_type ||
+        req.body?.category ||
+        req.body?.review_type;
+      const page = req.query?.page || req.body?.page;
+      const params = {};
+      if (review_type !== undefined) params.review_type = review_type;
+      if (page !== undefined) params.page = page;
+      const data = await this.getReviewsUseCase.execute(params);
 
       return sendSuccess(res, { data });
     } catch (err) {

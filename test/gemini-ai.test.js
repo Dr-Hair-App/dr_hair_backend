@@ -37,6 +37,15 @@ describe('GeminiAiService Unit & Integration Tests', () => {
     assert.match(result.next_step_recommendation.reason, /clinician/i);
   });
 
+  it('keeps unknown answers unknown and leaves diet/routine generation for explicit actions', () => {
+    const prompt = new GeminiAiService({ apiKey: 'test-only' })._buildPrompt({ primary_concern: 'Patchy loss' });
+    assert.match(prompt, /Unknown \/ not provided/);
+    assert.match(prompt, /Patchy loss/);
+    assert.doesNotMatch(prompt, /50-100 hairs|Vegetarian|Diffuse thinning/);
+    assert.match(prompt, /"diet_plan": \{\}/);
+    assert.match(prompt, /"daily_steps": \[\]/);
+  });
+
   it('should classify a scalp image from a mocked Gemini vision response', async () => {
     const service = new GeminiAiService({
       apiKey: 'test-key',
@@ -130,6 +139,8 @@ describe('GeminiAiService Unit & Integration Tests', () => {
     assert.ok(result.generated_by.includes('Dr. Hair Assistant'));
     assert.equal(result.ai_status, 'available');
     assert.equal(result.root_causes[0].factor, 'DHT Sensitivity');
+    assert.deepEqual(result.diet_plan, {});
+    assert.deepEqual(result.recommended_regimen, { summary: '', daily_steps: [], target_products: [] });
   });
 
   it('should verify up to five optimized private scalp photos in the assessment request', async () => {

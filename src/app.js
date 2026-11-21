@@ -148,7 +148,7 @@ export const createApp = (overrides = {}) => {
         videos: ['/api/v1/videos'],
         categories: ['/api/v1/categories', '/api/v1/categories/products', '/api/v1/categories/videos', '/api/v1/categories/services'],
         products: ['/api/v1/products', '/api/v1/products/:id'],
-        media: ['/api/v1/media/upload'],
+        media: ['/api/v1/media/assets/:objectKey', '/api/v1/media'],
         notifications: ['/api/v1/notifications', '/api/v1/notifications/device-tokens'],
         admin: ['/api/v1/admin/users', '/api/v1/admin/hair-tests', '/api/v1/admin/treatments', '/api/v1/admin/reviews'],
       },
@@ -197,8 +197,8 @@ export const createApp = (overrides = {}) => {
   app.use('/hairtest', container.routers.treatmentRouter);
 
   // Reviews Module (Mapped to /Review and /review)
-  app.use('/Review', container.routers.reviewRouter);
-  app.use('/review', container.routers.reviewRouter);
+  app.use('/Review', cacheControl({ maxAge: 60, sMaxAge: 300, staleWhileRevalidate: 600 }), container.routers.reviewRouter);
+  app.use('/review', cacheControl({ maxAge: 60, sMaxAge: 300, staleWhileRevalidate: 600 }), container.routers.reviewRouter);
 
   // Service catalog is managed as D1 categories; avoid fabricated static prices and ratings.
   app.get('/services', cacheControl({ maxAge: 60, sMaxAge: 120, staleWhileRevalidate: 300 }), container.controllers.categoryController.listServicesForHome);
@@ -206,7 +206,7 @@ export const createApp = (overrides = {}) => {
 
   // Public clinic appointment closed dates / holidays
   app.get('/api/v1/appointments/closed-dates', cacheControl({ maxAge: 60, sMaxAge: 300, staleWhileRevalidate: 600 }), container.controllers.appointmentController.listClosedDates);
-  app.get('/api/v1/appointments/availability', cacheControl({ maxAge: 0, sMaxAge: 15, staleWhileRevalidate: 30 }), container.controllers.appointmentController.getPatientAvailability);
+  app.get('/api/v1/appointments/availability', cacheControl({ maxAge: 30, sMaxAge: 60, staleWhileRevalidate: 300 }), container.controllers.appointmentController.getPatientAvailability);
 
   // App Config & Release Policies (Feature flags & version check for mobile/web clients)
   app.get('/api/v1/app/config', cacheControl({ maxAge: 60, sMaxAge: 120, staleWhileRevalidate: 300 }), container.controllers.adminController.getAppConfig);
@@ -218,7 +218,8 @@ export const createApp = (overrides = {}) => {
   app.use('/api/v1/users', container.routers.userRouter);
   app.use('/api/v1/hair-tests', container.routers.hairTestRouter);
   app.use('/api/v1/treatments', container.routers.treatmentRouter);
-  app.use('/api/v1/reviews', container.routers.reviewRouter);
+  app.get('/api/v1/reviews', cacheControl({ maxAge: 60, sMaxAge: 300, staleWhileRevalidate: 600 }), container.controllers.reviewController.getReviews);
+  app.use('/api/v1/reviews', cacheControl({ maxAge: 60, sMaxAge: 300, staleWhileRevalidate: 600 }), container.routers.reviewRouter);
   app.use('/api/v1/notifications', container.routers.notificationRouter);
   app.use('/api/v1/media', container.routers.mediaRouter);
   app.use('/api/v1/videos', cacheControl({ maxAge: 30, sMaxAge: 60, staleWhileRevalidate: 120 }), container.routers.videoPublicRouter);
@@ -231,6 +232,7 @@ export const createApp = (overrides = {}) => {
   app.use('/api/v1/cart', container.routers.cartRouter);
   app.use('/cart', container.routers.cartRouter);
   app.use('/api/v1/content', cacheControl({ maxAge: 60, sMaxAge: 120, staleWhileRevalidate: 300 }), container.routers.contentRouter);
+  app.get('/api/v1/commerce/coupons', cacheControl({ maxAge: 60, sMaxAge: 180, staleWhileRevalidate: 360 }), (req, res, next) => container.controllers.commerceController.listCoupons(req, res, next));
   app.use('/api/v1/commerce', container.routers.commerceRouter);
   app.use('/api/v1/patient/addresses', container.routers.patientAddressRouter);
   app.use('/api/v1/patient/orders', container.routers.patientOrderRouter);

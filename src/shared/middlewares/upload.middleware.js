@@ -50,5 +50,19 @@ const streamingScalpUpload = multer({
 
 export const uploadScalpPhotosToR2 = streamingScalpUpload;
 
+const streamingProfileUpload = multer({
+  storage: new R2MediaStorage(),
+  limits: {
+    fileSize: config.upload.maxFileSize,
+    files: 1,
+    fields: config.upload.maxFieldsPerRequest,
+    fieldSize: config.upload.maxFieldSize,
+    parts: config.upload.maxPartsPerRequest,
+  },
+  fileFilter,
+});
+
+export const uploadProfilePhotoToR2 = streamingProfileUpload.single('profile');
+
 // Generic multipart form data parser without files (for text-only FormData).
 export const parseFormData = multer().none();

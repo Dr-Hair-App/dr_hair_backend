@@ -37,13 +37,18 @@ const makeForm = (payload, files = []) => {
 
 test('admin product multipart API creates, replaces, removes, and deletes R2 images safely', async (t) => {
   const originalProducts = [...store.products];
-  const objects = new Map();
+  const adminObjects = new Map();
+  const userObjects = new Map();
   const deletedKeys = [];
-  setStorageBindings({ MEDIA_BUCKET: {
+  const makeBucket = (objects) => ({
     async put(key, value, options) { objects.set(key, { value: Buffer.from(value), options }); },
     async delete(key) { deletedKeys.push(key); objects.delete(key); },
     async head(key) { return objects.has(key) ? { customMetadata: objects.get(key).options.customMetadata } : null; },
-  } });
+  });
+  setStorageBindings({
+    ADMIN_MEDIA_BUCKET: makeBucket(adminObjects),
+    USER_MEDIA_BUCKET: makeBucket(userObjects),
+  });
 
   const container = createContainer();
   const { app } = createApp({ container });
@@ -68,9 +73,11 @@ test('admin product multipart API creates, replaces, removes, and deletes R2 ima
       assert.equal(product.name, 'Multipart Product Test');
       assert.equal(product.media.length, 1);
       assert.equal(product.media[0].mime_type, 'image/png');
+      assert.match(product.media[0].public_id, /^drhair\/images\/admin\/product\//);
       assert.equal(product.media[0].altText, 'Front label');
       assert.equal(product.images[0], product.media[0].url);
-      assert.equal(objects.has(product.media[0].public_id), true);
+      assert.equal(adminObjects.has(product.media[0].public_id), true);
+      assert.equal(userObjects.size, 0);
       store.products = store.products.filter((item) => item.id !== product.id);
       store.products.unshift(product);
     });
@@ -92,8 +99,9 @@ test('admin product multipart API creates, replaces, removes, and deletes R2 ima
       const replacementKey = body.data.media[0].public_id;
       assert.notEqual(replacementKey, originalKey);
       assert.deepEqual(deletedKeys, [originalKey]);
-      assert.equal(objects.has(originalKey), false);
-      assert.equal(objects.has(replacementKey), true);
+      assert.equal(adminObjects.has(originalKey), false);
+      assert.equal(adminObjects.has(replacementKey), true);
+      assert.equal(userObjects.size, 0);
     });
 
     await t.test('empty media list removes the attached image from product and R2', async () => {
@@ -108,7 +116,7 @@ test('admin product multipart API creates, replaces, removes, and deletes R2 ima
       const body = await response.json();
       assert.deepEqual(body.data.media, []);
       assert.deepEqual(body.data.images, []);
-      assert.equal(objects.has(oldKey), false);
+      assert.equal(adminObjects.has(oldKey), false);
       assert.ok(deletedKeys.includes(oldKey));
     });
 

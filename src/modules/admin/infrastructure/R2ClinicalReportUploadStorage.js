@@ -85,7 +85,7 @@ function safeOwnerId(value) {
 export class R2ClinicalReportUploadStorage {
   _handleFile(req, file, callback) {
     const bucket = getMediaBucket();
-    if (!bucket) return callback(new Error('R2 MEDIA_BUCKET is not configured.'));
+    if (!bucket) return callback(new Error('R2 USER_MEDIA_BUCKET is not configured.'));
     const ownerId = safeOwnerId(req.params?.userId);
     const format = reportFormats.get(file.mimetype);
     if (!format) return callback(new BadRequestError('Upload a supported PDF, Office document, text file, or image report.'));

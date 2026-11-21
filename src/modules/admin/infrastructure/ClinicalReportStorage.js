@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestError } from '../../../shared/errors/index.js';
-import { getMediaBucket } from '../../../shared/storage/runtime.js';
+import { getMediaBucket, getBucketsForKey } from '../../../shared/storage/runtime.js';
 import { compressLosslessly, createPrivateDownloadUrl } from '../../media/infrastructure/R2MediaStorage.js';
 import { clinicalReportFormat, validateReportSignature } from './R2ClinicalReportUploadStorage.js';
 
@@ -23,7 +23,7 @@ export async function uploadClinicalReport(file, userId, { compress = true } = {
     throw new BadRequestError('A supported, signature-verified report file is required.');
   }
   const bucket = getMediaBucket();
-  if (!bucket) throw new Error('R2 MEDIA_BUCKET is not configured.');
+  if (!bucket) throw new Error('R2 USER_MEDIA_BUCKET is not configured.');
   // Losslessly compress text, PDF, and Office documents when gzip yields a smaller payload.
   // Images and already-compressed formats are preserved byte-for-byte.
   const isCompressible = typeof file.mimetype === 'string' && (
@@ -63,7 +63,12 @@ export function createClinicalReportDownloadUrl(key, format, { attachment = true
 }
 
 export async function deleteClinicalReport(key) {
-  const bucket = getMediaBucket();
-  if (!bucket) throw new Error('R2 MEDIA_BUCKET is not configured.');
-  await bucket.delete(key);
+  const buckets = getBucketsForKey(key);
+  if (!buckets.length) throw new Error('R2 USER_MEDIA_BUCKET is not configured.');
+  for (const bucket of buckets) {
+    if (typeof bucket.head === 'function' && !(await bucket.head(key))) continue;
+    await bucket.delete(key);
+    return;
+  }
+  await buckets[0].delete(key);
 }

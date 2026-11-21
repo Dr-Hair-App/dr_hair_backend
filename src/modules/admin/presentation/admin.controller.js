@@ -1154,7 +1154,7 @@ export class AdminController {
   createAdminReview = async (req, res, next) => {
     try {
       const {
-        name, rating, category, message, avatar = '', treatment = '', duration = '',
+        name, rating, category, message, avatar = '', media_assets = null, treatment = '', duration = '',
         review_type = 'doctor', page = 'home', status = 'draft', patient_consent_confirmed = false,
       } = req.body || {};
       if (status === 'active' && !hasPermission(req.user, 'content.publish')) {
@@ -1171,6 +1171,7 @@ export class AdminController {
         category: category.trim(),
         message: message.trim(),
         avatar,
+        media_assets,
         treatment: treatment.trim(),
         duration: duration.trim(),
         review_type,
@@ -1696,6 +1697,9 @@ export class AdminController {
 
       let flags = {};
       let appointmentBilling = {
+        configured: true,
+        pay_at_clinic_enabled: true,
+        online_pay_enabled: true,
         payment_required: false,
         consultation_fee: 500,
         currency: 'INR',
@@ -1707,8 +1711,17 @@ export class AdminController {
         flags = Object.fromEntries(flagList.map((f) => [f.key, f.enabled]));
         const billingFlag = flagList.find((f) => f.key === 'clinic_appointment_billing');
         if (billingFlag) {
+          const payAtClinic = billingFlag.metadata?.pay_at_clinic_enabled != null
+            ? Boolean(billingFlag.metadata.pay_at_clinic_enabled)
+            : (billingFlag.metadata?.payment_required != null ? !billingFlag.metadata.payment_required : true);
+          const onlinePay = billingFlag.metadata?.online_pay_enabled != null
+            ? Boolean(billingFlag.metadata.online_pay_enabled)
+            : (billingFlag.metadata?.payment_required != null ? Boolean(billingFlag.metadata.payment_required) : true);
           appointmentBilling = {
-            payment_required: Boolean(billingFlag.enabled),
+            configured: true,
+            pay_at_clinic_enabled: payAtClinic || !onlinePay,
+            online_pay_enabled: onlinePay,
+            payment_required: onlinePay && !payAtClinic,
             consultation_fee: Number(billingFlag.metadata?.consultation_fee ?? 500),
             currency: String(billingFlag.metadata?.currency ?? 'INR'),
             first_appointment_free: Boolean(billingFlag.metadata?.first_appointment_free ?? false),

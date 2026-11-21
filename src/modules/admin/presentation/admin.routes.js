@@ -2,6 +2,13 @@ import { Router } from 'express';
 import { authenticateToken } from '../../../shared/middlewares/auth.middleware.js';
 import { requireAdmin, requireSuperAdmin, requirePermission, requireAnyPermission } from '../../../shared/middlewares/admin.middleware.js';
 import { uploadClinicalReportFile } from '../../../shared/middlewares/clinical-report-upload.middleware.js';
+import { enforceUploadRequestSize } from '../../../shared/middlewares/upload.middleware.js';
+import {
+  cleanupAdminContentUploadOnError,
+  parseAdminContentPayload,
+  uploadAdminContentMedia,
+  validateAdminContentUpload,
+} from '../../../shared/middlewares/admin-content-media-upload.middleware.js';
 import { validate } from '../../../shared/validators/validate.middleware.js';
 import {
   adminReviewIdSchema,
@@ -110,8 +117,8 @@ export const createAdminRouter = ({ adminController, notificationController, vid
 
   // Reviews
   router.get('/reviews', requireAnyPermission('content.edit', 'content.publish'), adminController.listReviews);
-  router.post('/reviews', requirePermission('content.edit'), validate({ body: createAdminReviewSchema }), adminController.createAdminReview);
-  router.put('/reviews/:id', requirePermission('content.edit'), validate({ params: adminReviewIdSchema, body: updateAdminReviewSchema }), adminController.updateAdminReview);
+  router.post('/reviews', requirePermission('content.edit'), enforceUploadRequestSize, uploadAdminContentMedia, parseAdminContentPayload('review'), validateAdminContentUpload({ body: createAdminReviewSchema }), adminController.createAdminReview, cleanupAdminContentUploadOnError);
+  router.put('/reviews/:id', requirePermission('content.edit'), enforceUploadRequestSize, uploadAdminContentMedia, parseAdminContentPayload('review'), validateAdminContentUpload({ params: adminReviewIdSchema, body: updateAdminReviewSchema }), adminController.updateAdminReview, cleanupAdminContentUploadOnError);
   router.delete('/reviews/:id', requirePermission('content.edit'), validate({ params: adminReviewIdSchema }), adminController.deleteAdminReview);
   router.patch('/reviews/status', requirePermission('content.publish'), validate({ body: adminReviewStatusSchema }), adminController.updateReviewStatus);
   router.post('/notifications/send-to-user', requireAnyPermission('notifications.manage'), notificationController.sendToUser);
@@ -131,9 +138,9 @@ export const createAdminRouter = ({ adminController, notificationController, vid
 
   if (contentController) {
     router.get('/content', requireAnyPermission('content.edit', 'content.publish'), contentController.listAdmin);
-    router.post('/content', requirePermission('content.edit'), validate({ body: createAdminContentSchema }), contentController.createContent);
+    router.post('/content', requirePermission('content.edit'), enforceUploadRequestSize, uploadAdminContentMedia, parseAdminContentPayload('content'), validateAdminContentUpload({ body: createAdminContentSchema }), contentController.createContent, cleanupAdminContentUploadOnError);
     router.patch('/content/:id/status', requirePermission('content.publish'), validate({ params: adminContentIdSchema, body: updateAdminContentStatusSchema }), contentController.updateStatus);
-    router.put('/content/:id', requirePermission('content.edit'), validate({ params: adminContentIdSchema, body: updateAdminContentSchema }), contentController.updateContent);
+    router.put('/content/:id', requirePermission('content.edit'), enforceUploadRequestSize, uploadAdminContentMedia, parseAdminContentPayload('content'), validateAdminContentUpload({ params: adminContentIdSchema, body: updateAdminContentSchema }), contentController.updateContent, cleanupAdminContentUploadOnError);
     router.delete('/content/:id', requirePermission('content.edit'), validate({ params: adminContentIdSchema }), contentController.deleteContent);
   }
 

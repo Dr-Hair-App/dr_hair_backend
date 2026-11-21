@@ -9,49 +9,6 @@ export class MediaController {
     this.mediaReferenceRepository = mediaReferenceRepository;
   }
 
-  upload = async (req, res, next) => {
-    try {
-      const assets = [
-        ...(req.files?.file || []),
-        ...(req.files?.files || []),
-      ];
-      if (assets.length === 0 || assets.some((asset) => !asset.secureUrl || !asset.publicId)) {
-        throw new BadRequestError('Attach one or more media files in the "file" or "files" field.');
-      }
-
-      const items = assets.map((asset) => ({
-        asset_id: asset.publicId,
-        public_id: asset.publicId,
-        url: asset.secureUrl,
-        delivery_type: asset.deliveryType,
-        purpose: asset.purpose,
-        resource_type: asset.resourceType,
-        format: asset.format,
-        mime_type: asset.mimetype,
-        bytes: asset.bytes,
-        original_bytes: asset.originalBytes,
-        compressed: asset.compressed,
-        original_name: asset.originalName,
-        sha256: asset.sha256,
-        processing_status: asset.processingStatus || 'original_preserved',
-        width: asset.width,
-        height: asset.height,
-        duration: asset.duration,
-      }));
-
-      return sendSuccess(res, {
-        message: 'Media uploaded successfully.',
-        statusCode: 201,
-        data: {
-          ...(items.length === 1 ? items[0] : {}),
-          items,
-        },
-      });
-    } catch (error) {
-      next(error);
-    }
-  };
-
   remove = async (req, res, next) => {
     try {
       const { public_id: publicId, resource_type: resourceType } = req.body || {};

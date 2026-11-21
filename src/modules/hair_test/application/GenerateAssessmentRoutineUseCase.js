@@ -19,40 +19,22 @@ export class GenerateAssessmentRoutineUseCase {
     if (!assessment || assessment.ai_status === 'unavailable') {
       throw new BadRequestError('A completed AI assessment is required before creating a care routine.');
     }
+    const safetyRecommendation = this.geminiAiService.getConservativeNextStepRecommendation?.(hairTest);
+    if (assessment.next_step_recommendation?.type === 'doctor_appointment'
+      || safetyRecommendation?.type === 'doctor_appointment') {
+      throw new BadRequestError('Please speak with a clinician before creating a routine for this assessment.');
+    }
 
-    let routinePlan;
-    if (typeof this.geminiAiService?.generatePersonalizedRoutine === 'function') {
-      routinePlan = await this.geminiAiService.generatePersonalizedRoutine(hairTest);
-    } else {
-      routinePlan = {
-        summary: 'Clinical routine designed to support scalp barrier health and nutrient flow.',
-        steps: [
-          { title: 'Morning Gentle Scalp Cleansing', subtitle: 'Wash with lukewarm water and a pH-balanced gentle cleanser', category: 'Cleansing', time_of_day: 'Morning' },
-          { title: 'Follicular Stimulation Massage', subtitle: '4 minutes gentle fingertip circular motion to enhance microcirculation', category: 'Massage', time_of_day: 'Morning' },
-          { title: 'Mid-Day Hydration & Scalp Protection', subtitle: 'Drink 500ml water and protect hair from harsh direct sun or pollution', category: 'Lifestyle', time_of_day: 'Afternoon' },
-          { title: 'Evening Botanical Regrowth Tonic', subtitle: 'Apply nourishing botanical/peptide scalp serum on thinning regions', category: 'Nourishment', time_of_day: 'Evening' },
-          { title: 'Pre-Sleep Follicle Rest & Care', subtitle: 'Avoid tight hairstyles, use smooth pillowcase, and aim for 7-8h restful sleep', category: 'Sleep', time_of_day: 'Night' },
-        ],
-        generated_by: 'Dr. Hair Assistant',
-        generated_at: new Date().toISOString(),
-      };
+    if (typeof this.geminiAiService?.generatePersonalizedRoutine !== 'function') {
+      throw new BadRequestError('AI routine generation is unavailable. Please try again later.');
+    }
+    const routinePlan = await this.geminiAiService.generatePersonalizedRoutine(hairTest);
+    if (!routinePlan || !Array.isArray(routinePlan.steps) || !routinePlan.steps.length) {
+      throw new BadRequestError('AI could not create this routine. Please try again later.');
     }
 
     const updatedAssessment = { ...assessment, custom_routine: routinePlan };
     const updatedTest = await this.hairTestRepository.saveAiAssessment(referenceNo, updatedAssessment);
-
-    // Sync generated routine steps to treatment routine repository if available
-    if (this.treatmentRepository?.addRoutineStep && Array.isArray(routinePlan.steps)) {
-      for (const step of routinePlan.steps) {
-        await this.treatmentRepository.addRoutineStep(userId, {
-          title: step.title,
-          subtitle: step.subtitle || '',
-          category: step.category || 'Daily care',
-          time_of_day: step.time_of_day || 'Daily',
-          created_by: 'ai_assessment',
-        }).catch(() => null);
-      }
-    }
 
     return {
       message: 'Your personalized daily care routine is ready.',

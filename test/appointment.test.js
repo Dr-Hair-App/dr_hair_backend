@@ -304,4 +304,84 @@ test('Appointment Booking & Payment Endpoints', async (t) => {
     const lastNotif = notifs[0];
     assert.ok(lastNotif.body.includes('Doctor unavailable due to state conference'));
   });
+
+  await t.test('admin configures dual payment modes (pay_at_clinic_enabled and online_pay_enabled)', async () => {
+    let responseData = null;
+    const req = {
+      user: { email: 'admin@drhair.test', role: 'admin' },
+      body: {
+        pay_at_clinic_enabled: true,
+        online_pay_enabled: true,
+        consultation_fee: 600,
+        first_appointment_free: false,
+      },
+    };
+    const res = {
+      status() { return this; },
+      json(payload) { responseData = payload; return this; },
+    };
+
+    await appointmentController.updateBillingConfigAdmin(req, res, (err) => {
+      if (err) throw err;
+    });
+
+    assert.equal(responseData.status, 'success');
+    assert.equal(responseData.data.pay_at_clinic_enabled, true);
+    assert.equal(responseData.data.online_pay_enabled, true);
+    assert.equal(responseData.data.consultation_fee, 600);
+    assert.equal(responseData.data.configured, true);
+
+    // Patient checks billing config
+    let patientBilling = null;
+    const patientReq = { user: { id: userId } };
+    const patientRes = {
+      status() { return this; },
+      json(payload) { patientBilling = payload; return this; },
+    };
+    await appointmentController.getBillingConfigPatient(patientReq, patientRes, (err) => {
+      if (err) throw err;
+    });
+
+    assert.equal(patientBilling.data.pay_at_clinic_enabled, true);
+    assert.equal(patientBilling.data.online_pay_enabled, true);
+    assert.equal(patientBilling.data.consultation_fee, 600);
+  });
+
+  await t.test('disabling both payment modes is rejected by admin validation', async () => {
+    const req = {
+      user: { email: 'admin@drhair.test', role: 'admin' },
+      body: {
+        pay_at_clinic_enabled: false,
+        online_pay_enabled: false,
+        consultation_fee: 600,
+      },
+    };
+    const res = {
+      status() { return this; },
+      json() { return this; },
+    };
+
+    await assert.rejects(
+      async () => {
+        await appointmentController.updateBillingConfigAdmin(req, res, (err) => {
+          if (err) throw err;
+        });
+      },
+      { name: 'BadRequestError' }
+    );
+  });
+
+  await t.test('default billing config returns configured: false and consultation_fee: null when uncustomized', async () => {
+    const emptyContainer = createContainer({
+      featureFlagRepository: {
+        getFlag: async () => null,
+      },
+    });
+    const controller = emptyContainer.controllers.appointmentController;
+    const config = await controller.getBillingConfig();
+    assert.equal(config.configured, false);
+    assert.equal(config.consultation_fee, null);
+    assert.equal(config.pay_at_clinic_enabled, true);
+    assert.equal(config.online_pay_enabled, true);
+  });
 });
