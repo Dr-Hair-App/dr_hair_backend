@@ -18,7 +18,9 @@ export const errorHandler = (err, req, res, next) => {
     if (statusCode >= 500) {
       return sendError(res, {
         message: config.env === 'production' ? 'Internal Server Error' : err.message,
-        code: 'INTERNAL_ERROR',
+        // Keep the public message generic while preserving stable operational
+        // codes (for example SHIPROCKET_NOT_CONFIGURED) for client diagnostics.
+        code: err.code || 'INTERNAL_ERROR',
         statusCode,
         meta: { request_id: req.id || null },
       });

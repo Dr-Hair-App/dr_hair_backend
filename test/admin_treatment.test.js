@@ -10,6 +10,45 @@ const responseRecorder = () => ({
 });
 
 describe('Admin prescription medicines', () => {
+  it('sends an inbox and routine-screen push notification when a clinician adds routine steps', async () => {
+    const notifications = [];
+    let tokenLookups = 0;
+    const controller = new AdminController({
+      hairTestRepository: { findByReferenceNo: async (referenceNo) => ({ id: 101, reference_no: referenceNo, userId: 12 }) },
+      treatmentRepository: { create: async (treatment) => ({ toResponse: () => ({ id: 51, ...treatment }) }) },
+      notificationRepository: { create: async (item) => { const saved = { id: 'ntf-routine-1', ...item }; notifications.push(saved); return saved; } },
+      deviceTokenRepository: { listByUserId: async (userId) => { assert.equal(userId, 12); tokenLookups += 1; return [{ token: 'mock-routine-device' }]; } },
+    });
+    const res = responseRecorder();
+
+    await controller.createTreatment({ body: {
+      reference_no: 'HT-2026-0042',
+      treatment_name: 'Daily care plan',
+      routine_steps: [{ title: 'Gentle scalp wash', subtitle: 'Wash as advised', category: 'Cleansing', time_of_day: 'Morning' }],
+    } }, res, (error) => { throw error; });
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(notifications.length, 1);
+    assert.equal(notifications[0].userId, 12);
+    assert.equal(notifications[0].type, 'reminder');
+    assert.equal(notifications[0].destination.screen, 'routine');
+    assert.equal(tokenLookups, 1);
+  });
+
+  it('does not send a routine notification when the treatment has no routine steps', async () => {
+    let notificationCalls = 0;
+    const controller = new AdminController({
+      hairTestRepository: { findByReferenceNo: async (referenceNo) => ({ id: 101, reference_no: referenceNo, userId: 12 }) },
+      treatmentRepository: { create: async (treatment) => ({ toResponse: () => ({ id: 51, ...treatment }) }) },
+      notificationRepository: { create: async () => { notificationCalls += 1; return {}; } },
+    });
+    await controller.createTreatment({ body: {
+      reference_no: 'HT-2026-0042', treatment_name: 'Medication plan',
+      medications: [{ name: 'Serum', dose: '1 ml', frequency: 'daily' }],
+    } }, responseRecorder(), (error) => { throw error; });
+    assert.equal(notificationCalls, 0);
+  });
+
   it('validates and saves selected medicines with a treatment plan', async () => {
     let saved;
     const controller = new AdminController({

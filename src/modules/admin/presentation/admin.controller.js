@@ -474,6 +474,42 @@ export class AdminController {
     }
   };
 
+  notifyPatientRoutineAdded = async (patientId) => {
+    if (!this.notificationRepository) return { inboxCreated: false, pushSent: 0, pushFailed: 0, pushStatus: 'unavailable' };
+    let notification;
+    try {
+      notification = await this.notificationRepository.create({
+        userId: Number(patientId),
+        title: 'Your daily routine is ready',
+        body: 'Your clinic added care steps to your daily routine. Open the tracker to review and mark them complete.',
+        type: 'reminder',
+        destination: { type: 'screen', screen: 'routine' },
+        data: { destination_type: 'screen', screen: 'routine' },
+      });
+      if (!this.deviceTokenRepository) return { inboxCreated: true, pushSent: 0, pushFailed: 0, pushStatus: 'unavailable' };
+      const tokenRows = await this.deviceTokenRepository.listByUserId(patientId);
+      const tokens = [...new Set((tokenRows || []).map((row) => row?.token).filter((token) => typeof token === 'string' && token.length > 0))];
+      if (!tokens.length) return { inboxCreated: true, pushSent: 0, pushFailed: 0, pushStatus: 'no_devices' };
+      const results = await Promise.allSettled(tokens.map((token) => sendPushNotification({
+        token,
+        title: notification.title,
+        body: notification.body,
+        data: {
+          notification_id: notification.id,
+          type: 'reminder',
+          destination_type: 'screen',
+          screen: 'routine',
+        },
+      })));
+      const pushSent = results.filter((result) => result.status === 'fulfilled').length;
+      const pushFailed = results.length - pushSent;
+      return { inboxCreated: true, pushSent, pushFailed, pushStatus: pushSent > 0 ? 'sent' : 'failed' };
+    } catch {
+      // Persisted care plans and any inbox notification stay authoritative if FCM is unavailable.
+      return { inboxCreated: Boolean(notification), pushSent: 0, pushFailed: 0, pushStatus: notification ? 'unavailable' : 'not_created' };
+    }
+  };
+
   uploadPatientReport = async (req, res, next) => {
     let uploadedAsset = req.file?.key ? { public_id: req.file.key } : null;
     let reportPersisted = false;
@@ -958,6 +994,9 @@ export class AdminController {
         }).catch(() => null);
       }
       await this.patientActivityRepository?.record({ userId: hairTest.userId, type: 'care_plan', title: 'Care plan added', summary: treatment_name.trim(), actor: String(req.user?.email || req.user?.login || 'Super Admin'), metadata: { reference_no: hairTest.reference_no } });
+      if (normalizedRoutineSteps.length > 0) {
+        await this.notifyPatientRoutineAdded(hairTest.userId);
+      }
       return sendSuccess(res, {
         message: 'Treatment plan created.',
         data: { ...treatment.toResponse(), reference_no: treatment.reference_no },
