@@ -2,12 +2,15 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import test from 'node:test';
 import { adminApiTraceMiddleware } from '../src/shared/middlewares/admin-api-trace.middleware.js';
+import { requestIdMiddleware } from '../src/shared/middlewares/requestId.middleware.js';
+import { runWithExecutionContext } from '../src/shared/runtime/execution-context.js';
 
 function response(statusCode = 200) {
   const emitter = new EventEmitter();
   emitter.statusCode = statusCode;
   emitter.headers = { 'cache-control': 'private, no-store' };
   emitter.getHeader = (name) => emitter.headers[name.toLowerCase()];
+  emitter.setHeader = (name, value) => { emitter.headers[name.toLowerCase()] = value; };
   return emitter;
 }
 
@@ -50,6 +53,37 @@ test('admin API trace logs request ID, route template, status, duration, and cac
   });
   const serialized = JSON.stringify(records[0]);
   assert.doesNotMatch(serialized, /987654|private-name|admin@example|Private Patient/);
+});
+
+test('server request ID header correlates with the persisted trace while preserving caller X-Request-ID', async () => {
+  const persisted = [];
+  const deferred = [];
+  const callerRequestId = 'client-trace-2026-11-21';
+  const req = {
+    headers: { 'x-request-id': callerRequestId },
+    method: 'GET',
+    originalUrl: '/api/v1/admin/users/987654?search=private-name',
+    user: { id: 1, role: 'admin' },
+    route: { path: '/users/:userId' },
+  };
+  const res = response(200);
+  const traceMiddleware = adminApiTraceMiddleware({
+    logger: { info() {}, warn() {} },
+    record: async (event) => { persisted.push(event); },
+  });
+
+  runWithExecutionContext({ waitUntil: (promise) => deferred.push(promise) }, () => {
+    requestIdMiddleware(req, res, () => traceMiddleware(req, res, () => {}));
+  });
+  res.emit('finish');
+  await Promise.all(deferred);
+
+  assert.equal(res.getHeader('x-request-id'), callerRequestId);
+  assert.match(res.getHeader('x-server-request-id'), /^req_[0-9a-f-]{36}$/);
+  assert.equal(persisted.length, 1);
+  assert.equal(persisted[0].requestId, res.getHeader('x-server-request-id'));
+  assert.equal(persisted[0].route, '/users/:userId');
+  assert.doesNotMatch(JSON.stringify(persisted[0]), /987654|private-name/);
 });
 
 test('admin API trace omits patient requests and includes unauthenticated admin-route failures', () => {

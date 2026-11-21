@@ -17,5 +17,8 @@ export function requestIdMiddleware(req, res, next) {
   req.id = requestId;
   req.serverRequestId = serverRequestId;
   res.setHeader('x-request-id', requestId);
+  // Keep the compatibility header above caller-controllable while exposing a
+  // separate server-owned ID that matches persisted Admin API traffic.
+  res.setHeader('x-server-request-id', serverRequestId);
   next();
 }

@@ -29,9 +29,12 @@ async function createAccount(key, permissions) {
   return TokenService.generateToken({ id: account.id, email, role: 'admin' });
 }
 
-async function request(path, token) {
+async function request(path, token, extraHeaders = {}) {
   const response = await fetch(`${baseUrl}${path}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...extraHeaders,
+    },
   });
   return { response, payload: await response.json() };
 }
@@ -69,6 +72,17 @@ describe('Admin API traffic route', () => {
     assert.equal(payload.data.items[0].duration_ms, 84.2);
     assert.equal(payload.meta.retention_days, 30);
     assert.doesNotMatch(JSON.stringify(payload), /patient|body|email|query-string/);
+  });
+
+  it('exposes the server request ID to allowed browser origins', async () => {
+    const { response } = await request('/admin/api-traffic', permittedToken, {
+      Origin: 'http://localhost:3001',
+      'X-Request-ID': 'admin-browser-trace-123',
+    });
+    const exposedHeaders = response.headers.get('access-control-expose-headers') || '';
+    assert.match(response.headers.get('x-request-id') || '', /^admin-browser-trace-123$/);
+    assert.match(response.headers.get('x-server-request-id') || '', /^req_[0-9a-f-]{36}$/);
+    assert.match(exposedHeaders.toLowerCase(), /x-server-request-id/);
   });
 
   it('rejects invalid ranges and unknown query filters', async () => {

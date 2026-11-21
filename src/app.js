@@ -81,6 +81,7 @@ export const createApp = (overrides = {}) => {
   }));
   app.use(
     cors({
+      exposedHeaders: ['X-Request-ID', 'X-Server-Request-ID'],
       origin(origin, callback) {
         if (!origin) {
           return callback(null, true);

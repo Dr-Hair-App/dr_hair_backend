@@ -635,9 +635,9 @@ paths:
     post:
       tags: [Hair tests]
       summary: Check whether an uploaded photo shows a clear scalp
-      description: Authenticated photo verification. When reference_image is supplied, the service also compares the target photo with that reference for same-person consistency. Both images are sent to the configured vision provider; do not attach another patient's image.
+      description: Optionally authenticated photo verification; send a registered patient's bearer token when available so the daily quota is applied per patient, otherwise it is applied per client IP. When reference_image is supplied, the service also compares the target photo with that reference for same-person consistency. Both images are sent to the configured vision provider. The caller must supply the same patient's own baseline photo; the API does not verify image provenance. Multipart requests accept one image and at most one reference_image (two files total), with a 25 MiB per-file limit and a 90 MiB complete-request ceiling. The result is a visual quality signal, not proof of identity or a diagnosis.
       x-legacy-path: /HairTest/detect_scalp_image
-      security: [{ bearerAuth: [] }]
+      security: [{ bearerAuth: [] }, {}]
       requestBody:
         required: true
         content:
@@ -648,7 +648,7 @@ paths:
               properties:
                 label: { type: string, maxLength: 80, default: Scalp }
                 image: { type: string, format: binary, description: Target scalp photo; maximum 25 MiB }
-                reference_image: { type: string, format: binary, description: Optional previously captured scalp photo from the same patient's active assessment; maximum 25 MiB }
+                reference_image: { type: string, format: binary, description: Optional baseline scalp photo supplied by the caller; maximum 25 MiB. The API does not verify its provenance. }
       responses:
         '200':
           description: Scalp verification result. A different-person verdict is a photo-quality signal and should be confirmed by the patient or clinic if disputed.
@@ -668,15 +668,13 @@ paths:
                           detected_angle: { type: string }
                           follicle_visibility: { type: string }
                           same_person: { type: boolean }
-        '413': { description: Complete multipart request exceeds 90 MiB }
-        '429': { $ref: '#/components/responses/RateLimited' }
-        '503': { description: Usage protection is temporarily unavailable }
                           message: { type: string }
                           details: { type: string }
                           source: { type: string }
         '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '413': { description: Uploaded image exceeds the configured 25 MiB per-file limit }
+        '413': { description: Either an uploaded image exceeds 25 MiB per file or the complete multipart request exceeds 90 MiB. }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { description: Usage protection is temporarily unavailable }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /api/v1/hair-tests/hair_test:
