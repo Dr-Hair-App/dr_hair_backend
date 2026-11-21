@@ -25,9 +25,9 @@ export class ClinicalReportRepository {
 
   async listSharedByUserId(userId) {
     if (isDatabaseConnected()) {
-      return ClinicalReportModel.find({ userId: Number(userId), visibility: 'Shared', deleted_at: null }).sort({ created_at: -1 }).lean();
+      return ClinicalReportModel.find({ userId: Number(userId), visibility: 'Shared', scanning_status: 'clean', deleted_at: null }).sort({ created_at: -1 }).lean();
     }
-    return store.clinicalReports.filter((report) => Number(report.userId) === Number(userId) && report.visibility === 'Shared' && !report.deleted_at);
+    return store.clinicalReports.filter((report) => Number(report.userId) === Number(userId) && report.visibility === 'Shared' && report.scanning_status === 'clean' && !report.deleted_at);
   }
 
   async listArchivedByUserId(userId) {
@@ -91,11 +91,23 @@ export class ClinicalReportRepository {
     const sharedAt = visibility === 'Shared' ? new Date() : null;
     const currentVisibility = await this.findByUserIdAndId(userId, id);
     if (!currentVisibility) return { report: null, changed: false };
+    // Keep the safety invariant at the persistence boundary as well as in the
+    // controller. The status can change between the controller's check and
+    // this write, so a Shared transition must be conditional on a clean scan.
+    if (visibility === 'Shared' && currentVisibility.scanning_status !== 'clean') {
+      return { report: currentVisibility, changed: false };
+    }
     if ((currentVisibility.visibility || 'Private') === visibility) return { report: currentVisibility, changed: false };
     const event = { action: visibility === 'Shared' ? 'shared' : 'hidden', visibility, changed_by: changedBy, changed_at: new Date(), patient_consent_confirmed: patientConsentConfirmed };
     if (isDatabaseConnected()) {
       const report = await ClinicalReportModel.findOneAndUpdate(
-        { userId: Number(userId), id, deleted_at: null, visibility: { $ne: visibility } },
+        {
+          userId: Number(userId),
+          id,
+          deleted_at: null,
+          visibility: { $ne: visibility },
+          ...(visibility === 'Shared' ? { scanning_status: 'clean' } : {}),
+        },
         { $set: { visibility, shared_at: sharedAt }, $push: { visibility_history: event } },
         { new: true, runValidators: true },
       ).lean();

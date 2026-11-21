@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticateToken } from '../../../shared/middlewares/auth.middleware.js';
+import { authenticateToken, optionalAuth } from '../../../shared/middlewares/auth.middleware.js';
 import { requireRegisteredUser } from '../../../shared/middlewares/registered-user.middleware.js';
 import { enforceUploadRequestSize, uploadScalpPhotos, uploadScalpPhotosToR2 } from '../../../shared/middlewares/upload.middleware.js';
 import { dailyUsageLimit } from '../../../shared/middlewares/daily-usage-limit.js';
@@ -53,13 +53,28 @@ export const createHairTestRouter = ({ hairTestController }) => {
   router.post('/:referenceNo/diet_plan', authenticateToken, requireRegisteredUser, hairTestController.generateDietPlan);
   router.post('/:referenceNo/routine', authenticateToken, requireRegisteredUser, hairTestController.generateDailyRoutine);
 
+  const scalpDetectionDailyLimit = dailyUsageLimit({
+    feature: 'hair_scalp_detection',
+    defaultLimit: 120,
+    subject: (req) => {
+      if (req.user?.id) return `patient:${req.user.id}`;
+      const clientIp = req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.headers['x-device-id'] || 'anonymous';
+      return `client:${clientIp}`;
+    },
+  });
+  const detectUploadFields = uploadScalpPhotos.fields([
+    { name: 'image', maxCount: 1 },
+    { name: 'reference_image', maxCount: 1 },
+  ]);
+
   // AI Visual Scalp & Hair Image Detection
   // POST /HairTest/detect_scalp_image
   router.post(
     '/detect_scalp_image',
-    authenticateToken,
-    requireRegisteredUser,
-    uploadScalpPhotos.single('image'),
+    optionalAuth,
+    enforceUploadRequestSize,
+    scalpDetectionDailyLimit,
+    detectUploadFields,
     hairTestController.detectScalpImage,
   );
 

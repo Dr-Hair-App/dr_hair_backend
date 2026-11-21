@@ -10,6 +10,7 @@ import {
   validateAdminContentUpload,
 } from '../../../shared/middlewares/admin-content-media-upload.middleware.js';
 import { validate } from '../../../shared/validators/validate.middleware.js';
+import { adminApiTrafficQuerySchema } from '../../../shared/validators/admin-api-traffic.validator.js';
 import {
   adminReviewIdSchema,
   adminReviewStatusSchema,
@@ -52,6 +53,7 @@ export const createAdminRouter = ({ adminController, notificationController, vid
   // Audit Logs & Redacted Exports
   router.get('/audit-logs', requireAnyPermission('audit.view'), adminController.listAuditLogs);
   router.get('/audit-logs/export', requireAnyPermission('audit.view', 'audit.export'), adminController.exportAuditLogs);
+  router.get('/api-traffic', requirePermission('audit.view'), validate({ query: adminApiTrafficQuerySchema }), adminController.listAdminApiTraffic);
 
   // Operational Exports
   router.get('/exports/patients', requirePermission('patients.export'), adminController.exportPatients);

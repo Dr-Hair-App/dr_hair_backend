@@ -39,9 +39,7 @@ export class UpdateProductUseCase {
         await this.imageStorage.deleteImage(key);
       } catch (error) {
         console.warn('[media-cleanup] Removed product image could not be deleted from R2.', {
-          productId: id,
-          key,
-          message: error instanceof Error ? error.message : 'unknown error',
+          errorType: error instanceof Error ? error.constructor?.name || 'Error' : 'UnknownError',
         });
       }
     }));

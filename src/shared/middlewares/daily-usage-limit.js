@@ -9,8 +9,9 @@ const policyCache = new Map();
 const subjectHash = (subject) => createHash('sha256').update(String(subject)).digest('hex').slice(0, 32);
 
 const parseLimit = (value, fallback) => {
+  if (value == null) return fallback;
   const raw = typeof value === 'number' ? value : Number(value?.daily_limit ?? value?.limit ?? value);
-  return Number.isFinite(raw) ? Math.max(1, Math.min(10000, Math.floor(raw))) : fallback;
+  return Number.isFinite(raw) && raw > 0 ? Math.max(1, Math.min(10000, Math.floor(raw))) : fallback;
 };
 
 const resolveLimit = async (kv, feature, userHash, fallback) => {

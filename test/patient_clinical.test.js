@@ -15,7 +15,7 @@ describe('Patient clinical record APIs', () => {
     const controller = new PatientClinicalController({
       hairTestRepository: { findByUserId: async (id) => { requestedIds.push(id); return [{ id: 5, duration: '6 months' }]; } },
       treatmentRepository: { findByUserId: async (id) => { requestedIds.push(id); return [{ reference_no: 'HT-1', toResponse: () => ({ medications: [], routine_steps: [] }) }]; } },
-      clinicalReportRepository: { listByUserId: async (id) => { requestedIds.push(id); return [{ id: 'report-1', title: 'Lab results', public_id: 'private/secret', bytes: 15 }]; } },
+      clinicalReportRepository: { listByUserId: async (id) => { requestedIds.push(id); return [{ id: 'report-1', title: 'Lab results', public_id: 'private/secret', bytes: 15, visibility: 'Shared', scanning_status: 'clean' }]; } },
     });
     const res = recorder();
 
@@ -39,6 +39,34 @@ describe('Patient clinical record APIs', () => {
 
     assert.deepEqual(lookup, { userId: 42, reportId: 'report-2' });
     assert.equal(error?.statusCode, 404);
+  });
+
+  it('does not expose or sign downloads for legacy Shared reports without a clean scan verdict', async () => {
+    const controller = new PatientClinicalController({
+      clinicalReportRepository: {
+        listByUserId: async () => [
+          { id: 'legacy-missing-scan', title: 'Legacy', visibility: 'Shared' },
+          { id: 'unscanned', title: 'Unscanned', visibility: 'Shared', scanning_status: 'not_scanned' },
+          { id: 'clean', title: 'Safe', visibility: 'Shared', scanning_status: 'clean' },
+        ],
+        findByUserIdAndId: async (_userId, id) => ({
+          id,
+          visibility: 'Shared',
+          scanning_status: id === 'clean' ? 'clean' : 'not_scanned',
+          public_id: `reports/${id}`,
+          format: 'pdf',
+        }),
+      },
+    });
+    const record = recorder();
+    await controller.getClinicalRecord({ user: { id: 42 } }, record, (error) => { throw error; });
+    assert.deepEqual(record.body.data.reports.map((report) => report.id), ['clean']);
+
+    for (const reportId of ['legacy-missing-scan', 'unscanned']) {
+      let error;
+      await controller.downloadReport({ user: { id: 42 }, params: { reportId } }, recorder(), (caught) => { error = caught; });
+      assert.equal(error?.statusCode, 404, `${reportId} must remain private until a clean verdict exists`);
+    }
   });
 
   it('allows patients to retrieve, add, and remove personal care routine steps', async () => {

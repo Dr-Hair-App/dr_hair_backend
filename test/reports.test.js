@@ -28,6 +28,7 @@ test('Clinical Reports & Push Notification Automation', async (t) => {
       public_id: 'drhair/private-reports/user-1/rep-test-001.pdf',
       uploaded_by: 'Super Admin',
       visibility: 'Private',
+      scanning_status: 'clean',
       shared_at: null,
       visibility_history: [{ action: 'uploaded', visibility: 'Private', changed_by: 'Super Admin', changed_at: new Date() }],
     });

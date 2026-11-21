@@ -163,15 +163,21 @@ export class HairTestController {
   detectScalpImage = async (req, res, next) => {
     try {
       const file = req.file || req.files?.image?.[0] || req.files?.photo?.[0];
+      const referenceFile = req.files?.reference_image?.[0];
       const base64Data = req.body?.image_base64 || req.body?.base64;
+      const referenceBase64 = req.body?.reference_image_base64 || req.body?.reference_base64;
       const label = req.body?.label || 'Scalp';
       const mimeType = file?.mimetype || req.body?.mime_type || 'image/jpeg';
+      const referenceMimeType = referenceFile?.mimetype || req.body?.reference_mime_type || 'image/jpeg';
 
       const result = await this.detectScalpImageUseCase.execute({
         imageBuffer: file?.buffer,
         base64Data,
         mimeType,
         label,
+        referenceImageBuffer: referenceFile?.buffer,
+        referenceBase64,
+        referenceMimeType,
       });
 
       return sendSuccess(res, {

@@ -45,6 +45,25 @@ describe('Password-based admin access', () => {
     );
   });
 
+  it('never accepts an arbitrary password for an unconfigured bootstrap super admin', async () => {
+    const useCase = new AdminAuthUseCase({
+      adminAccountRepository: {
+        findByLogin: async () => ({
+          id: 'bootstrap:dr.hair@admin',
+          email: 'dr.hair@admin',
+          role: 'super_admin',
+          active: true,
+          passwordHash: '',
+        }),
+      },
+    });
+
+    await assert.rejects(
+      useCase.execute({ email: 'dr.hair@admin', password: 'any-nonempty-password' }),
+      { name: 'UnauthorizedError', message: 'Admin ID or password is incorrect.' },
+    );
+  });
+
   it('creates an admin with a generated password stored only as a hash', async () => {
     let stored;
     const useCase = new CreateAdminAccountUseCase({

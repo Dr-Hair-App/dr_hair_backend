@@ -54,6 +54,33 @@ describe('Admin Report Visibility & Consent Enforcement', () => {
     assert.match(error?.message, /Confirm that the patient agreed/);
   });
 
+  it('rejects a share when the scan becomes unsafe before the persisted visibility update', async () => {
+    const controller = new AdminController({
+      userRepository: { findById: async () => ({ id: 42, role: 'user', patient_code: 'DHP0042' }) },
+      clinicalReportRepository: {
+        findByUserIdAndId: async () => ({ id: 'rpt_1', scanning_status: 'clean' }),
+        updateVisibilityWithResult: async () => ({
+          changed: false,
+          report: { id: 'rpt_1', visibility: 'Private', scanning_status: 'infected' },
+        }),
+      },
+    });
+
+    let error;
+    await controller.updatePatientReportVisibility(
+      {
+        params: { userId: '42', reportId: 'rpt_1' },
+        body: { visibility: 'Shared', patient_consent_confirmed: true },
+        user: { email: 'doctor@example.test' },
+      },
+      recorder(),
+      (err) => { error = err; },
+    );
+
+    assert.equal(error?.statusCode, 400);
+    assert.match(error?.message, /clean malware scan/);
+  });
+
   it('successfully shares report when consent is confirmed and records audit and notification', async () => {
     let repoCall;
     let activityRecord;
@@ -62,6 +89,7 @@ describe('Admin Report Visibility & Consent Enforcement', () => {
     const controller = new AdminController({
       userRepository: { findById: async () => ({ id: 42, role: 'user', patient_code: 'DHP0042' }) },
       clinicalReportRepository: {
+        findByUserIdAndId: async () => ({ id: 'rpt_1', scanning_status: 'clean' }),
         updateVisibility: async (userId, reportId, visibility, changedBy, consent) => {
           repoCall = { userId, reportId, visibility, changedBy, consent };
           return {
@@ -72,6 +100,7 @@ describe('Admin Report Visibility & Consent Enforcement', () => {
             mime_type: 'application/pdf',
             bytes: 4096,
             visibility: 'Shared',
+            scanning_status: 'clean',
             shared_at: new Date(),
             visibility_history: [{ action: 'shared', visibility: 'Shared', patient_consent_confirmed: true }],
           };

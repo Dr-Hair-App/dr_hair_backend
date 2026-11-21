@@ -19,4 +19,10 @@ describe('OpenAPI path registry', () => {
     }
     assert.ok(configBlock.includes('name: build'), 'App config must document the client build query parameter');
   });
+
+  it('documents the Admin API traffic page bound enforced by request validation', async () => {
+    const spec = await readFile(new URL('../docs/openapi.yaml', import.meta.url), 'utf8');
+    const trafficBlock = spec.split('  /api/v1/admin/api-traffic:')[1]?.split('\n  /')[0] || '';
+    assert.match(trafficBlock, /name: page[\s\S]*?maximum: 100000/);
+  });
 });

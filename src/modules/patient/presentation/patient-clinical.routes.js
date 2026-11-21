@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { authenticateToken } from '../../../shared/middlewares/auth.middleware.js';
 import { requireRegisteredUser } from '../../../shared/middlewares/registered-user.middleware.js';
-import { enforceUploadRequestSize, uploadScalpPhotos } from '../../../shared/middlewares/upload.middleware.js';
+import { enforceUploadRequestSize, uploadScalpPhotosToR2 } from '../../../shared/middlewares/upload.middleware.js';
 import {
   cleanupPatientUploadOnError,
   parseProgressCheckInMultipart,
@@ -12,13 +12,17 @@ export const createPatientClinicalRouter = ({ patientClinicalController, appoint
   const router = Router();
   router.use(authenticateToken, requireRegisteredUser);
 
-  const scalpUploadFields = uploadScalpPhotos.fields([
+  const scalpUploadFields = uploadScalpPhotosToR2.fields([
     { name: 'photo_front', maxCount: 1 },
     { name: 'photo_top', maxCount: 1 },
     { name: 'photo_left', maxCount: 1 },
     { name: 'photo_right', maxCount: 1 },
     { name: 'photo_back', maxCount: 1 },
   ]);
+  const markAssessmentPhotoPurpose = (req, _res, next) => {
+    req.headers['x-media-purpose'] = 'assessment';
+    next();
+  };
 
   router.get('/clinical-record', patientClinicalController.getClinicalRecord);
   router.get('/home-summary', patientClinicalController.getHomeSummary);
@@ -37,7 +41,7 @@ export const createPatientClinicalRouter = ({ patientClinicalController, appoint
   router.get('/assessment/draft', patientClinicalController.getAssessmentDraft);
   router.put('/assessment/draft', patientClinicalController.saveAssessmentDraft);
   router.delete('/assessment/draft', patientClinicalController.deleteAssessmentDraft);
-  router.post('/assessment/submit', scalpUploadFields, patientClinicalController.submitAssessment);
+  router.post('/assessment/submit', enforceUploadRequestSize, markAssessmentPhotoPurpose, scalpUploadFields, patientClinicalController.submitAssessment, cleanupPatientUploadOnError);
 
   router.get('/progress-checkins', patientClinicalController.listProgressCheckIns);
   router.post('/progress-checkins', enforceUploadRequestSize, uploadProgressPhotos, parseProgressCheckInMultipart, patientClinicalController.createProgressCheckIn, cleanupPatientUploadOnError);

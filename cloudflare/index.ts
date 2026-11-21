@@ -4,6 +4,7 @@ import { createApp } from "../src/app.js";
 import { runWithDatabaseBinding, setWorkerBindings } from "../src/shared/database/runtime.js";
 import { setStorageBindings } from "../src/shared/storage/runtime.js";
 import { processExpiredData } from "../src/shared/database/maintenance.js";
+import { runWithExecutionContext } from "../src/shared/runtime/execution-context.js";
 
 export { DailyUsageQuota } from "./DailyUsageQuota.ts";
 
@@ -102,10 +103,10 @@ export default {
     const respond = () => {
       if (isPublicRead && database && typeof database.withSession === "function") {
         return runWithDatabaseBinding(database.withSession("first-unconstrained"), () =>
-          expressHandler.fetch(request, requestEnv, ctx),
+          runWithExecutionContext(ctx, () => expressHandler.fetch(request, requestEnv, ctx)),
         );
       }
-      return expressHandler.fetch(request, requestEnv, ctx);
+      return runWithExecutionContext(ctx, () => expressHandler.fetch(request, requestEnv, ctx));
     };
 
     if (!isPublicRead) return respond();
@@ -161,6 +162,7 @@ export default {
     const jobs = [
       container.useCases.processQueuedAiAssessmentUseCase.processOne(),
       processExpiredData(scheduledEnv.DB),
+      container.repositories.adminApiTrafficRepository.purgeExpired(),
       container.services.campaignSchedulerService.processDueCampaigns(),
       cronSecret
         ? container.controllers.commerceController.reconcilePendingCheckoutsScheduled()

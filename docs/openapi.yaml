@@ -631,6 +631,54 @@ paths:
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/ServerError' }
 
+  /api/v1/hair-tests/detect_scalp_image:
+    post:
+      tags: [Hair tests]
+      summary: Check whether an uploaded photo shows a clear scalp
+      description: Authenticated photo verification. When reference_image is supplied, the service also compares the target photo with that reference for same-person consistency. Both images are sent to the configured vision provider; do not attach another patient's image.
+      x-legacy-path: /HairTest/detect_scalp_image
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                label: { type: string, maxLength: 80, default: Scalp }
+                image: { type: string, format: binary, description: Target scalp photo; maximum 25 MiB }
+                reference_image: { type: string, format: binary, description: Optional previously captured scalp photo from the same patient's active assessment; maximum 25 MiB }
+      responses:
+        '200':
+          description: Scalp verification result. A different-person verdict is a photo-quality signal and should be confirmed by the patient or clinic if disputed.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          is_hair: { type: boolean }
+                          status: { type: string, enum: [hairDetected, notHair, lowClarity, personMismatch, verificationUnavailable] }
+                          confidence: { type: number, minimum: 0, maximum: 1 }
+                          detected_angle: { type: string }
+                          follicle_visibility: { type: string }
+                          same_person: { type: boolean }
+        '413': { description: Complete multipart request exceeds 90 MiB }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { description: Usage protection is temporarily unavailable }
+                          message: { type: string }
+                          details: { type: string }
+                          source: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413': { description: Uploaded image exceeds the configured 25 MiB per-file limit }
+        '500': { $ref: '#/components/responses/ServerError' }
+
   /api/v1/hair-tests/hair_test:
     post:
       tags: [Hair tests]
@@ -2823,6 +2871,31 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /api/v1/admin/api-traffic:
+    get:
+      tags: [Admin]
+      summary: List privacy-safe Admin API traffic from the last 30 days
+      description: Requires audit.view. Returns route templates, method, status, Worker duration, cache-control, and server-generated request IDs only. Request URLs, query strings, bodies, identities, and IP addresses are not stored. Entries are automatically removed after 30 days.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100000, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: window
+          in: query
+          schema: { type: string, enum: [1h, 24h, 7d, 30d], default: 24h }
+        - name: statusClass
+          in: query
+          schema: { type: string, enum: [2xx, 4xx, 5xx] }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /api/v1/admin/exports/patients:
     get:
       tags: [Admin]
@@ -3957,6 +4030,27 @@ components:
         id: { type: integer }
         status: { type: string, enum: [draft, pending, active, rejected] }
       required: [id, status]
+    AdminMediaAssetMetadata:
+      type: object
+      additionalProperties: true
+      properties:
+        url: { type: string, format: uri }
+        publicId: { type: string }
+        format: { type: string }
+        bytes: { type: integer, minimum: 0, description: Stored object size in bytes. }
+        originalBytes: { type: integer, minimum: 0, description: Uploaded source size before optional WebP conversion. }
+        compressed: { type: boolean }
+        processingStatus: { type: string, description: Image processing outcome, such as original_preserved or lossless_webp. }
+    AdminMediaAssets:
+      type: object
+      additionalProperties: true
+      properties:
+        originalUrl: { type: string, format: uri }
+        originalPublicId: { type: string }
+        variants:
+          type: array
+          items: { $ref: '#/components/schemas/AdminMediaAssetMetadata' }
+        processingStatus: { type: string, description: Outcome for the selected current asset. }
     AdminReviewCreateRequest:
       type: object
       additionalProperties: false
@@ -3966,7 +4060,7 @@ components:
         category: { type: string, minLength: 1, maxLength: 80 }
         message: { type: string, minLength: 1, maxLength: 1500 }
         avatar: { type: string, maxLength: 2048 }
-        media_assets: { type: object, additionalProperties: true, description: Original and optimized avatar asset metadata. }
+        media_assets: { $ref: '#/components/schemas/AdminMediaAssets', description: Original and optimized avatar asset metadata. }
         treatment: { type: string, maxLength: 120 }
         duration: { type: string, maxLength: 120 }
         review_type: { type: string, enum: [doctor, product, clinic] }
@@ -3983,7 +4077,7 @@ components:
         category: { type: string, minLength: 1, maxLength: 80 }
         message: { type: string, minLength: 1, maxLength: 1500 }
         avatar: { type: string, maxLength: 2048 }
-        media_assets: { type: object, additionalProperties: true, description: Original and optimized avatar asset metadata. }
+        media_assets: { $ref: '#/components/schemas/AdminMediaAssets', description: Original and optimized avatar asset metadata. }
         treatment: { type: string, maxLength: 120 }
         duration: { type: string, maxLength: 120 }
         review_type: { type: string, enum: [doctor, product, clinic] }

@@ -1,4 +1,6 @@
 import { config } from '../../../config/env.js';
+import { optimizeImageForInference } from '../../media/infrastructure/R2MediaStorage.js';
+import { getImageOptimizationBinding } from '../../../shared/storage/runtime.js';
 const unavailableImageVerification = (label, details = 'The image verification service did not return a result.') => ({
   is_hair: false,
   status: 'verificationUnavailable',
@@ -89,15 +91,41 @@ const conservativeNextStepRecommendation = (patientData = {}) => {
 };
 
 export class GeminiAiService {
-  constructor({ apiKey, model, fallbackModel, logger, fetchFn = globalThis.fetch, imageStorage } = {}) {
-    this.apiKey = apiKey !== undefined ? apiKey : config.gemini?.apiKey;
-    this.model = model !== undefined ? model : (config.gemini?.model || 'gemini-3.5-flash-lite');
-    this.fallbackModel = fallbackModel !== undefined
-      ? fallbackModel
-      : (config.gemini?.fallbackModel || 'gemini-3.5-flash');
+  constructor({ apiKey, model, fallbackModel, logger, fetchFn, imageStorage } = {}) {
+    this._apiKey = apiKey;
+    this._model = model;
+    this._fallbackModel = fallbackModel;
     this.logger = logger || console;
-    this.fetchFn = fetchFn;
+    this._fetchFn = fetchFn;
+    this.fetchFn = (url, options) => {
+      if (this._fetchFn) return this._fetchFn(url, options);
+      return globalThis.fetch(url, options);
+    };
     this.imageStorage = imageStorage;
+  }
+
+  get apiKey() {
+    return this._apiKey !== undefined ? this._apiKey : (process.env.GEMINI_API_KEY?.trim() || config.gemini?.apiKey || '');
+  }
+
+  set apiKey(val) {
+    this._apiKey = val;
+  }
+
+  get model() {
+    return this._model !== undefined ? this._model : (process.env.GEMINI_MODEL?.trim() || config.gemini?.model || 'gemini-3.5-flash-lite');
+  }
+
+  set model(val) {
+    this._model = val;
+  }
+
+  get fallbackModel() {
+    return this._fallbackModel !== undefined ? this._fallbackModel : (process.env.GEMINI_FALLBACK_MODEL?.trim() || config.gemini?.fallbackModel || 'gemini-2.5-flash');
+  }
+
+  set fallbackModel(val) {
+    this._fallbackModel = val;
   }
 
   getConservativeNextStepRecommendation(patientData = {}) {
@@ -288,7 +316,7 @@ export class GeminiAiService {
 
       const parsedData = this._parseJsonCandidate(callResult.candidateText);
       if (!parsedData || typeof parsedData !== 'object') {
-        this.logger.warn?.(`Failed to parse valid JSON from Gemini output. Raw text length: ${callResult.candidateText?.length}. Preview: ${callResult.candidateText?.substring(0, 200)}`);
+        this.logger.warn?.('Gemini returned an invalid structured assessment. Using fallback.');
         return {
           ...this.generateFallbackAssessment(patientData),
           scalp_photo_verification: unavailableScalpPhotoVerification(photos),
@@ -355,7 +383,7 @@ export class GeminiAiService {
         scalp_photo_verification: scalpPhotoVerification,
       };
     } catch (err) {
-      this.logger.error?.(`Error invoking Gemini API: ${err.message}. Using fallback assessment.`);
+      this.logger.error?.(`Gemini request failed (${err?.constructor?.name || 'Error'}). Using fallback assessment.`);
       return {
         ...this.generateFallbackAssessment(patientData),
         scalp_photo_verification: unavailableScalpPhotoVerification(photos),
@@ -650,25 +678,160 @@ Do not include markdown fences outside the JSON. Return valid JSON only.
 
   /**
    * Visually detects whether an uploaded photo is a genuine human scalp/hair image
-   * using Gemini Flash vision.
+   * using Gemini Flash vision, and verifies identity consistency with previously uploaded photos.
    * @param {Object} options
    * @param {Buffer} [options.imageBuffer] - Raw file buffer
    * @param {string} [options.base64Data] - Or raw base64 string
    * @param {string} [options.mimeType] - Mime type e.g. 'image/jpeg' or 'image/png'
    * @param {string} [options.label] - Intended angle e.g. 'Front Hairline', 'Crown / Top'
+   * @param {Buffer} [options.referenceImageBuffer] - Optional baseline photo buffer from same session
+   * @param {string} [options.referenceBase64] - Optional baseline photo base64
+   * @param {string} [options.referenceMimeType] - Optional baseline photo mime type
    * @returns {Promise<Object>} Detection result
    */
-  async detectHairAndScalpImage({ imageBuffer, base64Data, mimeType = 'image/jpeg', label = 'Scalp' } = {}) {
-    let data = base64Data;
-    if (!data && imageBuffer) {
-      data = imageBuffer.toString('base64');
+  async detectHairAndScalpImage({
+    imageBuffer,
+    base64Data,
+    mimeType = 'image/jpeg',
+    label = 'Scalp',
+    referenceImageBuffer,
+    referenceBase64,
+    referenceMimeType = 'image/jpeg',
+  } = {}) {
+    if ((!base64Data && !imageBuffer) || !this.apiKey) {
+      return unavailableImageVerification(label, `Image data or AI service configuration is unavailable (apiKey present: ${Boolean(this.apiKey)}).`);
     }
 
-    if (!data || !this.apiKey) {
-      return unavailableImageVerification(label, 'Image data or AI service configuration is unavailable.');
+    let referenceData = referenceBase64;
+
+    const imageBinding = getImageOptimizationBinding();
+    const prepareForInference = async (encoded, buffer, type) => {
+      // Gemini's inline request limit is 20 MiB. Keep a margin for the prompt,
+      // JSON encoding, and base64 expansion; large inputs are resized only in
+      // this transient inference path, never in R2 or the clinical record.
+      const originalData = typeof encoded === 'string' && encoded.length > 0 ? encoded : null;
+      const originalBuffer = Buffer.isBuffer(buffer) ? buffer : null;
+      const originalBytes = originalData ? Math.floor(originalData.length * 3 / 4) : (originalBuffer?.length || 0);
+      if ((!originalData && !originalBuffer) || originalBytes <= 0 || originalBytes > 25 * 1024 * 1024 ||
+          (originalData && originalData.length > 36 * 1024 * 1024)) return null;
+
+      // Avoid base64 copies of multipart buffers until the combined request
+      // size has been checked. Base64 callers already paid this allocation at
+      // the HTTP parser and can be passed through without another copy.
+      let source = originalData && imageBinding ? Buffer.from(originalData, 'base64') : originalBuffer;
+      const prepared = source
+        ? await optimizeImageForInference(source, type, imageBinding)
+        : { buffer: null, contentType: type, resized: false };
+      const preparedBuffer = prepared.resized ? prepared.buffer : originalBuffer;
+      const preparedBytes = preparedBuffer?.length ?? originalBytes;
+      const encodedCharacters = originalData && !prepared.resized
+        ? originalData.length
+        : Math.ceil(preparedBytes / 3) * 4;
+      return {
+        data: originalData && !prepared.resized ? originalData : null,
+        buffer: preparedBuffer,
+        encodedCharacters,
+        mimeType: prepared.resized ? prepared.contentType : type,
+      };
+    };
+    const preparedImage = await prepareForInference(base64Data, imageBuffer, mimeType);
+    if (!preparedImage) return unavailableImageVerification(label, 'Image is too large for safe AI verification. Please choose a smaller photo.');
+    mimeType = preparedImage.mimeType;
+
+    let preparedReference = null;
+    if (referenceBase64 || referenceImageBuffer) {
+      preparedReference = await prepareForInference(referenceData, referenceImageBuffer, referenceMimeType);
+      if (!preparedReference) return unavailableImageVerification(label, 'Reference image is too large for safe AI verification. Please choose a smaller photo.');
+      referenceMimeType = preparedReference.mimeType;
+    }
+    const totalInlineCharacters = preparedImage.encodedCharacters + (preparedReference?.encodedCharacters || 0);
+    if (totalInlineCharacters > 18 * 1024 * 1024) {
+      return unavailableImageVerification(label, 'Images exceed the safe inline AI request limit. Please choose smaller photos.');
     }
 
-    const prompt = `
+    const data = preparedImage.data || preparedImage.buffer.toString('base64');
+    referenceData = preparedReference
+      ? preparedReference.data || preparedReference.buffer.toString('base64')
+      : null;
+
+    const hasReference = Boolean(referenceData);
+
+    const prompt = hasReference
+      ? `
+You are Dr. Hair Assistant's Clinical Vision AI (under Dr. Jai Bansal's hair recovery protocols).
+Perform strict clinical triage for an uploaded patient photo intended for trichology scalp evaluation.
+Target angle: "${label}".
+
+You are provided with TWO images:
+- Image 1: The patient's baseline reference scalp photo previously verified in this assessment.
+- Image 2: The newly uploaded scalp photo being submitted for angle "${label}".
+
+CRITICAL CLINICAL ACCEPTANCE RULES FOR IMAGE 2:
+1. ONLY APPROVE (status: "hairDetected", is_hair: true) if Image 2 clearly shows a REAL HUMAN SCALP, HAIRLINE, CROWN, TEMPLES, or ROOTS suitable for a trichology doctor to evaluate hair loss and follicle density, AND Image 2 visually belongs to the SAME individual as Image 1.
+2. REJECT NON-SCALP (status: "notHair", is_hair: false):
+   - Screenshots of any kind (phone UI, WhatsApp chats, social media, web pages, apps, text, documents, billing receipts, etc.).
+   - Photos of computer monitors, laptop displays, or digital screens.
+   - Random non-hair objects (cars, roads, animals, food, clothes, furniture, rooms, buildings, landscape, plants, nature, etc.).
+   - Full body or distant portraits where scalp/hairline roots are not in clear close-up view.
+   - Non-head body parts (hands, fingers, legs, chest, face without scalp).
+   - Memes, artwork, drawings, cartoons, or graphic illustrations.
+3. REJECT UNCLEAR (status: "lowClarity", is_hair: false):
+   - If Image 2 has scalp/hair but is extremely dark, blurry, out-of-focus, or obstructed so a trichologist cannot evaluate hair density.
+4. REJECT DIFFERENT PERSON (status: "personMismatch", is_hair: false):
+   - Strict identity consistency check: Compare Image 2 against Image 1.
+   - Compare observable biological traits: hair color (e.g., black vs brown vs blonde vs silver/grey), hair strand texture / curl pattern (straight vs wavy vs curly vs coily), and scalp skin tone/complexion.
+   - If Image 2 clearly appears to be from a DIFFERENT person than Image 1 (different hair color, different ethnicity/scalp tone, or different individual's head), YOU MUST REJECT IT with status "personMismatch".
+
+Return strictly valid JSON:
+If approved (valid scalp close-up of the same individual):
+{
+  "is_hair": true,
+  "status": "hairDetected",
+  "confidence": 0.95,
+  "detected_angle": "${label}",
+  "follicle_visibility": "Clear",
+  "same_person": true,
+  "message": "Clear scalp and hair follicles verified for clinical assessment.",
+  "details": "Scalp features and consistency with reference photo confirmed."
+}
+
+If rejected due to different person:
+{
+  "is_hair": false,
+  "status": "personMismatch",
+  "confidence": 0.95,
+  "detected_angle": "${label}",
+  "follicle_visibility": "Clear",
+  "same_person": false,
+  "message": "Photos appear to be of different people. Please ensure all 3 photos are of the same person.",
+  "details": "Hair color, texture, or scalp tone does not match your reference photo."
+}
+
+If rejected due to non-hair / screenshot / object:
+{
+  "is_hair": false,
+  "status": "notHair",
+  "confidence": 0.98,
+  "detected_angle": "Unknown",
+  "follicle_visibility": "None",
+  "same_person": false,
+  "message": "Non-scalp image detected. Please upload an exclusive close-up photo of your scalp.",
+  "details": "Screenshots, digital graphics, or non-scalp objects cannot be used for clinical diagnosis."
+}
+
+If rejected due to low clarity:
+{
+  "is_hair": false,
+  "status": "lowClarity",
+  "confidence": 0.90,
+  "detected_angle": "${label}",
+  "follicle_visibility": "Poor",
+  "same_person": true,
+  "message": "Photo is blurry or poorly lit. Please retake a clear close-up with good lighting.",
+  "details": "Follicles and scalp surface are not clearly distinguishable."
+}
+`
+      : `
 You are Dr. Hair Assistant's Clinical Vision AI (under Dr. Jai Bansal's hair recovery protocols).
 Perform strict clinical triage for an uploaded patient photo intended for trichology scalp evaluation.
 Target angle: "${label}".
@@ -682,9 +845,10 @@ CRITICAL CLINICAL ACCEPTANCE RULES:
    - Full body or distant portraits where scalp/hairline roots are not in clear close-up view.
    - Non-head body parts (hands, fingers, legs, chest, face without scalp).
    - Memes, artwork, drawings, cartoons, or graphic illustrations.
-3. If image has hair/scalp but is extremely dark, blurry, or obstructed so a trichologist cannot evaluate hair density: mark status: "lowClarity", is_hair: false.
+3. If image has hair/scalp but is extremely dark, blurry, out-of-focus, or obstructed so a trichologist cannot evaluate hair density: mark status: "lowClarity", is_hair: false.
 
 Return strictly valid JSON:
+If approved:
 {
   "is_hair": true,
   "status": "hairDetected",
@@ -695,7 +859,7 @@ Return strictly valid JSON:
   "details": "Follicular density and scalp pattern clearly visible."
 }
 
-If rejected (non-hair, screenshot, or random object), return:
+If rejected (non-hair, screenshot, or random object):
 {
   "is_hair": false,
   "status": "notHair",
@@ -705,31 +869,57 @@ If rejected (non-hair, screenshot, or random object), return:
   "message": "Non-scalp image detected. Please upload an exclusive close-up photo of your scalp.",
   "details": "Screenshots, digital graphics, or non-scalp objects cannot be used for clinical diagnosis."
 }
+
+If rejected due to low clarity:
+{
+  "is_hair": false,
+  "status": "lowClarity",
+  "confidence": 0.90,
+  "detected_angle": "${label}",
+  "follicle_visibility": "Poor",
+  "message": "Photo is blurry or poorly lit. Please retake a clear close-up with good lighting.",
+  "details": "Follicles and scalp surface are not clearly distinguishable."
+}
 `;
 
+    const parts = [{ text: prompt }];
+    if (hasReference) {
+      parts.push({ text: 'Image 1 (Baseline reference photo previously confirmed for this patient):' });
+      parts.push({
+        inline_data: {
+          mime_type: referenceMimeType,
+          data: referenceData,
+        },
+      });
+      parts.push({ text: `Image 2 (Newly uploaded target photo for angle "${label}"):` });
+      parts.push({
+        inline_data: {
+          mime_type: mimeType,
+          data,
+        },
+      });
+    } else {
+      parts.push({
+        inline_data: {
+          mime_type: mimeType,
+          data,
+        },
+      });
+    }
+
     const controller = new AbortController();
-    // Keep enough time for the image upload, Gemini vision inference, and the
-    // backend response envelope. The mobile client allows slightly longer.
     const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
-      const response = await this.fetchFn(url, {
+    const callGeminiModel = async (modelName) => {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
+      return await this.fetchFn(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [
             {
               role: 'user',
-              parts: [
-                { text: prompt },
-                {
-                  inline_data: {
-                    mime_type: mimeType,
-                    data,
-                  },
-                },
-              ],
+              parts,
             },
           ],
           generationConfig: {
@@ -742,15 +932,28 @@ If rejected (non-hair, screenshot, or random object), return:
         }),
         signal: controller.signal,
       });
+    };
+
+    try {
+      let activeModel = this.model;
+      let response = await callGeminiModel(activeModel);
+
+      if (!response.ok && response.status === 404 && this.fallbackModel && this.fallbackModel !== this.model) {
+        this.logger.warn?.(`Gemini model ${this.model} was unavailable (404); trying fallback model ${this.fallbackModel}.`);
+        activeModel = this.fallbackModel;
+        response = await callGeminiModel(activeModel);
+      }
 
       clearTimeout(timeoutId);
 
       if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
         this.logger.warn?.('Gemini scalp photo verification failed.', {
           reason: 'upstream_http_error',
           status: response.status,
+          error: errorText,
         });
-        return unavailableImageVerification(label);
+        return unavailableImageVerification(label, `Gemini HTTP ${response.status}: ${errorText.substring(0, 150)}`);
       }
 
       const jsonResponse = await response.json();
@@ -760,22 +963,24 @@ If rejected (non-hair, screenshot, or random object), return:
       if (!parsed || typeof parsed !== 'object') {
         this.logger.warn?.('Gemini scalp photo verification failed.', {
           reason: 'invalid_model_response',
+          candidateText,
         });
-        return unavailableImageVerification(label);
+        return unavailableImageVerification(label, `Model output invalid: ${String(candidateText).substring(0, 100)}`);
       }
 
-      const allowedStatuses = new Set(['hairDetected', 'notHair', 'lowClarity']);
+      const allowedStatuses = new Set(['hairDetected', 'notHair', 'lowClarity', 'personMismatch']);
       if (!allowedStatuses.has(parsed.status)) {
         this.logger.warn?.('Gemini scalp photo verification failed.', {
           reason: 'unsupported_model_status',
+          status: parsed.status,
         });
-        return unavailableImageVerification(label);
+        return unavailableImageVerification(label, `Unsupported status from model: ${parsed.status}`);
       }
       if (parsed.status === 'hairDetected' && parsed.is_hair !== true) {
         this.logger.warn?.('Gemini scalp photo verification failed.', {
           reason: 'inconsistent_model_result',
         });
-        return unavailableImageVerification(label);
+        return unavailableImageVerification(label, 'Inconsistent status from model');
       }
       const isHair = parsed.status === 'hairDetected';
       const status = parsed.status;
@@ -785,10 +990,11 @@ If rejected (non-hair, screenshot, or random object), return:
         status,
         confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.92,
         detected_angle: parsed.detected_angle || label,
-        follicle_visibility: parsed.follicle_visibility || 'Clear',
-        message: parsed.message || (parsed.is_hair ? 'Hair & scalp detected successfully.' : 'No hair or scalp detected. Please upload a clear photo of your scalp.'),
+        follicle_visibility: parsed.follicle_visibility || (isHair ? 'Clear' : 'None'),
+        same_person: parsed.same_person ?? (status !== 'personMismatch'),
+        message: parsed.message || (isHair ? 'Hair & scalp detected successfully.' : 'No hair or scalp detected. Please upload a clear photo of your scalp.'),
         details: parsed.details || '',
-        source: `Dr. Hair Assistant (${this.model})`,
+        source: `Dr. Hair Assistant (${activeModel})`,
       };
     } catch (err) {
       clearTimeout(timeoutId);
@@ -796,7 +1002,7 @@ If rejected (non-hair, screenshot, or random object), return:
         reason: controller.signal.aborted ? 'upstream_timeout' : 'upstream_request_error',
         errorName: err?.name || 'Error',
       });
-      return unavailableImageVerification(label);
+      return unavailableImageVerification(label, `Verification error: ${err?.message || err?.name}`);
     }
   }
 }

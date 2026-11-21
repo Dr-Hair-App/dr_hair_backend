@@ -156,7 +156,9 @@ export async function cleanupUploadedProductFiles(files, imageStorage) {
   for (const result of results) {
     if (result.status === 'rejected') {
       console.warn('[product-media-cleanup] Uploaded image cleanup failed.', {
-        message: result.reason instanceof Error ? result.reason.message : 'unknown error',
+        errorType: result.reason instanceof Error
+          ? result.reason.constructor?.name || 'Error'
+          : 'UnknownError',
       });
     }
   }

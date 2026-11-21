@@ -10,6 +10,7 @@ import { databaseStatus } from './shared/database/database.js';
 import { InventoryOperationModel, OrderModel, ProviderWebhookEventModel } from './shared/database/models.js';
 import { sendError } from './shared/utils/response.js';
 import { requestIdMiddleware } from './shared/middlewares/requestId.middleware.js';
+import { adminApiTraceMiddleware } from './shared/middlewares/admin-api-trace.middleware.js';
 import { cacheControl } from './shared/middlewares/cache.middleware.js';
 import { authenticateToken } from './shared/middlewares/auth.middleware.js';
 import { requireAnyPermission } from './shared/middlewares/admin.middleware.js';
@@ -75,6 +76,9 @@ export const createApp = (overrides = {}) => {
 
   // 1. Global Middlewares
   app.use(requestIdMiddleware);
+  app.use(adminApiTraceMiddleware({
+    record: (event) => container.repositories.adminApiTrafficRepository.record(event),
+  }));
   app.use(
     cors({
       origin(origin, callback) {

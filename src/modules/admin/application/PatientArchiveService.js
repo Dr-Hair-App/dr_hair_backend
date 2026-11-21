@@ -20,7 +20,9 @@ export class PatientArchiveService {
           const removed = await this.clinicalReportRepository.purgeArchived(report.userId, report.id);
           if (removed) purged += 1;
         } catch (error) {
-          logger.warn('Archived clinical report purge will retry on the next run.', { reportId: report.id, message: error?.message });
+          logger.warn('Archived clinical report purge failed; it will retry on the next run.', {
+            errorType: error instanceof Error ? error.constructor?.name || 'Error' : 'UnknownError',
+          });
         }
       }
       if (purged) logger.info('Expired clinical reports permanently purged.', { count: purged });

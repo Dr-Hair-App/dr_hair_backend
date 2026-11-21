@@ -53,7 +53,7 @@ export class PatientClinicalController {
             : [],
         this.appointmentRepository?.listByPatient ? this.appointmentRepository.listByPatient(userId) : [],
       ]);
-      const sharedReports = (reports || []).filter((r) => (r.visibility === 'Shared' || !r.visibility) && !r.deleted_at);
+      const sharedReports = (reports || []).filter((r) => r.visibility === 'Shared' && r.scanning_status === 'clean' && !r.deleted_at);
       return sendSuccess(res, {
         data: {
           assessments: await Promise.all(
@@ -194,7 +194,7 @@ export class PatientClinicalController {
       const latestAssessment = submittedAssessments[0] || null;
 
       const sharedReports = (reports || [])
-        .filter((r) => (r.visibility === 'Shared' || !r.visibility) && !r.deleted_at)
+        .filter((r) => r.visibility === 'Shared' && r.scanning_status === 'clean' && !r.deleted_at)
         .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
       const latestSharedReport = sharedReports[0] || null;
 
@@ -598,7 +598,7 @@ export class PatientClinicalController {
   downloadReport = async (req, res, next) => {
     try {
       const report = await this.clinicalReportRepository.findByUserIdAndId(req.user.id, req.params.reportId);
-      if (!report || report.visibility !== 'Shared') throw new NotFoundError('Patient report not found.');
+      if (!report || report.visibility !== 'Shared' || report.scanning_status !== 'clean') throw new NotFoundError('Patient report not found.');
       return sendSuccess(res, {
         data: {
           url: createClinicalReportDownloadUrl(report.public_id, report.format),

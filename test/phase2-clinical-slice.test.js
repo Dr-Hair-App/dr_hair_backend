@@ -259,6 +259,7 @@ test('Phase 2 - Patient Clinical Vertical Slice', async (t) => {
       bytes: 35000,
       public_id: 'drhair/reports/scalp_jan',
       visibility: 'Shared',
+      scanning_status: 'clean',
       created_by: 'Doctor Dave',
     });
 

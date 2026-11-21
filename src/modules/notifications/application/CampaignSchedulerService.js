@@ -25,7 +25,7 @@ export class CampaignSchedulerService {
         await this.dispatchCampaign(campaign);
       }
     } catch (error) {
-      console.error('[CampaignSchedulerService] Error processing due campaigns:', error);
+      console.error(`[CampaignSchedulerService] Processing due campaigns failed (${error?.constructor?.name || 'Error'}).`);
     } finally {
       this._isProcessing = false;
     }

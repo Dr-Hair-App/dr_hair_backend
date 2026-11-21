@@ -111,7 +111,19 @@ describe('Phase 7: Release Hardening & Staging Smoke Suite', () => {
 
     assert.ok(nextCalledB);
     assert.equal(reqB.id, incomingTrace);
+    assert.match(reqB.serverRequestId, /^req_[0-9a-f-]{36}$/);
+    assert.notEqual(reqB.serverRequestId, incomingTrace);
     assert.equal(resB.getHeader('x-request-id'), incomingTrace);
+
+    // Caller-supplied values that resemble server IDs are still not trusted
+    // for persisted traces or error logs.
+    const spoofedServerId = 'req_123e4567-e89b-12d3-a456-426614174000';
+    const reqSpoof = { headers: { 'x-request-id': spoofedServerId } };
+    const resSpoof = createMockRes();
+    requestIdMiddleware(reqSpoof, resSpoof, () => {});
+    assert.equal(reqSpoof.id, spoofedServerId);
+    assert.match(reqSpoof.serverRequestId, /^req_[0-9a-f-]{36}$/);
+    assert.notEqual(reqSpoof.serverRequestId, spoofedServerId);
 
     const reqC = { headers: { 'x-request-id': 'trace\r\nforged-header' } };
     const resC = createMockRes();

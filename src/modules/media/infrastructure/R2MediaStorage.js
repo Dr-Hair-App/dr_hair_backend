@@ -97,7 +97,7 @@ export async function optimizeImageForStorage(buffer, mimeType, binding = getIma
   const original = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
   const normalizedMime = normalizedImageMime(mimeType);
   if (preserveSource || !binding || typeof binding.input !== 'function' || original.length === 0 || original.length > 20 * 1024 * 1024
-    || !['image/jpeg', 'image/png', 'image/webp'].includes(normalizedMime)) {
+    || !['image/jpeg', 'image/png', 'image/webp', 'image/heic'].includes(normalizedMime)) {
     return { buffer: original, contentType: normalizedMime, format: extFor(normalizedMime), compressed: false, originalBytes: original.length, processingStatus: 'original_preserved' };
   }
   try {
@@ -112,6 +112,31 @@ export async function optimizeImageForStorage(buffer, mimeType, binding = getIma
     return { buffer: candidate, contentType: 'image/webp', format: 'webp', compressed: true, originalBytes: original.length, processingStatus: 'lossless_webp' };
   } catch {
     return { buffer: original, contentType: normalizedMime, format: extFor(normalizedMime), compressed: false, originalBytes: original.length, processingStatus: 'original_preserved' };
+  }
+}
+
+/** Prepare a temporary, bounded derivative for AI inference. Callers must keep
+ * the validated source bytes for storage and clinical records. */
+export async function optimizeImageForInference(buffer, mimeType, binding = getImageOptimizationBinding()) {
+  const original = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
+  const normalizedMime = normalizedImageMime(mimeType);
+  if (!binding || typeof binding.input !== 'function' || original.length === 0 || original.length > 20 * 1024 * 1024
+    || !['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'image/avif'].includes(normalizedMime)) {
+    return { buffer: original, contentType: normalizedMime, resized: false };
+  }
+  try {
+    const output = await binding.input(original)
+      .transform({ width: 2048, height: 2048, fit: 'scale-down' })
+      .output({ format: 'image/webp', quality: 100 })
+      .then((result) => result.response());
+    if (!output?.ok) throw new Error('Image transform returned a non-success response.');
+    const candidate = Buffer.from(await output.arrayBuffer());
+    if (!candidate.length || candidate.length >= original.length || detectImageMime(candidate.subarray(0, 32)) !== 'image/webp') {
+      return { buffer: original, contentType: normalizedMime, resized: false };
+    }
+    return { buffer: candidate, contentType: 'image/webp', resized: true };
+  } catch {
+    return { buffer: original, contentType: normalizedMime, resized: false };
   }
 }
 

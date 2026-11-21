@@ -15,6 +15,16 @@ const pngHeader = (width = 1, height = 1) => {
   return bytes;
 };
 
+const heicHeader = (width = 1, height = 1) => {
+  const bytes = Buffer.alloc(32);
+  bytes.write('ftyp', 4);
+  bytes.write('heic', 8);
+  bytes.write('ispe', 16);
+  bytes.writeUInt32BE(width, 24);
+  bytes.writeUInt32BE(height, 28);
+  return bytes;
+};
+
 test('R2 stores clinical images privately and returns a bounded signed API URL', async () => {
   const objects = new Map();
   setStorageBindings({ MEDIA_BUCKET: {
@@ -160,6 +170,44 @@ test('R2 media upload stores the smaller lossless WebP returned by the shared ba
   }
 });
 
+test('R2 media upload transcodes validated HEIC content images to WebP when smaller', async () => {
+  let stored;
+  const webp = Buffer.alloc(16);
+  webp.write('RIFF', 0);
+  webp.write('WEBP', 8);
+  setStorageBindings({
+    MEDIA_BUCKET: {
+      async put(key, value, options) { stored = { key, value: Buffer.from(value), options }; },
+    },
+    IMAGES: {
+      input(bytes) {
+        assert.ok(Buffer.isBuffer(bytes));
+        return { output: async () => Promise.resolve({ response: async () => new Response(webp) }) };
+      },
+    },
+  });
+
+  try {
+    const original = Buffer.concat([heicHeader(), Buffer.from('image-pixels-'.repeat(20))]);
+    const result = await new Promise((resolve, reject) => {
+      new R2MediaStorage()._handleFile({
+        headers: { 'x-media-purpose': 'content' },
+        user: { id: 7, role: 'admin' },
+      }, { mimetype: 'image/heic', stream: Readable.from([original]) },
+      (error, file) => error ? reject(error) : resolve(file));
+    });
+
+    assert.equal(result.compressed, true);
+    assert.equal(result.mimetype, 'image/webp');
+    assert.equal(result.format, 'webp');
+    assert.equal(result.originalBytes, original.length);
+    assert.match(stored.key, /\.webp$/);
+    assert.deepEqual(stored.value, webp);
+  } finally {
+    clearStorageBindings();
+  }
+});
+
 test('R2 media rejects a mismatched MIME signature before making an object', async () => {
   let putCalled = false;
   setStorageBindings({ MEDIA_BUCKET: {
@@ -225,6 +273,29 @@ test('shared backend image optimizer uses lossless WebP only when smaller and ot
   });
   assert.equal(bigger.compressed, false);
   assert.deepEqual(bigger.buffer, source);
+});
+
+test('shared backend image optimizer transcodes supported HEIC uploads to smaller WebP', async () => {
+  const source = Buffer.from('heic source bytes');
+  const webp = Buffer.alloc(12);
+  webp.write('RIFF', 0);
+  webp.write('WEBP', 8);
+  const result = await optimizeImageForStorage(source, 'image/heic', {
+    input(bytes) {
+      assert.deepEqual(bytes, source);
+      return {
+        output(options) {
+          assert.deepEqual(options, { format: 'image/webp', quality: 100 });
+          return Promise.resolve({ response: async () => new Response(webp) });
+        },
+      };
+    },
+  });
+
+  assert.equal(result.compressed, true);
+  assert.equal(result.contentType, 'image/webp');
+  assert.equal(result.processingStatus, 'lossless_webp');
+  assert.deepEqual(result.buffer, webp);
 });
 
 test('R2 media streams 5 MiB parts and enforces the 25 MiB file boundary', async () => {

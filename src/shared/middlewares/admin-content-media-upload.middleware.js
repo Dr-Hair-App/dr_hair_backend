@@ -20,6 +20,9 @@ const uploadedAssets = (req, previousAssets = {}) => {
     publicId: file.key,
     format: file.format,
     bytes: file.bytes,
+    originalBytes: file.originalBytes,
+    compressed: file.compressed === true,
+    processingStatus: file.processingStatus || 'original_preserved',
   }));
   if (assets.some((asset) => !asset.url || !asset.publicId)) {
     throw new BadRequestError('The media service returned incomplete upload metadata.');
@@ -32,7 +35,7 @@ const uploadedAssets = (req, previousAssets = {}) => {
       originalUrl: original.url,
       originalPublicId: original.publicId,
       variants: assets,
-      processingStatus: String(previousAssets?.processingStatus || 'original_preserved'),
+      processingStatus: String(selected.processingStatus || previousAssets?.processingStatus || 'original_preserved'),
     },
   };
 };

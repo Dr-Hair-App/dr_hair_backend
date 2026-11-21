@@ -32,6 +32,7 @@ export const OrderModel = new D1Model('orders');
 export const ProviderWebhookEventModel = new D1Model('provider_webhook_events');
 export const SessionModel = new D1Model('auth_sessions');
 export const AuditEventModel = new D1Model('audit_events');
+export const AdminApiTrafficModel = new D1Model('admin_api_traffic');
 export const RateLimitCounterModel = new D1Model('rate_limit_counters');
 export const FeatureFlagModel = new D1Model('feature_flags');
 export const AppReleasePolicyModel = new D1Model('app_release_policies');

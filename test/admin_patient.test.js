@@ -180,6 +180,43 @@ describe('Admin patient record', () => {
     assert.equal(result.body.data.scanning_status, 'clean');
   });
 
+  it('blocks patient sharing when a report has no clean malware scan', async () => {
+    let created = false;
+    let visibilityUpdated = false;
+    const reportFile = {
+      id: 'unscanned-report', key: 'drhair/private-reports/user-42/unscanned-report.pdf',
+      format: 'pdf', originalname: 'lab.pdf', mimetype: 'application/pdf', size: 512,
+      bytes: 512, storedBytes: 512, sha256: 'a'.repeat(64), scanningStatus: 'not_scanned',
+    };
+    const controller = new AdminController({
+      userRepository: { findById: async () => patient },
+      clinicalReportRepository: {
+        create: async (report) => { created = true; return report; },
+        findByUserIdAndId: async () => ({ id: 'unscanned-report', scanning_status: 'not_scanned' }),
+        updateVisibilityWithResult: async () => { visibilityUpdated = true; return { changed: true, report: {} }; },
+      },
+      malwareScanner: { scanClinicalReport: async () => ({ status: 'not_scanned' }) },
+    });
+    const uploadResult = await invoke(controller.uploadPatientReport, {
+      params: { userId: '42' },
+      body: { title: 'Unscanned lab result', visibility: 'Shared', patient_consent_confirmed: 'true' },
+      file: reportFile,
+      user: { role: 'super_admin', email: 'doctor@example.test' },
+    });
+    assert.equal(uploadResult.error?.statusCode, 400);
+    assert.match(uploadResult.error?.message || '', /malware scanning is not configured.*Upload a new copy/s);
+    assert.equal(created, false);
+
+    const shareResult = await invoke(controller.updatePatientReportVisibility, {
+      params: { userId: '42', reportId: 'unscanned-report' },
+      body: { visibility: 'Shared', patient_consent_confirmed: true },
+      user: { email: 'doctor@example.test' },
+    });
+    assert.equal(shareResult.error?.statusCode, 400);
+    assert.match(shareResult.error?.message || '', /malware scanning is not configured.*Upload a new copy/s);
+    assert.equal(visibilityUpdated, false);
+  });
+
   it('rejects and cleans a report when a configured malware scanner flags it', async () => {
     let saved = false;
     const controller = new AdminController({

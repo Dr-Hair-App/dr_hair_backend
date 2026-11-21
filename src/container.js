@@ -21,6 +21,7 @@ import { MediaReferenceRepository } from './modules/media/infrastructure/MediaRe
 import { PatientArchiveService } from './modules/admin/application/PatientArchiveService.js';
 import { SessionRepository } from './modules/auth/infrastructure/SessionRepository.js';
 import { AuditEventRepository } from './modules/admin/infrastructure/AuditEventRepository.js';
+import { AdminApiTrafficRepository } from './modules/admin/infrastructure/AdminApiTrafficRepository.js';
 import { CampaignRepository } from './modules/notifications/infrastructure/CampaignRepository.js';
 import { CampaignSchedulerService } from './modules/notifications/application/CampaignSchedulerService.js';
 import { ContentRepository } from './modules/content/infrastructure/ContentRepository.js';
@@ -163,6 +164,7 @@ export const createContainer = (overrides = {}) => {
   const imageStorage = overrides.imageStorage || new R2ImageStorage();
   const sessionRepository = overrides.sessionRepository || new SessionRepository();
   const auditEventRepository = overrides.auditEventRepository || new AuditEventRepository();
+  const adminApiTrafficRepository = overrides.adminApiTrafficRepository || new AdminApiTrafficRepository();
   const campaignRepository = overrides.campaignRepository || new CampaignRepository();
   const contentRepository = overrides.contentRepository || new ContentRepository();
   const addressRepository = overrides.addressRepository || new AddressRepository();
@@ -523,6 +525,7 @@ export const createContainer = (overrides = {}) => {
     patientActivityRepository,
     progressCheckInRepository,
     auditEventRepository,
+    adminApiTrafficRepository,
     featureFlagRepository,
     appReleasePolicyRepository,
     productRepository,
@@ -615,6 +618,7 @@ export const createContainer = (overrides = {}) => {
       campaignRepository,
       contentRepository,
       auditEventRepository,
+      adminApiTrafficRepository,
       addressRepository,
       inventoryRepository,
       orderRepository,

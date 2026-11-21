@@ -2,9 +2,16 @@ import { AppError } from '../errors/index.js';
 import { logger } from '../utils/logger.js';
 import { sendError } from '../utils/response.js';
 import { config } from '../../config/env.js';
+import { isServerRequestId } from './requestId.middleware.js';
 
 export const errorHandler = (err, req, res, next) => {
-  logger.error(`${req.method} ${req.url} [${req.id || 'no-request-id'}] - Error: ${err.message}`, err.stack);
+  // Route templates are safe to log; request URLs, messages, and stacks may
+  // contain query values or patient/admin identifiers.
+  const route = typeof req.route?.path === 'string' ? req.route.path : 'unmatched';
+  const requestId = isServerRequestId(req.serverRequestId) ? req.serverRequestId : 'untrusted-request-id';
+  logger.error(
+    `${req.method || 'UNKNOWN'} ${route} [${requestId}] - ${err.constructor?.name || 'Error'}`,
+  );
 
   if (err instanceof AppError) {
     const statusCode = Number(err.statusCode) || 500;

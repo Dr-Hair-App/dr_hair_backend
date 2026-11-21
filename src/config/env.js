@@ -122,8 +122,14 @@ export const config = {
   },
 
   gemini: {
-    apiKey: process.env.GEMINI_API_KEY?.trim() || '',
-    model: process.env.GEMINI_MODEL?.trim() || 'gemini-3.5-flash-lite',
-    fallbackModel: process.env.GEMINI_FALLBACK_MODEL?.trim() || 'gemini-3.5-flash',
+    get apiKey() {
+      return process.env.GEMINI_API_KEY?.trim() || '';
+    },
+    get model() {
+      return process.env.GEMINI_MODEL?.trim() || 'gemini-3.5-flash-lite';
+    },
+    get fallbackModel() {
+      return process.env.GEMINI_FALLBACK_MODEL?.trim() || 'gemini-2.5-flash';
+    },
   },
 };

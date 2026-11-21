@@ -5,7 +5,15 @@ export class DetectScalpImageUseCase {
     this.geminiAiService = geminiAiService;
   }
 
-  async execute({ imageBuffer, base64Data, mimeType, label = 'Scalp' } = {}) {
+  async execute({
+    imageBuffer,
+    base64Data,
+    mimeType,
+    label = 'Scalp',
+    referenceImageBuffer,
+    referenceBase64,
+    referenceMimeType,
+  } = {}) {
     if (!imageBuffer && !base64Data) {
       throw new BadRequestError('Image data or upload is required.');
     }
@@ -28,6 +36,9 @@ export class DetectScalpImageUseCase {
       base64Data,
       mimeType,
       label,
+      referenceImageBuffer,
+      referenceBase64,
+      referenceMimeType,
     });
   }
 }

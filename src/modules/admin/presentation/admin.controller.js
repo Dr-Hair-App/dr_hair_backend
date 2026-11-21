@@ -1,4 +1,4 @@
-import { AppError, BadRequestError, ForbiddenError, NotFoundError } from '../../../shared/errors/index.js';
+import { AppError, BadRequestError, ForbiddenError, NotFoundError, ServiceUnavailableError } from '../../../shared/errors/index.js';
 import { sendSuccess } from '../../../shared/utils/response.js';
 import { config } from '../../../config/env.js';
 import { uploadClinicalReport, createClinicalReportDownloadUrl, deleteClinicalReport } from '../infrastructure/ClinicalReportStorage.js';
@@ -40,6 +40,10 @@ const reportResponse = (report) => ({
   created_at: report.created_at,
 });
 
+const reportScanBlockedMessage = (status) => status === 'not_scanned'
+  ? 'This report is still private because malware scanning is not configured. Upload a new copy to share it after security scanning is enabled.'
+  : 'A report must pass a clean malware scan before it can be shared with a patient.';
+
 export class AdminController {
   constructor({
     userRepository,
@@ -54,6 +58,7 @@ export class AdminController {
     patientActivityRepository,
     progressCheckInRepository,
     auditEventRepository,
+    adminApiTrafficRepository,
     featureFlagRepository,
     appReleasePolicyRepository,
     productRepository,
@@ -75,6 +80,7 @@ export class AdminController {
     this.patientActivityRepository = patientActivityRepository;
     this.progressCheckInRepository = progressCheckInRepository;
     this.auditEventRepository = auditEventRepository;
+    this.adminApiTrafficRepository = adminApiTrafficRepository;
     this.featureFlagRepository = featureFlagRepository;
     this.appReleasePolicyRepository = appReleasePolicyRepository;
     this.productRepository = productRepository;
@@ -115,6 +121,19 @@ export class AdminController {
       }
       const { page, limit, action, actorId, target } = req.query;
       const result = await this.auditEventRepository.list({ page, limit, action, actorId, target });
+      return sendSuccess(res, { data: { items: result.items }, meta: result.meta });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  listAdminApiTraffic = async (req, res, next) => {
+    try {
+      if (!this.adminApiTrafficRepository) {
+        throw new ServiceUnavailableError('API traffic history is temporarily unavailable.');
+      }
+      const { page, limit, window, statusClass } = req.query;
+      const result = await this.adminApiTrafficRepository.list({ page, limit, window, statusClass });
       return sendSuccess(res, { data: { items: result.items }, meta: result.meta });
     } catch (error) {
       next(error);
@@ -486,6 +505,9 @@ export class AdminController {
       if (scanningStatus === 'infected' || scanningStatus === 'error') {
         throw new BadRequestError('The report could not be accepted because its security scan did not pass.');
       }
+      if (visibility === 'Shared' && scanningStatus !== 'clean') {
+        throw new BadRequestError(reportScanBlockedMessage(scanningStatus));
+      }
       const uploadedBy = String(req.user?.email || req.user?.login || 'Super Admin');
       const sharedAt = visibility === 'Shared' ? new Date() : null;
       const report = await this.clinicalReportRepository.create({
@@ -550,12 +572,22 @@ export class AdminController {
       const visibility = req.body?.visibility;
       if (!['Private', 'Shared'].includes(visibility)) throw new BadRequestError('visibility must be either Private or Shared.');
       if (visibility === 'Shared' && req.body?.patient_consent_confirmed !== true) throw new BadRequestError('Confirm that the patient agreed to view this report before sharing it.');
+      if (visibility === 'Shared') {
+        const reportToShare = await this.clinicalReportRepository.findByUserIdAndId(patient.id, req.params.reportId);
+        if (!reportToShare) throw new NotFoundError('Patient report not found.');
+        if (normalizeScanStatus({ status: reportToShare.scanning_status }) !== 'clean') {
+          throw new BadRequestError(reportScanBlockedMessage(reportToShare.scanning_status));
+        }
+      }
       const changedBy = String(req.user?.email || req.user?.login || 'Super Admin');
       const result = await this.clinicalReportRepository.updateVisibilityWithResult
         ? await this.clinicalReportRepository.updateVisibilityWithResult(patient.id, req.params.reportId, visibility, changedBy, visibility === 'Shared')
         : { report: await this.clinicalReportRepository.updateVisibility(patient.id, req.params.reportId, visibility, changedBy, visibility === 'Shared'), changed: true };
       const report = result.report;
       if (!report) throw new NotFoundError('Patient report not found.');
+      if (visibility === 'Shared' && normalizeScanStatus({ status: report.scanning_status }) !== 'clean') {
+        throw new BadRequestError(reportScanBlockedMessage(report.scanning_status));
+      }
       if (!result.changed) return sendSuccess(res, { message: 'Report visibility is already up to date.', data: reportResponse(report) });
       await this.patientActivityRepository?.record({ userId: patient.id, patientCode: patient.patient_code, type: 'report', title: visibility === 'Shared' ? 'Report shared with patient' : 'Report hidden from patient', summary: report.title, actor: changedBy, metadata: { report_id: report.id, patient_consent_confirmed: visibility === 'Shared' } }).catch(() => null);
       if (this.auditEventRepository?.record) {
@@ -1284,21 +1316,31 @@ export class AdminController {
 
   getDashboardSummary = async (req, res, next) => {
     try {
-      let totalPatients = 0;
-      if (this.userRepository?.count) {
-        totalPatients = await this.userRepository.count();
-      } else if (this.userRepository?.list) {
-        const u = await this.userRepository.list({ limit: 1 });
-        totalPatients = u?.total || 0;
-      }
+      // These sources are independent. Start all reads together so dashboard
+      // latency is bounded by the slowest repository call instead of their sum.
+      const [patientCountResult, appts, tests, reps, prods, logs] = await Promise.all([
+        this.userRepository?.count
+          ? this.userRepository.count()
+          : this.userRepository?.list
+            ? this.userRepository.list({ limit: 1 })
+            : Promise.resolve(0),
+        this.appointmentRepository?.list?.({ limit: 500 }) ?? Promise.resolve(null),
+        this.hairTestRepository?.listAdmin?.({ limit: 500 }) ?? Promise.resolve(null),
+        this.clinicalReportRepository?.listAll?.() ?? Promise.resolve(null),
+        this.productRepository?.list?.({ limit: 100 }) ?? Promise.resolve(null),
+        this.auditEventRepository?.list?.({ limit: 10 }) ?? Promise.resolve(null),
+      ]);
+
+      const totalPatients = typeof patientCountResult === 'number'
+        ? patientCountResult
+        : (patientCountResult?.total || 0);
 
       let totalAppointments = 0;
       let todayAppointments = 0;
       let pendingAppointments = 0;
       let confirmedAppointments = 0;
       let completedAppointments = 0;
-      if (this.appointmentRepository?.list) {
-        const appts = await this.appointmentRepository.list({ limit: 500 });
+      if (appts) {
         const items = Array.isArray(appts) ? appts : (appts?.items || []);
         totalAppointments = Array.isArray(appts) ? appts.length : (appts?.total || items.length);
         const todayStr = new Date().toISOString().slice(0, 10);
@@ -1312,8 +1354,7 @@ export class AdminController {
 
       let totalAssessments = 0;
       let pendingAssessments = 0;
-      if (this.hairTestRepository?.listAdmin) {
-        const tests = await this.hairTestRepository.listAdmin({ limit: 500 });
+      if (tests) {
         const items = Array.isArray(tests) ? tests : (tests?.items || []);
         totalAssessments = Array.isArray(tests) ? tests.length : (tests?.total || items.length);
         pendingAssessments = items.filter((t) => t.status === 'Submitted' || t.status === 'Review' || !t.reviewed).length;
@@ -1321,24 +1362,21 @@ export class AdminController {
 
       let totalReports = 0;
       let sharedReports = 0;
-      if (this.clinicalReportRepository?.listAll) {
-        const reps = await this.clinicalReportRepository.listAll();
+      if (reps) {
         totalReports = reps.length;
         sharedReports = reps.filter((r) => r.visibility === 'Shared').length;
       }
 
       let totalProducts = 0;
       let lowStockProducts = 0;
-      if (this.productRepository?.list) {
-        const prods = await this.productRepository.list({ limit: 100 });
+      if (prods) {
         const items = prods?.items || [];
         totalProducts = prods?.total || items.length;
         lowStockProducts = items.filter((p) => (p.stock || p.inventory_count || 0) < 10).length;
       }
 
       let recentActivity = [];
-      if (this.auditEventRepository?.list) {
-        const logs = await this.auditEventRepository.list({ limit: 10 });
+      if (logs) {
         recentActivity = (logs?.items || []).map((e) => ({
           id: e.id,
           who: e.actor,
@@ -1951,9 +1989,11 @@ export class AdminController {
         try {
           const userIds = [...new Set(appointments.map((a) => a.userId).filter(Boolean))];
           const usersMap = {};
-          for (const uid of userIds) {
-            const u = await this.userRepository.findById(uid);
-            if (u) usersMap[uid] = u;
+          const users = this.userRepository.findByIds
+            ? await this.userRepository.findByIds(userIds)
+            : await Promise.all(userIds.map((uid) => this.userRepository.findById(uid)));
+          for (const user of users) {
+            if (user) usersMap[user.id] = user;
           }
           for (let i = 0; i < appointments.length; i++) {
             const apt = appointments[i];

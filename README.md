@@ -9,10 +9,10 @@ Requirements: Node.js 22 or later and npm.
 ```sh
 npm ci
 npm run dev
-npx wrangler d1 migrations apply dr-hair-testing --env testing --remote
+npx wrangler d1 migrations apply dr-hair-testing --env testing --local
 ```
 
-`npm run dev` and `npm start` run the Worker locally with the `testing` environment. That environment binds the isolated remote D1 database `dr-hair-testing`, R2 buckets `dr-hair-testing-admin-media` and `dr-hair-testing-user-media`, and KV namespace `dr-hair-testing-public-config`; uploads and database changes from local development persist in those test resources, not in `.wrangler/state` or production. Shiprocket uses the explicit local simulator in this environment; it never calls Shiprocket's live API. It deliberately has no production `MEDIA_BUCKET` compatibility binding, Durable Object binding, or rate-limit binding. Use only test accounts and test data. The test resources must be provisioned before running these commands.
+`npm run dev` and `npm start` run the Worker locally with the `testing` environment and force `--local`. D1, R2, KV, and other bindings use Wrangler's local emulators and persist under `.wrangler/state`; these commands do not read or write remote testing resources or production. The `testing` environment still declares remote resources for deliberate staging acceptance, so keep `--local` in the normal dev scripts. Shiprocket uses its explicit local simulator and never calls Shiprocket's live API. The local environment has no production `MEDIA_BUCKET` compatibility binding, Durable Object binding, or rate-limit binding. Use only test accounts and test data. Remote test resources must be provisioned before a separately authorized remote acceptance run.
 
 `npm run build:cloudflare` performs a Wrangler dry-run. `npm run deploy` targets the production Worker and its custom domain `api.drhairindia.com`; do not run it for routine local work.
 

@@ -15,6 +15,7 @@ export class SmsService {
   constructor(options = {}) {
     this.twoFactorConfig = options.twoFactorConfig || config.twoFactor;
     this.provider = '2factor';
+    this.logger = options.logger || logger;
   }
 
   /**
@@ -33,7 +34,7 @@ export class SmsService {
     const phone10 = digits.length >= 10 ? digits.slice(-10) : '';
 
     if (!phone10 || phone10.length !== 10) {
-      logger.warn(`[SmsService] Unable to extract valid 10-digit mobile number from ${maskDestination(raw)}`);
+      this.logger.warn(`[SmsService] Unable to extract valid 10-digit mobile number from ${maskDestination(raw)}`);
       throw new BadGatewayError('SMS delivery failed: invalid phone number.');
     }
 
@@ -61,18 +62,17 @@ export class SmsService {
       const data = await response.json().catch(() => null);
 
       if (data && String(data.Status || '').toLowerCase() === 'success') {
-        logger.info(
-          `[2Factor] Successfully dispatched OTP to ${maskDestination(phone10)} (session: ${data.Details || 'ok'})`
+        this.logger.info(
+          `[2Factor] Successfully dispatched OTP to ${maskDestination(phone10)}`
         );
         return true;
       }
 
-      const errMsg = data?.Details || data?.message || 'Gateway rejected SMS request';
-      logger.error(`[2Factor] Gateway error for ${maskDestination(phone10)}: ${errMsg}`);
-      throw new BadGatewayError(`SMS delivery failed: ${errMsg}`);
+      this.logger.error(`[2Factor] Gateway rejected SMS request for ${maskDestination(phone10)}.`);
+      throw new BadGatewayError('SMS delivery failed. Please try again.');
     } catch (err) {
       if (err instanceof BadGatewayError || err instanceof ServiceUnavailableError) throw err;
-      logger.error(`[2Factor] Network error dispatching SMS: ${err.message}`);
+      this.logger.error(`[2Factor] Network error dispatching SMS (${err?.constructor?.name || 'Error'}).`);
       throw new BadGatewayError('Failed to connect to SMS delivery gateway. Please try again.');
     }
   }

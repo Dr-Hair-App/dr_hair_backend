@@ -6,6 +6,7 @@ import { config } from '../src/config/env.js';
 import { enforceUploadRequestSize, uploadProfile, uploadScalpPhotosToR2 } from '../src/shared/middlewares/upload.middleware.js';
 import { uploadMediaFiles } from '../src/shared/middlewares/media-upload.middleware.js';
 import { uploadClinicalReportFile } from '../src/shared/middlewares/clinical-report-upload.middleware.js';
+import { createPatientClinicalRouter } from '../src/modules/patient/presentation/patient-clinical.routes.js';
 
 test('Content-Length guard rejects oversized bodies before parsing or storage', () => {
   const originalLimit = config.upload.maxRequestSize;
@@ -42,6 +43,25 @@ test('Content-Length guard permits requests at the configured limit and unknown-
   } finally {
     config.upload.maxRequestSize = originalLimit;
   }
+});
+
+test('patient assessment uploads enforce request size and mark originals for private source-preserving R2 storage', () => {
+  const noOpController = new Proxy({}, { get: () => (_req, _res, next) => next() });
+  const router = createPatientClinicalRouter({
+    patientClinicalController: noOpController,
+    appointmentController: noOpController,
+  });
+  const route = router.stack.find((layer) => layer.route?.path === '/assessment/submit')?.route;
+  assert.ok(route);
+  const handlers = route.stack.map((layer) => layer.handle);
+  assert.equal(handlers[0], enforceUploadRequestSize, 'the declared body size is rejected before the multipart parser runs');
+  assert.equal(handlers[1].name, 'markAssessmentPhotoPurpose');
+  assert.equal(typeof handlers[2], 'function', 'R2 streaming multipart parser is installed');
+  assert.equal(handlers.at(-1).length, 4, 'upload failures clean up any stored image objects');
+
+  const req = { headers: {} };
+  handlers[1](req, {}, () => {});
+  assert.equal(req.headers['x-media-purpose'], 'assessment');
 });
 
 test('streaming multipart parser bounds both field count and individual field size', async () => {

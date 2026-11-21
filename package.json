@@ -5,8 +5,8 @@
   "type": "module",
   "main": "src/server.js",
   "scripts": {
-    "start": "wrangler dev --env testing --ip 0.0.0.0",
-    "dev": "wrangler dev --env testing",
+    "start": "wrangler dev --env testing --local --ip 127.0.0.1",
+    "dev": "wrangler dev --env testing --local --ip 127.0.0.1",
     "admin:setup": "node src/scripts/setup-super-admin.js",
     "test": "node --test test/**/*.test.js",
     "build:cloudflare": "wrangler deploy --dry-run --env=\"\"",

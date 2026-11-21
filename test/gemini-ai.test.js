@@ -83,6 +83,50 @@ describe('GeminiAiService Unit & Integration Tests', () => {
     assert.equal(result.confidence, 0.94);
   });
 
+  it('should verify cross-photo identity and reject when photos belong to different people', async () => {
+    let capturedBody;
+    const service = new GeminiAiService({
+      apiKey: 'test-key',
+      fetchFn: async (_url, options) => {
+        capturedBody = JSON.parse(options.body);
+        return {
+          ok: true,
+          json: async () => ({
+            candidates: [{
+              content: {
+                parts: [{
+                  text: JSON.stringify({
+                    is_hair: false,
+                    status: 'personMismatch',
+                    confidence: 0.96,
+                    same_person: false,
+                    detected_angle: 'Crown / Top',
+                    follicle_visibility: 'Clear',
+                    message: 'Photos appear to be of different people. Please ensure all 3 photos are of the same person.',
+                    details: 'Hair color or scalp tone does not match your reference photo.',
+                  }),
+                }],
+              },
+            }],
+          }),
+        };
+      },
+    });
+
+    const result = await service.detectHairAndScalpImage({
+      base64Data: 'dGFyZ2V0LWltYWdl',
+      referenceBase64: 'cmVmZXJlbmNlLWltYWdl',
+      label: 'Crown / Top',
+    });
+
+    assert.equal(result.status, 'personMismatch');
+    assert.equal(result.is_hair, false);
+    assert.equal(result.same_person, false);
+    assert.match(result.message, /different people/i);
+    assert.ok(capturedBody.contents[0].parts.some((p) => p.text?.includes('PERSON')));
+    assert.equal(capturedBody.contents[0].parts.filter((p) => p.inline_data).length, 2);
+  });
+
   it('should parse valid JSON returned from mocked Gemini API', async () => {
     const mockApiResponse = {
       candidates: [

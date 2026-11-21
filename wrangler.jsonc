@@ -5,6 +5,7 @@
   "compatibility_date": "2026-11-16",
   "compatibility_flags": ["nodejs_compat", "nodejs_compat_populate_process_env", "enable_nodejs_http_server_modules"],
   "workers_dev": true,
+  "images": { "binding": "IMAGES" },
   "durable_objects": {
     "bindings": [{ "name": "DAILY_USAGE_QUOTA", "class_name": "DailyUsageQuota" }]
   },
@@ -101,7 +102,8 @@
           "remote": true
         }
       ],
-      "routes": []
+      "routes": [],
+      "images": { "binding": "IMAGES" }
     }
   }
 }

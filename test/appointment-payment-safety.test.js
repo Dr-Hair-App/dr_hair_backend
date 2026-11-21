@@ -110,13 +110,23 @@ test('admin payment ledger reports appointment refunds and subtracts processed r
     payment_time: new Date('2026-11-01T10:00:00.000Z'),
   }];
   t.after(() => { store.appointments = previousAppointments; });
-  const controller = new AdminController({ userRepository: { async findById() { return null; } } });
+  let requestedUserIds = null;
+  const controller = new AdminController({
+    userRepository: {
+      async findByIds(ids) {
+        requestedUserIds = ids;
+        return [{ id: 7, name: 'Test Patient', phone: '9000000000', email: 'patient@example.test' }];
+      },
+    },
+  });
   const res = mockResponse();
 
   await controller.listReceivedPayments({ query: { type: 'appointment' } }, res, (error) => { throw error; });
 
   const payment = res.body.data.items[0];
   assert.equal(payment.gateway, 'razorpay');
+  assert.deepEqual(requestedUserIds, [7]);
+  assert.equal(payment.customer_name, 'Test Patient');
   assert.equal(payment.refund_amount, 200);
   assert.equal(payment.refunds[0].id, 'rfnd_ledger_1');
   assert.equal(res.body.data.summary.total_collected, 500);
