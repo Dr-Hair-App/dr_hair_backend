@@ -12,7 +12,9 @@ npm run dev
 npx wrangler d1 migrations apply dr-hair-testing --env testing --local
 ```
 
-`npm run dev` and `npm start` run the Worker locally with the `testing` environment and force `--local`. D1, R2, KV, and other bindings use Wrangler's local emulators and persist under `.wrangler/state`; these commands do not read or write remote testing resources or production. The `testing` environment still declares remote resources for deliberate staging acceptance, so keep `--local` in the normal dev scripts. Shiprocket uses its explicit local simulator and never calls Shiprocket's live API. The local environment has no production `MEDIA_BUCKET` compatibility binding, Durable Object binding, or rate-limit binding. Use only test accounts and test data. Remote test resources must be provisioned before a separately authorized remote acceptance run.
+`npm run dev` and `npm start` run the Worker locally with the `testing` environment and force `--local`. D1, R2, KV, and other bindings use Wrangler's local emulators and persist under `.wrangler/state`; these commands do not read or write remote testing resources or production. The `testing` environment still declares remote resources for deliberate staging acceptance, so keep `--local` in the normal dev scripts. Set `SHIPROCKET_STAGING_MODE=mock` to use the deterministic local simulator; it never calls Shiprocket's live API. The local environment has no production `MEDIA_BUCKET` compatibility binding, Durable Object binding, or rate-limit binding. Use only test accounts and test data. Remote test resources must be provisioned before a separately authorized remote acceptance run.
+
+Shiprocket does not provide a separate API sandbox endpoint in its current API reference. `SHIPROCKET_TEST_MODE=true` is an explicit production-only simulator switch: it overrides live credentials and sends Shiprocket operations to the in-process mock. Keep it off during real fulfillment; simulated shipment IDs and AWBs must not be treated as carrier bookings. The default is `false`.
 
 `npm run build:cloudflare` performs a Wrangler dry-run. `npm run deploy` targets the production Worker and its custom domain `api.drhairindia.com`; do not run it for routine local work.
 
@@ -26,7 +28,7 @@ R2 buckets are private. `ADMIN_MEDIA_BUCKET` stores Admin-managed catalog and co
 
 ## Worker secrets
 
-Set production secrets on the single `dr-hair-backend` Worker with Wrangler or the Cloudflare dashboard. Keep `JWT_SECRET`, Super Admin credentials, SMS/OTP credentials, Razorpay keys and webhook secret, Shiprocket credentials and webhook secret, and optional Gemini/Firebase keys out of source control. Local development uses local bindings and keeps Shiprocket disabled.
+Set secrets only in the intended Worker environment with Wrangler or the Cloudflare dashboard. Keep `JWT_SECRET`, Super Admin credentials, SMS/OTP credentials, `CASHFREE_App_ID`, `CASHFREE_KEY_SECRET`, and `CASHFREE_WEBHOOK_URL` out of source control; use separate sandbox credentials and callback endpoints for testing. New Cashfree checkout sessions use sandbox mode in this migration. Local development uses local bindings and keeps Shiprocket disabled.
 
 ## API routes and design
 

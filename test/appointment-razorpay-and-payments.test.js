@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import { createContainer } from '../src/container.js';
 import { ConflictError } from '../src/shared/errors/index.js';
 
@@ -20,8 +19,17 @@ const createMockRes = () => {
   return res;
 };
 
-test('Appointment Razorpay Billing & Admin Received Payments', async (t) => {
-  const container = createContainer();
+test('Appointment Cashfree Billing & Admin Received Payments', async (t) => {
+  const mockPaymentGatewayService = {
+    provider: 'cashfree', environment: 'TEST',
+    async assertConfigured() {},
+    async createPaymentIntent({ orderId, amount, currency }) { return { intentId: orderId, orderId, payment_session_id: `session_${orderId}`, gateway: 'cashfree', amount: amount * 100, currency }; },
+    async getPaymentOrder(orderId) { return verifiedOrder?.order_id === orderId ? verifiedOrder : null; },
+    async verifyCapturedPayment({ paymentId }) { if (paymentId === 'pay_test_uncaptured') throw new Error('Cashfree payment is not captured.'); return { transaction_id: paymentId, payment: { cf_payment_id: paymentId, payment_status: 'SUCCESS' } }; },
+    async refundCapturedPayment() { return { id: 'refund_test', status: 'pending' }; },
+  };
+  let verifiedOrder = null;
+  const container = createContainer({ paymentGatewayService: mockPaymentGatewayService });
   const { appointmentController, adminController } = container.controllers;
   const { userRepository } = container.repositories;
   const { paymentGatewayService } = container.services;
@@ -34,44 +42,20 @@ test('Appointment Razorpay Billing & Admin Received Payments', async (t) => {
     ] },
   });
 
-  if (!paymentGatewayService.keyId) paymentGatewayService.keyId = 'rzp_test_mock_123';
-  if (!paymentGatewayService.keySecret) paymentGatewayService.keySecret = 'mock_secret_key_456';
-
-  let verifiedOrder = null;
-  paymentGatewayService.fetch = async (url, options = {}) => {
-    const method = options.method || 'GET';
-    let body = {};
-    try { body = JSON.parse(options.body || '{}'); } catch (_) {}
-    let payload;
-    if (url.endsWith('/orders') && method === 'POST') {
-      payload = { id: 'order_rzp_mock_unit_123', amount: body.amount, currency: body.currency, status: 'created', notes: body.notes };
-    } else if (url.endsWith('/orders/order_test_apt_999')) {
-      payload = verifiedOrder;
-    } else if (url.endsWith('/payments/pay_test_apt_888/capture')) {
-      payload = { id: 'pay_test_apt_888', order_id: 'order_test_apt_999', amount: 65000, currency: 'INR', status: 'captured' };
-    } else if (url.endsWith('/payments/pay_test_apt_888')) {
-      payload = { id: 'pay_test_apt_888', order_id: 'order_test_apt_999', amount: 65000, currency: 'INR', status: 'authorized' };
-    } else if (url.endsWith('/payments/pay_test_uncaptured')) {
-      payload = { id: 'pay_test_uncaptured', order_id: 'order_test_apt_999', amount: 65000, currency: 'INR', status: 'failed' };
-    } else {
-      return { ok: false, json: async () => ({ error: 'unexpected mocked provider request' }) };
-    }
-    return { ok: true, json: async () => payload };
-  };
 
   const patient = await userRepository.create({
     phone: '9876543210',
-    name: 'Razorpay Test Patient',
-    email: 'rzp.patient@example.com',
+    name: 'Cashfree Test Patient',
+    email: 'cashfree.patient@example.com',
     role: 'user',
   });
 
-  await t.test('1. Reports appointment billing as unconfigured until an admin saves it', async () => {
+  await t.test('1. Reports appointment billing defaults until an admin saves it', async () => {
     const res = createMockRes();
     await appointmentController.getBillingConfigPatient({}, res, (err) => { if (err) throw err; });
     assert.equal(res.data.data.payment_required, false);
-    assert.equal(res.data.data.configured, false);
-    assert.equal(res.data.data.consultation_fee, null);
+    assert.equal(res.data.data.configured, true);
+    assert.equal(res.data.data.consultation_fee, 500);
   });
 
   await t.test('2. Admin updates appointment billing to require payment (ON) and fee to ₹650', async () => {
@@ -113,7 +97,7 @@ test('Appointment Razorpay Billing & Admin Received Payments', async (t) => {
     assert.match(errorThrown.message, /Online payment is required/i);
   });
 
-  await t.test('4. Patient creates Razorpay payment intent for appointment', async () => {
+  await t.test('4. Patient creates a Cashfree sandbox payment intent for appointment', async () => {
     const futureDate = new Date();
     futureDate.setDate(futureDate.getDate() + ((1 + 7 - futureDate.getDay()) % 7 || 7));
     futureDate.setHours(10, 30, 0, 0);
@@ -133,47 +117,42 @@ test('Appointment Razorpay Billing & Admin Received Payments', async (t) => {
     assert.equal(res.data.data.currency, 'INR');
   });
 
-  await t.test('5. Patient verifies signature and books appointment via verifyAndBook', async () => {
+  await t.test('5. Patient verifies Cashfree payment and books appointment via verifyAndBook', async () => {
     const futureDate = new Date();
     futureDate.setDate(futureDate.getDate() + ((1 + 7 - futureDate.getDay()) % 7 || 7));
     futureDate.setHours(11, 0, 0, 0);
 
-    const razorpay_order_id = 'order_test_apt_999';
-    const razorpay_payment_id = 'pay_test_apt_888';
+    const cashfreeOrderId = 'APT-123-' + patient.id + '-deadbeef';
+    const cashfreePaymentId = 'pay_test_apt_888';
     verifiedOrder = {
-      id: razorpay_order_id,
-      amount: 65000,
-      currency: 'INR',
-      status: 'created',
-      notes: {
-        app_order_id: `APT-123-${patient.id}-deadbeef`,
+      order_id: cashfreeOrderId,
+      order_amount: 650,
+      order_currency: 'INR',
+      order_status: 'ACTIVE',
+      order_tags: {
+        app_order_id: cashfreeOrderId,
         patient_id: String(patient.id),
         starts_at: futureDate.toISOString(),
         consultation_fee: '650',
+        reason: 'Follicular assessment',
       },
     };
-    const keySecret = paymentGatewayService.keySecret;
-    const razorpay_signature = crypto
-      .createHmac('sha256', keySecret)
-      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-      .digest('hex');
 
     const req = {
       user: { id: patient.id },
       body: {
         starts_at: futureDate.toISOString(),
         reason: 'Follicular assessment',
-        razorpay_order_id,
-        razorpay_payment_id,
-        razorpay_signature,
+        cashfree_order_id: cashfreeOrderId,
+        payment_id: cashfreePaymentId,
       },
     };
     const res = createMockRes();
     await appointmentController.verifyAndBook(req, res, (err) => { if (err) throw err; });
     assert.equal(res.data.data.status, 'Confirmed');
     assert.equal(res.data.data.paymentStatus, 'Paid');
-    assert.equal(res.data.data.paymentMethod, 'Razorpay');
-    assert.equal(res.data.data.paymentTransactionId, razorpay_payment_id);
+    assert.equal(res.data.data.paymentMethod, 'Cashfree');
+    assert.equal(res.data.data.paymentTransactionId, cashfreePaymentId);
     assert.equal(res.data.data.consultationFee, 650);
     assert.ok(res.data.data.tokenNumber);
 
@@ -182,41 +161,33 @@ test('Appointment Razorpay Billing & Admin Received Payments', async (t) => {
     assert.equal(retryRes.data.data.id, res.data.data.id);
     assert.equal((await container.repositories.appointmentRepository.listByPatient(patient.id)).length, 1);
 
-    verifiedOrder.notes.patient_id = String(patient.id + 999);
+    verifiedOrder.order_tags.patient_id = String(patient.id + 999);
     const mismatchedPaymentId = 'pay_test_wrong_patient';
-    const mismatchedSignature = crypto
-      .createHmac('sha256', keySecret)
-      .update(`${razorpay_order_id}|${mismatchedPaymentId}`)
-      .digest('hex');
     let mismatchError = null;
     await appointmentController.verifyAndBook({
       user: { id: patient.id },
-      body: { ...req.body, razorpay_payment_id: mismatchedPaymentId, razorpay_signature: mismatchedSignature },
+      body: { ...req.body, cashfree_order_id: `${cashfreeOrderId}x`, payment_id: mismatchedPaymentId },
     }, createMockRes(), (err) => { mismatchError = err; });
     assert.match(mismatchError?.message || '', /does not match this patient/i);
-    verifiedOrder.notes.patient_id = String(patient.id);
+    verifiedOrder.order_tags.patient_id = String(patient.id);
 
-    verifiedOrder.amount = 100;
+    verifiedOrder.order_amount = 100;
     const wrongAmountId = 'pay_test_wrong_amount';
-    const wrongAmountSignature = crypto.createHmac('sha256', keySecret)
-      .update(`${razorpay_order_id}|${wrongAmountId}`).digest('hex');
     let amountError = null;
     await appointmentController.verifyAndBook({
       user: { id: patient.id },
-      body: { ...req.body, razorpay_payment_id: wrongAmountId, razorpay_signature: wrongAmountSignature },
+      body: { ...req.body, payment_id: wrongAmountId },
     }, createMockRes(), (err) => { amountError = err; });
     assert.match(amountError?.message || '', /consultation fee/i);
-    verifiedOrder.amount = 65000;
+    verifiedOrder.order_amount = 650;
 
     const uncapturedId = 'pay_test_uncaptured';
     const uncapturedStartsAt = new Date(new Date(futureDate).getTime() + 30 * 60 * 1000).toISOString();
-    verifiedOrder.notes.starts_at = uncapturedStartsAt;
-    const uncapturedSignature = crypto.createHmac('sha256', keySecret)
-      .update(`${razorpay_order_id}|${uncapturedId}`).digest('hex');
+    verifiedOrder.order_tags.starts_at = uncapturedStartsAt;
     let captureError = null;
     await appointmentController.verifyAndBook({
       user: { id: patient.id },
-      body: { ...req.body, starts_at: uncapturedStartsAt, razorpay_payment_id: uncapturedId, razorpay_signature: uncapturedSignature },
+      body: { ...req.body, starts_at: uncapturedStartsAt, payment_id: uncapturedId },
     }, createMockRes(), (err) => { captureError = err; });
     assert.match(captureError?.message || '', /not captured/i);
     assert.equal((await container.repositories.appointmentRepository.listByPatient(patient.id)).length, 1);
@@ -318,13 +289,18 @@ test('Appointment Razorpay Billing & Admin Received Payments', async (t) => {
   });
 });
 
-test('a slot conflict after a captured appointment payment starts a full refund', async () => {
-  const container = createContainer();
+test('a slot conflict after a captured Cashfree appointment payment starts a full refund', async () => {
+  const paymentGatewayService = {
+    provider: 'cashfree', environment: 'TEST',
+    async assertConfigured() {},
+    async getPaymentOrder(orderId) { return orderId === cashfreeOrderId ? { order_id: orderId, order_amount: 500, order_currency: 'INR', order_status: 'ACTIVE', order_tags: { patient_id: String(patient.id), starts_at: startsAt.toISOString(), consultation_fee: '500', reason: 'Consultation' } } : null; },
+    async verifyCapturedPayment({ paymentId }) { return { transaction_id: paymentId, payment: { cf_payment_id: paymentId, payment_status: 'SUCCESS' } }; },
+    async refundCapturedPayment() { return { id: 'refund_conflict', status: 'pending' }; },
+  };
+  const container = createContainer({ paymentGatewayService });
   const { appointmentController } = container.controllers;
   const { userRepository, appointmentRepository } = container.repositories;
   const gateway = container.services.paymentGatewayService;
-  gateway.keyId = 'rzp_test_refund';
-  gateway.keySecret = 'refund_test_secret';
   const patient = await userRepository.create({
     phone: '9876500999', name: 'Slot Race Patient', email: 'slot.race@example.com', role: 'user',
   });
@@ -336,34 +312,28 @@ test('a slot conflict after a captured appointment payment starts a full refund'
   const startsAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
   const paymentId = 'pay_slot_race_captured';
   const orderId = 'order_slot_race_captured';
-  gateway.fetch = async (url, options = {}) => {
-    const isRefund = url.endsWith(`/payments/${paymentId}/refund`) && options.method === 'POST';
-    const data = isRefund
-      ? { id: 'rfnd_slot_race', status: 'pending' }
-      : url.endsWith(`/orders/${orderId}`)
-        ? {
-            id: orderId, amount: 65000, currency: 'INR',
-            notes: {
-              app_order_id: `APT-123-${patient.id}-1234abcd`,
-              patient_id: String(patient.id), starts_at: startsAt, consultation_fee: '650',
-            },
-          }
-        : { id: paymentId, order_id: orderId, amount: 65000, currency: 'INR', status: 'captured' };
-    return { ok: true, json: async () => data };
-  };
+  gateway.getPaymentOrder = async () => ({
+    order_id: orderId,
+    order_amount: 650,
+    order_currency: 'INR',
+    order_tags: {
+      app_order_id: `APT-123-${patient.id}-1234abcd`,
+      patient_id: String(patient.id), starts_at: startsAt, consultation_fee: '650',
+    },
+  });
+  gateway.verifyCapturedPayment = async () => ({ transaction_id: paymentId });
+  gateway.refundCapturedPayment = async () => ({ id: 'rfnd_slot_race', status: 'pending' });
   appointmentController.validateSlot = async () => {};
   appointmentRepository.create = async () => {
     throw new ConflictError('This clinic slot has just been booked. Choose another time.');
   };
 
-  const signature = crypto.createHmac('sha256', gateway.keySecret)
-    .update(`${orderId}|${paymentId}`).digest('hex');
   let caught = null;
   await appointmentController.verifyAndBook({
     user: { id: patient.id },
     body: {
-      starts_at: startsAt, reason: 'Consultation', razorpay_order_id: orderId,
-      razorpay_payment_id: paymentId, razorpay_signature: signature,
+      starts_at: startsAt, reason: 'Consultation', cashfree_order_id: orderId,
+      payment_id: paymentId,
     },
   }, createMockRes(), (error) => { caught = error; });
 

@@ -83,7 +83,7 @@ test('late captured payment for a cancelled order is refunded instead of reopeni
     items: [{ product_id: 'product-1', title: 'Product', price: 100, quantity: 1 }],
     shipping_address: { name: 'Test', phone: '9000000000', house_number: '1', street: 'Road', city: 'Jaipur', state: 'Rajasthan', pincode: '302001' },
     pricing: { subtotal: 100, total: 100 },
-    payment: { gateway: 'razorpay', payment_status: 'Pending', payment_intent_id: 'order_late' },
+    payment: { gateway: 'cashfree', payment_status: 'Pending', payment_intent_id: 'order_late' },
     fulfillment: { status: 'Cancelled', inventory_release_status: 'completed' },
   });
   let refundRequest;
@@ -102,7 +102,7 @@ test('late captured payment for a cancelled order is refunded instead of reopeni
   const useCase = new VerifyPaymentUseCase({
     orderRepository,
     paymentGatewayService: {
-      async verifyCapturedPayment() { return { id: 'pay_late', status: 'captured' }; },
+      async verifyCapturedPayment() { return { transaction_id: 'pay_late', payment: { cf_payment_id: 'pay_late', payment_status: 'SUCCESS' } }; },
       async refundCapturedPayment(input) { refundRequest = input; return { id: 'refund_late', status: 'pending' }; },
     },
   });

@@ -80,10 +80,12 @@ export const createAdminRouter = ({ adminController, notificationController, vid
 
   // Patients and clinical directory
   router.get('/users/segments', requireAnyPermission('patients.view', 'patients.lookup'), adminController.getPatientSegments);
+  router.get('/users/search', requireAnyPermission('patients.view', 'patients.lookup'), adminController.searchUsers);
   router.get('/users', requireAnyPermission('patients.view', 'patients.lookup'), adminController.listUsers);
-  router.get('/users/:userId', requireAnyPermission('patients.view', 'patients.lookup'), adminController.getPatient);
+  router.get('/users/:userId/lookup', requireAnyPermission('patients.lookup', 'patients.view'), adminController.lookupPatient);
+  router.get('/users/:userId', requirePermission('patients.view'), adminController.getPatient);
   router.get('/users/:userId/archive', requireSuperAdmin, adminController.getPatientArchive);
-  router.patch('/users/:userId', requireAnyPermission('patients.view', 'patients.lookup', 'assessments.review', 'care-plans.edit'), adminController.updatePatient);
+  router.patch('/users/:userId', requirePermission('patients.edit'), adminController.updatePatient);
   router.patch('/users/:userId/status', requireSuperAdmin, adminController.setUserStatus);
   router.delete('/users/:userId', requireSuperAdmin, adminController.deleteUser);
 
@@ -103,12 +105,25 @@ export const createAdminRouter = ({ adminController, notificationController, vid
   // Hair tests & Assessments
   router.get('/hair-tests', requireAnyPermission('hair-tests.view', 'assessments.review'), adminController.listHairTests);
   router.get('/hair-tests/:referenceNo', requireAnyPermission('hair-tests.view', 'assessments.review'), adminController.getHairTest);
-  router.patch('/hair-tests/:referenceNo', requireAnyPermission('assessments.review', 'hair-tests.upload', 'care-plans.edit'), adminController.updateHairTest);
-  router.patch('/hair-tests/:referenceNo/status', requireAnyPermission('assessments.review', 'hair-tests.upload'), adminController.updateHairTestStatus);
+  router.patch('/hair-tests/:referenceNo', requireAnyPermission('assessments.review', 'hair-tests.submit', 'hair-tests.upload', 'care-plans.edit'), adminController.updateHairTest);
+  router.patch('/hair-tests/:referenceNo/status', requireAnyPermission('assessments.review', 'hair-tests.submit', 'hair-tests.upload'), adminController.updateHairTestStatus);
 
   // Care plans / treatments
   router.get('/treatments', requireAnyPermission('care-plans.edit', 'assessments.review'), adminController.listTreatments);
   router.post('/treatments', requireAnyPermission('care-plans.edit', 'assessments.review'), adminController.createTreatment);
+  router.get('/treatments/:treatmentId', requireAnyPermission('care-plans.edit', 'assessments.review'), adminController.getTreatment);
+  router.patch('/treatments/:treatmentId', requireAnyPermission('care-plans.edit', 'assessments.review'), adminController.updateTreatment);
+  router.post('/treatments/:treatmentId/withdraw', requireAnyPermission('care-plans.edit', 'assessments.review'), adminController.withdrawTreatment);
+  router.delete('/treatments/:treatmentId', requireAnyPermission('care-plans.edit', 'assessments.review'), adminController.withdrawTreatment);
+
+  // Care plans alias endpoints
+  router.get('/care-plans', requireAnyPermission('care-plans.edit', 'assessments.review'), adminController.listTreatments);
+  router.post('/care-plans', requireAnyPermission('care-plans.edit', 'assessments.review'), adminController.createTreatment);
+  router.get('/care-plans/:treatmentId', requireAnyPermission('care-plans.edit', 'assessments.review'), adminController.getTreatment);
+  router.patch('/care-plans/:treatmentId', requireAnyPermission('care-plans.edit', 'assessments.review'), adminController.updateTreatment);
+  router.post('/care-plans/:treatmentId/withdraw', requireAnyPermission('care-plans.edit', 'assessments.review'), adminController.withdrawTreatment);
+  router.delete('/care-plans/:treatmentId', requireAnyPermission('care-plans.edit', 'assessments.review'), adminController.withdrawTreatment);
+
   router.post('/users/:userId/diet-plan', requireAnyPermission('care-plans.edit', 'assessments.review'), adminController.updatePatientDietPlan);
 
   // Support inquiries

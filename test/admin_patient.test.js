@@ -33,7 +33,7 @@ describe('Admin patient record', () => {
       progressCheckInRepository: { listByUserId: async () => [] },
       imageStorage: { createPrivateDownloadUrl: () => 'https://example.com/dl' },
     });
-    const result = await invoke(controller.getPatient, { params: { userId: '42' } });
+    const result = await invoke(controller.getPatient, { params: { userId: '42' }, user: { role: 'super_admin' } });
     assert.equal(result.error, undefined);
     assert.equal(result.body.data.patient.id, 42);
     assert.equal(result.body.data.assessments[0].reference_no, 'HT-TEST-0501');
@@ -48,11 +48,11 @@ describe('Admin patient record', () => {
     const controller = new AdminController({
       userRepository: { findById: async () => patient, update: async (_id, fields) => { saved = fields; return { toPublicProfile: () => ({ ...patient.toPublicProfile(), ...fields }) }; } },
     });
-    const good = await invoke(controller.updatePatient, { params: { userId: '42' }, body: { age: 35, city: 'Jaipur' } });
+    const good = await invoke(controller.updatePatient, { params: { userId: '42' }, body: { age: 35, city: 'Jaipur' }, user: { role: 'super_admin' } });
     assert.equal(good.error, undefined);
     assert.deepEqual(saved, { age: 35, city: 'Jaipur' });
     const bad = await invoke(controller.updatePatient, { params: { userId: '42' }, body: { phone: '9000000000' } });
-    assert.equal(bad.error?.statusCode, 400);
+    assert.equal(bad.error?.statusCode, 403);
   });
 
   it('does not upload a report whose file contents do not match its claimed type', async () => {
@@ -260,6 +260,7 @@ describe('Admin patient record', () => {
         city: 'Mumbai',
         confirm_contact_change: true,
       },
+      user: { role: 'super_admin' },
     });
     assert.equal(result.error, undefined);
     assert.equal(result.body.status, 'success');
@@ -328,7 +329,7 @@ describe('Admin patient record', () => {
           notes: 'Doctor adjusted scalp score based on dermatoscope findings',
         },
       },
-      user: { name: 'Dr. Jai Bansal', email: 'dr.jai@drhairindia.com' },
+      user: { name: 'Dr. Jai Bansal', email: 'dr.jai@drhairindia.com', role: 'super_admin' },
     });
 
     assert.equal(result.error, undefined);
@@ -343,5 +344,73 @@ describe('Admin patient record', () => {
     assert.ok(updatedFields.ai_assessment_override);
     assert.equal(updatedFields.ai_assessment_override.hair_loss_stage, 'Stage 2');
     assert.equal(updatedFields.ai_assessment_override.scalp_score, 72);
+  });
+
+  it('records a patient assessment-review event only after an explicit reviewed status', async () => {
+    const assessment = {
+      id: 501,
+      reference_no: 'HT-TEST-0501',
+      userId: 42,
+      patient_code: 'DH-TEST-0042',
+      status: 'submitted',
+      recommended_treatments: null,
+    };
+    const activities = [];
+    const auditEvents = [];
+    const controller = new AdminController({
+      hairTestRepository: {
+        async findByReferenceNo() { return assessment; },
+        async updateStatus(_referenceNo, nextStatus) {
+          assessment.status = nextStatus;
+          return assessment;
+        },
+        async update(_referenceNo, fields) {
+          Object.assign(assessment, fields);
+          return assessment;
+        },
+      },
+      patientActivityRepository: { async record(event) { activities.push(event); } },
+      auditEventRepository: { async record(event) { auditEvents.push(event); } },
+    });
+
+    const recommendationOnly = await invoke(controller.updateHairTest, {
+      params: { referenceNo: assessment.reference_no },
+      body: { recommended_treatments: { products: [{ id: 'serum-1' }] } },
+      user: { role: 'super_admin', email: 'doctor@example.test' },
+    });
+    assert.equal(recommendationOnly.error, undefined);
+    assert.equal(assessment.status, 'submitted');
+    assert.equal(activities.length, 0);
+    assert.equal(auditEvents.at(-1).action, 'assessment.recommendations_updated');
+
+    const notesOnly = await invoke(controller.updateHairTest, {
+      params: { referenceNo: assessment.reference_no },
+      body: { clinical_notes: { doctor_notes: 'Reviewed scalp images.' } },
+      user: { role: 'super_admin', email: 'doctor@example.test' },
+    });
+    assert.equal(notesOnly.error, undefined);
+    assert.equal(auditEvents.at(-1).action, 'assessment.notes_updated');
+
+    const overrideOnly = await invoke(controller.updateHairTest, {
+      params: { referenceNo: assessment.reference_no },
+      body: { ai_assessment_override: { hair_loss_stage: 'Stage 3', notes: 'Clinician correction.' } },
+      user: { role: 'super_admin', email: 'doctor@example.test' },
+    });
+    assert.equal(overrideOnly.error, undefined);
+    assert.equal(auditEvents.at(-1).action, 'assessment.ai_override_updated');
+
+    const reviewed = await invoke(controller.updateHairTest, {
+      params: { referenceNo: assessment.reference_no },
+      body: { status: 'reviewed' },
+      user: { role: 'super_admin', email: 'doctor@example.test' },
+    });
+    assert.equal(reviewed.error, undefined);
+    assert.equal(assessment.status, 'reviewed');
+    assert.equal(activities.length, 1);
+    assert.equal(activities[0].type, 'assessment');
+    assert.equal(activities[0].metadata.action, 'explicit_review');
+    assert.equal(activities[0].summary, 'Your assessment has been reviewed by the care team.');
+    assert.equal(auditEvents.at(-1).action, 'assessment.reviewed');
+    assert.equal(auditEvents.some((event) => event.action === 'assessment.clinical_updated'), false);
   });
 });

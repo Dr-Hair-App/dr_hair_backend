@@ -20,6 +20,7 @@ const safeSurfaces = new Set([
   '/admin',
   '/Admin',
   'authenticated-admin',
+  'patient-api',
 ]);
 
 export class AdminApiTrafficRepository {
@@ -57,7 +58,7 @@ export class AdminApiTrafficRepository {
     return event;
   }
 
-  async list({ page = 1, limit = 50, window = '24h', statusClass = null } = {}) {
+  async list({ page = 1, limit = 50, window = '24h', statusClass = null, surface = null, scope = null } = {}) {
     const safePage = Math.max(1, Math.floor(Number(page) || 1));
     const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || 50)));
     const safeWindow = windowMs[window] ? window : '24h';
@@ -66,6 +67,14 @@ export class AdminApiTrafficRepository {
     if (statusRanges[statusClass]) {
       const [from, to] = statusRanges[statusClass];
       filter.status = { $gte: from, $lt: to };
+    }
+    const targetSurface = surface || scope;
+    if (targetSurface === 'patient' || targetSurface === 'patient-api') {
+      filter.surface = 'patient-api';
+    } else if (targetSurface === 'admin') {
+      filter.surface = { $ne: 'patient-api' };
+    } else if (safeSurfaces.has(targetSurface)) {
+      filter.surface = targetSurface;
     }
     const [items, total] = await Promise.all([
       this.model.find(filter).sort({ created_at: -1 }).skip((safePage - 1) * safeLimit).limit(safeLimit).lean(),
@@ -90,6 +99,7 @@ export class AdminApiTrafficRepository {
         total_pages: Math.ceil(total / safeLimit),
         window: safeWindow,
         retention_days: 30,
+        surface: targetSurface || 'all',
       },
     };
   }

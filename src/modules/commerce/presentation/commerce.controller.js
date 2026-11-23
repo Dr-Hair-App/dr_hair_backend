@@ -88,6 +88,7 @@ export class CommerceController {
     this.appointmentController = appointmentController;
     this.shiprocketService = shiprocketService;
     this.paymentGatewayService = paymentGatewayService;
+    this.adjustStock = this.restockProduct.bind(this);
   }
 
   async notifyPatient({ userId, title, body, entityId, type = 'order' }) {
@@ -188,7 +189,7 @@ export class CommerceController {
         addressId: body.address_id || body.addressId || null,
         deliveryPincode: body.delivery_pincode || body.deliveryPincode || null,
         items: body.items || [],
-        paymentGateway: body.payment_gateway || body.paymentGateway || 'razorpay',
+        paymentGateway: body.payment_gateway || body.paymentGateway || 'cashfree',
       });
       return sendSuccess(res, quote, 'Delivery quote retrieved from available Shiprocket couriers');
     } catch (err) {
@@ -318,11 +319,11 @@ export class CommerceController {
     try {
       const { order_id, orderId, payment_id, paymentId, payment_signature, signature } = req.body;
       const cleanOrderId = order_id || orderId;
-      const cleanPaymentId = payment_id || paymentId;
+      const cleanPaymentId = payment_id || paymentId || cleanOrderId;
       const cleanSignature = payment_signature || signature;
 
-      if (!cleanOrderId || !cleanPaymentId) {
-        throw new BadRequestError('Order ID and Payment ID are required');
+      if (!cleanOrderId) {
+        throw new BadRequestError('Order ID is required');
       }
 
       const before = await this.orderRepository.findById(cleanOrderId);
@@ -360,15 +361,18 @@ export class CommerceController {
       if (order.payment.payment_status === 'Paid') {
         return sendSuccess(res, { order: order.toJSON(), paid: true, can_retry: false, attempts: [] }, 'Payment is confirmed');
       }
-      if (order.payment.gateway !== 'razorpay' || !order.payment.payment_intent_id) {
-        return sendSuccess(res, { order: order.toJSON(), paid: false, can_retry: false, attempts: [] }, 'This order has no pending Razorpay payment');
+      if (order.payment.gateway !== 'cashfree' || !order.payment.payment_intent_id) {
+        return sendSuccess(res, { order: order.toJSON(), paid: false, can_retry: false, attempts: [] }, 'This order has no pending online payment');
       }
       const attempts = await this.paymentGatewayService.getOrderPayments(order.payment.payment_intent_id);
-      const settleable = attempts.find((attempt) => ['captured', 'authorized'].includes(String(attempt.status)));
-      if (settleable?.id) {
+      const settleable = attempts.find((attempt) => {
+        const st = String(attempt.payment_status || attempt.status || '').toLowerCase();
+        return ['success', 'captured', 'authorized'].includes(st);
+      });
+      if (settleable?.cf_payment_id || settleable?.id) {
         const settled = await this.verifyPaymentUseCase.execute({
           orderId: order.order_id,
-          paymentId: settleable.id,
+          paymentId: settleable.cf_payment_id || settleable.id,
           isWebhook: true,
           actor: { id: 'patient-payment-recovery', type: 'system' },
         });
@@ -382,7 +386,10 @@ export class CommerceController {
         }, paid ? 'Payment is confirmed' : 'Payment state is being reconciled');
       }
       const canRetry = !['Cancelled', 'Refunded'].includes(order.fulfillment.status) &&
-        (attempts.length === 0 || attempts.every((attempt) => ['failed', 'refunded'].includes(String(attempt.status))));
+        (attempts.length === 0 || attempts.every((attempt) => {
+          const st = String(attempt.payment_status || attempt.status || '').toLowerCase();
+          return ['failed', 'user_dropped', 'cancelled', 'refunded'].includes(st);
+        }));
       return sendSuccess(res, {
         order: order.toJSON(),
         paid: false,
@@ -395,6 +402,132 @@ export class CommerceController {
 
   async handlePaymentWebhook(req, res, next) {
     try {
+      if (this.paymentGatewayService?.provider === 'cashfree') {
+        const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(JSON.stringify(req.body || {}));
+        const timestamp = req.headers?.['x-webhook-timestamp'];
+        const signature = req.headers?.['x-webhook-signature'];
+        const numericTimestamp = Number(timestamp);
+        const timestampMs = numericTimestamp < 1e12 ? numericTimestamp * 1000 : numericTimestamp;
+        if (!Number.isFinite(timestampMs) || Math.abs(Date.now() - timestampMs) > 5 * 60 * 1000) {
+          throw new BadRequestError('Cashfree webhook timestamp is missing or expired');
+        }
+        if (!this.paymentGatewayService.verifyWebhookSignature({ rawBody, timestamp, signature })) {
+          throw new BadRequestError('Invalid Cashfree webhook signature');
+        }
+        const payload = req.body;
+        const event = String(payload?.type || '').trim();
+        const data = payload?.data || {};
+        const orderId = String(data?.order?.order_id || '').trim();
+        const payment = data?.payment || {};
+        if (!event || !orderId) throw new BadRequestError('Invalid Cashfree webhook payload');
+
+        const eventId = createHash('sha256').update(rawBody).digest('hex');
+        let claimed = false;
+        if (this.providerWebhookEventRepository) {
+          const claim = await this.providerWebhookEventRepository.claim({
+            provider: 'cashfree',
+            eventId,
+            eventType: event,
+            payloadHash: eventId,
+          });
+          if (!claim.claimed) return sendSuccess(res, { received: true, duplicate: true }, 'Duplicate webhook event ignored');
+          claimed = true;
+        }
+        try {
+          if (event === 'PAYMENT_SUCCESS_WEBHOOK' && !orderId.startsWith('APT-')) {
+            const before = await this.orderRepository?.findById?.(orderId);
+            const settled = await this.verifyPaymentUseCase.execute({
+              orderId,
+              paymentId: String(payment.cf_payment_id || ''),
+              isWebhook: true,
+              actor: { id: 'cashfree-webhook', type: 'system' },
+            });
+            if (before?.payment?.payment_status !== 'Paid' && settled.payment?.payment_status === 'Paid') {
+              await this.notifyPatient({
+                userId: settled.user_id,
+                title: 'Payment confirmed',
+                body: `Payment for order ${settled.order_id} was received. We’ll notify you when it ships.`,
+                entityId: settled.order_id,
+              });
+            }
+          } else if (event === 'PAYMENT_SUCCESS_WEBHOOK' && orderId.startsWith('APT-')) {
+            if (!this.appointmentController?.recoverCapturedCashfreePaymentFromWebhook) {
+              throw new BadRequestError('Appointment Cashfree webhook recovery is not configured.');
+            }
+            await this.appointmentController.recoverCapturedCashfreePaymentFromWebhook(data);
+          } else if (event === 'PAYMENT_FAILED_WEBHOOK' && !orderId.startsWith('APT-')) {
+            const order = await this.orderRepository.findById(orderId);
+            if (order && order.payment.payment_intent_id === orderId) {
+              await this.orderRepository.appendPaymentAttempt?.(order.order_id, {
+                payment_id: String(payment.cf_payment_id || ''),
+                status: 'failed',
+                amount: Number(payment.payment_amount) || Number(data?.order?.order_amount) || 0,
+                currency: payment.payment_currency || 'INR',
+                failure_code: String(payment.payment_message || payment.payment_status || 'payment_attempt_failed').slice(0, 80),
+                attempted_at: payload.event_time || new Date().toISOString(),
+              });
+              const updated = await this.orderRepository.update(order.order_id, {
+                payment: { gateway_status: 'failed_attempt', last_failed_at: payload.event_time || new Date().toISOString() },
+              });
+              updated.addTimelineEvent('Cashfree payment attempt failed; order remains available for payment retry');
+              await this.orderRepository.update(order.order_id, { timeline: updated.timeline });
+            }
+          } else if (event === 'REFUND_STATUS_WEBHOOK') {
+            if (orderId.startsWith('APT-')) {
+              if (!this.appointmentController?.recoverCashfreeRefundEventFromWebhook) {
+                throw new BadRequestError('Appointment Cashfree refund reconciliation is not configured.');
+              }
+              await this.appointmentController.recoverCashfreeRefundEventFromWebhook(data);
+            } else {
+              const refund = data?.refund || {};
+              const refundId = String(refund.cf_refund_id || refund.refund_id || '').trim();
+              const amount = Number(refund.refund_amount);
+              const currency = String(refund.refund_currency || 'INR').toUpperCase();
+              const statusMap = { SUCCESS: 'processed', PROCESSED: 'processed', PENDING: 'pending', FAILED: 'failed' };
+              const incomingStatus = statusMap[String(refund.refund_status || '').toUpperCase()];
+              const order = await this.orderRepository.findById(orderId);
+              if (!order || !refundId || !Number.isFinite(amount) || amount <= 0 || currency !== 'INR' || !incomingStatus) {
+                throw new BadRequestError('Cashfree refund event does not match a valid order refund.');
+              }
+              const history = [...(order.payment.refunds || [])];
+              const index = history.findIndex((entry) => String(entry.id) === refundId);
+              const existing = index >= 0 ? history[index] : null;
+              const status = ['processed', 'failed'].includes(existing?.status) ? existing.status : incomingStatus;
+              const record = { id: refundId, amount, currency, status, updated_at: new Date().toISOString() };
+              if (index >= 0) history[index] = { ...existing, ...record };
+              else history.push(record);
+              const refunded = history.filter((entry) => entry.status === 'processed').reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+              const pending = history.filter((entry) => entry.status === 'pending').reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+              if (refunded + pending > Number(order.pricing.total) + 0.01) {
+                throw new BadRequestError('Cashfree refund events exceed the recorded order total.');
+              }
+              const updated = await this.orderRepository.update(orderId, {
+                payment: {
+                  refunds: history,
+                  refund_id: refundId,
+                  refund_amount: refunded,
+                  refund_pending_amount: pending,
+                  refund_status: pending > 0 ? 'pending' : status,
+                  payment_status: refunded >= Number(order.pricing.total) ? 'Refunded' : refunded > 0 ? 'Partially refunded' : order.payment.payment_status,
+                  ...(status === 'processed' ? { refunded_at: new Date().toISOString() } : {}),
+                },
+                ...(refunded >= Number(order.pricing.total) ? { fulfillment: { status: 'Refunded' } } : {}),
+              });
+              updated.addTimelineEvent(`Cashfree refund ${status}: ₹${amount} (${refundId})`);
+              await this.orderRepository.update(orderId, { timeline: updated.timeline });
+            }
+          }
+          if (claimed) await this.providerWebhookEventRepository.markProcessed({ provider: 'cashfree', eventId });
+        } catch (error) {
+          if (claimed) await this.providerWebhookEventRepository.markFailed({
+            provider: 'cashfree',
+            eventId,
+            errorCode: error?.code || error?.name || 'processing_failed',
+          }).catch(() => {});
+          throw error;
+        }
+        return sendSuccess(res, { received: true }, 'Cashfree webhook processed');
+      }
       const signature = req.headers['x-razorpay-signature'];
       const payload = req.body;
 
@@ -617,11 +750,11 @@ export class CommerceController {
             this.paymentGatewayService.getPaymentOrder(order.payment.payment_intent_id),
             this.paymentGatewayService.getOrderPayments(order.payment.payment_intent_id),
           ]);
-          const captured = attempts.find((attempt) => attempt.status === 'captured');
-          if (captured?.id) {
+          const captured = attempts.find((attempt) => ['SUCCESS', 'captured'].includes(String(attempt.payment_status || attempt.status).toUpperCase()));
+          if (captured?.cf_payment_id || captured?.id) {
             const settled = await this.verifyPaymentUseCase.execute({
               orderId: order.order_id,
-              paymentId: captured.id,
+              paymentId: captured.cf_payment_id || captured.id,
               isWebhook: true,
               actor: { id: 'checkout-reconciliation', type: 'system' },
             });
@@ -630,14 +763,17 @@ export class CommerceController {
             continue;
           }
 
-          const allAttemptsFailed = attempts.length > 0 && attempts.every((attempt) => ['failed', 'refunded'].includes(String(attempt.status)));
-          const noAttemptYet = attempts.length === 0 && providerOrder.status === 'created';
+          const allAttemptsFailed = attempts.length > 0 && attempts.every((attempt) => ['FAILED', 'USER_DROPPED', 'CANCELLED', 'failed', 'refunded'].includes(String(attempt.payment_status || attempt.status)));
+          const noAttemptYet = attempts.length === 0 && ['ACTIVE', 'created'].includes(String(providerOrder.order_status || providerOrder.status));
           if (!allAttemptsFailed && !noAttemptYet) {
             summary.deferred += 1;
             continue;
           }
 
-          const expired = await this.orderRepository.expirePendingRazorpayOrder(order.order_id, order.payment.payment_intent_id, olderThan);
+          const expireFn = this.orderRepository.expirePendingCashfreeOrder || this.orderRepository.expirePendingRazorpayOrder;
+          const expired = expireFn
+            ? await expireFn.call(this.orderRepository, order.order_id, order.payment.payment_intent_id, olderThan)
+            : null;
           if (!expired) {
             summary.deferred += 1;
             continue;
@@ -985,7 +1121,35 @@ export class CommerceController {
       if (notes !== undefined && (typeof notes !== 'string' || notes.length > 500)) {
         throw new BadRequestError('Inventory notes must be text no longer than 500 characters.');
       }
-      if (hasDelta && (typeof idempotencyKey !== 'string' || !idempotencyKey.trim() || idempotencyKey.length > 128)) {
+
+      if (req.body?.direction) {
+        const dir = String(req.body.direction).trim().toLowerCase();
+        if ((dir === 'receive' || dir === 'add') && change < 0) {
+          throw new BadRequestError("Direction 'receive' requires a positive stock delta.");
+        }
+        if ((dir === 'remove' || dir === 'decrease') && change > 0) {
+          throw new BadRequestError("Direction 'remove' requires a negative stock delta.");
+        }
+      }
+
+      const effectiveReason = String(req.body?.reason || req.body?.notes || '').trim();
+      const lowerReason = effectiveReason.toLowerCase();
+
+      // Validate direction vs reason
+      const receiveOnlyKeywords = ['stock received', 'return restocked', 'supplier restock', 'restock received'];
+      const removeOnlyKeywords = ['damaged or expired', 'damaged', 'expired', 'theft', 'shrinkage', 'waste', 'disposed', 'write-off'];
+
+      if (change < 0) {
+        if (receiveOnlyKeywords.some((keyword) => lowerReason.includes(keyword))) {
+          throw new BadRequestError(`Inventory reduction is incompatible with reason '${effectiveReason}'.`);
+        }
+      } else if (change > 0) {
+        if (removeOnlyKeywords.some((keyword) => lowerReason.includes(keyword))) {
+          throw new BadRequestError(`Inventory increase is incompatible with reason '${effectiveReason}'.`);
+        }
+      }
+
+      if (hasDelta && idempotencyKey !== undefined && (typeof idempotencyKey !== 'string' || !idempotencyKey.trim() || idempotencyKey.length > 128)) {
         throw new BadRequestError('A valid idempotency_key is required for inventory adjustments.');
       }
 
@@ -1022,9 +1186,28 @@ export class CommerceController {
     try {
       const { status, page, limit } = req.query;
       const result = await this.couponRepository.list({ status, page, limit });
+      const analytics = this.orderRepository?.getCouponAnalytics
+        ? await this.orderRepository.getCouponAnalytics()
+        : { available: true, discounted_sales: 0, total_discount_given: 0, total_redemptions: 0, by_coupon: {} };
+
+      const coupons = result.items.map((c) => {
+        const stats = analytics.by_coupon?.[c.code?.toUpperCase()] || null;
+        return {
+          ...c,
+          discounted_sales: stats?.discounted_sales ?? 0,
+        };
+      });
+
       return sendSuccess(res, {
         ...result,
-        coupons: result.items,
+        items: coupons,
+        coupons,
+        analytics: {
+          available: analytics.available,
+          discounted_sales: analytics.discounted_sales,
+          total_discount_given: analytics.total_discount_given,
+          total_redemptions: analytics.total_redemptions,
+        },
       }, 'Coupons retrieved');
     } catch (err) {
       next(err);

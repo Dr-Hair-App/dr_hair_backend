@@ -371,7 +371,7 @@ test('Appointment Booking & Payment Endpoints', async (t) => {
     );
   });
 
-  await t.test('default billing config returns configured: false and consultation_fee: null when uncustomized', async () => {
+  await t.test('default billing config returns configured: true and consultation_fee: 500 when uncustomized', async () => {
     const emptyContainer = createContainer({
       featureFlagRepository: {
         getFlag: async () => null,
@@ -379,8 +379,8 @@ test('Appointment Booking & Payment Endpoints', async (t) => {
     });
     const controller = emptyContainer.controllers.appointmentController;
     const config = await controller.getBillingConfig();
-    assert.equal(config.configured, false);
-    assert.equal(config.consultation_fee, null);
+    assert.equal(config.configured, true);
+    assert.equal(config.consultation_fee, 500);
     assert.equal(config.pay_at_clinic_enabled, true);
     assert.equal(config.online_pay_enabled, true);
   });

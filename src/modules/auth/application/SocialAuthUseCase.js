@@ -19,7 +19,7 @@ export class SocialAuthUseCase {
     this.googleOAuthClient = googleOAuthClient;
   }
 
-  async execute({ provider, email, name, providerId, deviceMetadata = {} }) {
+  async execute({ provider, email, name, providerId, age, gender, deviceMetadata = {} }) {
     if (!provider || !['google', 'apple'].includes(provider.toLowerCase())) {
       throw new BadRequestError('Supported social providers are "google" and "apple".');
     }
@@ -27,6 +27,15 @@ export class SocialAuthUseCase {
     let cleanProviderId = typeof providerId === 'string' ? providerId.trim() : '';
     let cleanEmail = email ? String(email).trim().toLowerCase() : null;
     let cleanName = name ? String(name).trim() : 'Patient';
+
+    const cleanAge = (typeof age === 'number' && Number.isFinite(age) && age >= 1 && age <= 120)
+      ? Math.round(age)
+      : (typeof age === 'string' && /^\d+$/.test(age.trim()) && Number(age) >= 1 && Number(age) <= 120)
+        ? Number(age)
+        : null;
+    const cleanGender = (typeof gender === 'string' && gender.trim().length > 0)
+      ? gender.trim().slice(0, 50)
+      : null;
 
     if (cleanProvider === 'google') {
       if (!cleanProviderId) {
@@ -69,6 +78,8 @@ export class SocialAuthUseCase {
         };
         if (cleanProvider === 'google' && !user.googleId) updatePayload.googleId = cleanProviderId;
         if (cleanProvider === 'apple' && !user.appleId) updatePayload.appleId = cleanProviderId;
+        if (user.age == null && cleanAge != null) updatePayload.age = cleanAge;
+        if (!user.gender && cleanGender != null) updatePayload.gender = cleanGender;
         await this.userRepository.update(user.id, updatePayload).catch(() => {});
       }
     }
@@ -79,6 +90,13 @@ export class SocialAuthUseCase {
         throw new ForbiddenError(
           user.blocked_reason || 'Your account has been suspended by clinic administration.',
         );
+      }
+
+      if ((user.age == null && cleanAge != null) || (!user.gender && cleanGender != null)) {
+        const profileUpdate = {};
+        if (user.age == null && cleanAge != null) profileUpdate.age = cleanAge;
+        if (!user.gender && cleanGender != null) profileUpdate.gender = cleanGender;
+        user = await this.userRepository.update(user.id, profileUpdate).catch(() => user);
       }
 
       await this.userRepository.update(user.id, { last_login_at: new Date() }).catch(() => {});
@@ -119,6 +137,8 @@ export class SocialAuthUseCase {
         providerId: cleanProviderId,
         email: cleanEmail,
         name: cleanName,
+        age: cleanAge,
+        gender: cleanGender,
       },
       this.jwtSecret,
       { expiresIn: '15m' },

@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ShiprocketService } from '../src/modules/commerce/infrastructure/ShiprocketService.js';
+import { GetShippingQuoteUseCase } from '../src/modules/commerce/application/GetShippingQuoteUseCase.js';
 
 const ENV_NAMES = [
   'NODE_ENV', 'DRHAIR_DEPLOYMENT_ENV', 'SHIPROCKET_API_ENV', 'SHIPROCKET_STAGING_MODE',
+  'SHIPROCKET_TEST_MODE',
   'SHIPROCKET_API_EMAIL', 'SHIPROCKET_API_PASSWORD', 'SHIPROCKET_STAGING_PICKUP_NAME', 'SHIPROCKET_STAGING_PICKUP_PIN',
 ];
 
@@ -48,6 +50,40 @@ test(`${deploymentEnvironment} uses an explicit Shiprocket simulator and never c
   assert.equal(quotes[0].rate, 79);
 });
 }
+
+test('shipping quote use case completes against the staging simulator without network access', async (t) => {
+  isolateEnvironment(t, {
+    NODE_ENV: 'production',
+    DRHAIR_DEPLOYMENT_ENV: 'testing',
+    SHIPROCKET_STAGING_MODE: 'mock',
+    SHIPROCKET_STAGING_PICKUP_NAME: 'Dr Hair Testing',
+    SHIPROCKET_STAGING_PICKUP_PIN: '110001',
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('Quote must stay in the local simulator'); };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const useCase = new GetShippingQuoteUseCase({
+    productRepository: { async getById() { return {
+      id: 'test-serum', name: 'Test Serum', status: 'active',
+      supply_plans: [{ id: 'monthly', title: 'Monthly', price: 1200, shipping_profile: {
+        weight_kg: 0.4, length_cm: 12, breadth_cm: 8, height_cm: 5,
+      } }],
+    }; } },
+    addressRepository: { async getById() { return null; } },
+    shiprocketService: new ShiprocketService(),
+  });
+  const quote = await useCase.execute({
+    deliveryPincode: '302001', paymentGateway: 'cashfree',
+    items: [{ productId: 'test-serum', plan: 'Monthly', quantity: 2 }],
+  });
+
+  assert.equal(quote.shipping_fee, 79);
+  assert.equal(quote.courier, 'Staging Test Courier');
+  assert.equal(quote.package.weight_kg, 0.8);
+  assert.equal(quote.package.height_cm, 10);
+  assert.match(quote.quote_id, /^[a-f0-9]{32}$/);
+});
 
 test('staging simulator exercises forward shipment, pickup, cancellation, and returns without network access', async (t) => {
   isolateEnvironment(t, {
@@ -126,4 +162,56 @@ test('production honors explicit Shiprocket live configuration', (t) => {
   assert.equal(configuration.apiBase, 'https://apiv2.shiprocket.in/v1/external');
   assert.equal(configuration.email, 'live@example.invalid');
   assert.equal(configuration.password, 'live-password');
+  assert.equal(configuration.testMode, false);
+});
+
+test('production test mode routes provider operations to the simulator despite live credentials', async (t) => {
+  isolateEnvironment(t, {
+    NODE_ENV: 'production',
+    DRHAIR_DEPLOYMENT_ENV: 'production',
+    SHIPROCKET_TEST_MODE: 'true',
+    SHIPROCKET_API_ENV: 'production',
+    SHIPROCKET_API_EMAIL: 'live@example.invalid',
+    SHIPROCKET_API_PASSWORD: 'live-password',
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('Production test mode must never contact Shiprocket'); };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const service = new ShiprocketService();
+  const configuration = service.getConfiguration();
+  assert.equal(configuration.environment, 'mock');
+  assert.equal(configuration.apiBase, 'mock://shiprocket');
+  assert.equal(configuration.configured, true);
+  assert.equal(configuration.testMode, true);
+  const quotes = await service.getCourierQuotes({
+    deliveryPincode: '302001', paymentMethod: 'cod', weight: 0.5,
+    length: 10, breadth: 10, height: 10, declaredValue: 1200,
+  });
+  assert.equal(quotes[0].rate, 79);
+  assert.equal(quotes[0].cod_available, true);
+  const shipment = await service.createForwardShipment({
+    order_id: 'PROD-TEST-001', created_at: new Date().toISOString(),
+    customer: { name: 'Test Patient', phone: '9876543210', email: 'test@example.invalid' },
+    shipping_address: { name: 'Test Patient', phone: '9876543210', house_number: '10', street: 'Test Road', city: 'Jaipur', state: 'Rajasthan', pincode: '302001' },
+    items: [{ product_id: 'test-product', title: 'Test Product', quantity: 1, price: 1200 }],
+    payment: { gateway: 'cashfree' }, pricing: { subtotal: 1200, total: 1200 },
+    fulfillment: { shiprocket_package: { weight_kg: 0.5, length_cm: 10, breadth_cm: 10, height_cm: 10 } },
+  });
+  assert.ok(shipment.awbCode.startsWith('STG'));
+});
+
+test('local development may explicitly opt into the mock simulator without enabling production test mode', (t) => {
+  isolateEnvironment(t, {
+    NODE_ENV: 'development',
+    DRHAIR_DEPLOYMENT_ENV: 'development',
+    SHIPROCKET_STAGING_MODE: 'mock',
+    SHIPROCKET_API_ENV: 'production',
+    SHIPROCKET_API_EMAIL: 'live@example.invalid',
+    SHIPROCKET_API_PASSWORD: 'live-password',
+  });
+  const configuration = new ShiprocketService().getConfiguration();
+  assert.equal(configuration.environment, 'mock');
+  assert.equal(configuration.configured, true);
+  assert.equal(configuration.testMode, false);
 });

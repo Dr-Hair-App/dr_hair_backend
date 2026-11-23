@@ -5,4 +5,6 @@ export const adminApiTrafficQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
   window: z.enum(['1h', '24h', '7d', '30d']).default('24h'),
   statusClass: z.enum(['2xx', '4xx', '5xx']).optional(),
+  surface: z.enum(['admin', 'patient', 'all', 'patient-api', '/api/v1/admin', '/api/v1/admin-auth']).optional(),
+  scope: z.enum(['admin', 'patient', 'all']).optional(),
 }).strict();

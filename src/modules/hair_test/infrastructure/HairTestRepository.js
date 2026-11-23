@@ -311,7 +311,7 @@ export class HairTestRepository extends IHairTestRepository {
         {
           $set: {
             ai_assessment: aiAssessment,
-            ai_assessment_status: 'ready',
+            ai_assessment_status: aiAssessment?.ai_status === 'unavailable' ? 'unavailable' : 'ready',
             ai_assessment_updated_at: updatedAt,
             ...photoVerificationSet,
           },
@@ -343,7 +343,7 @@ export class HairTestRepository extends IHairTestRepository {
         ...(typeof result.details === 'string' ? { verification_details: result.details.slice(0, 1000) } : {}),
       };
     });
-    test.ai_assessment_status = 'ready';
+    test.ai_assessment_status = aiAssessment?.ai_status === 'unavailable' ? 'unavailable' : 'ready';
     test.ai_assessment_updated_at = updatedAt;
     delete test.ai_assessment_locked_at;
     delete test.ai_assessment_locked_by;
@@ -468,6 +468,35 @@ export class HairTestRepository extends IHairTestRepository {
     record.ai_assessment_updated_at = updatedAt;
     record.ai_assessment_error = null;
     return new HairTest(record);
+  }
+
+  async listAdmin(opts = {}) {
+    return this.list(opts);
+  }
+
+  async getStatusSummary() {
+    if (isDatabaseConnected()) {
+      const counts = await HairTestModel.aggregate([
+        { $match: { status: { $ne: 'draft' } } },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ]);
+      const result = { total: 0, submitted: 0, under_review: 0, reviewed: 0, archived: 0 };
+      for (const c of counts) {
+        const key = String(c._id).toLowerCase();
+        if (result[key] !== undefined) result[key] = c.count;
+        result.total += c.count;
+      }
+      return result;
+    }
+
+    const nonDraft = (store.hairTests || []).filter((record) => record.status !== 'draft');
+    return {
+      total: nonDraft.length,
+      submitted: nonDraft.filter((r) => r.status === 'submitted' || r.status === 'Submitted').length,
+      under_review: nonDraft.filter((r) => r.status === 'under_review' || r.status === 'Review').length,
+      reviewed: nonDraft.filter((r) => r.status === 'reviewed' || r.status === 'Reviewed').length,
+      archived: nonDraft.filter((r) => r.status === 'archived').length,
+    };
   }
 
   async list({ page = 1, limit = 25, status } = {}) {

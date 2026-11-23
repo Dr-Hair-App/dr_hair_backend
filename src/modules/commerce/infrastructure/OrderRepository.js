@@ -132,7 +132,7 @@ export class OrderRepository extends IOrderRepository {
       const records = await OrderModel.find({
         $or: [
           {
-            'payment.gateway': 'razorpay',
+            'payment.gateway': 'cashfree',
             'payment.payment_status': 'Pending',
             'fulfillment.status': { $in: ['New', 'Preparing'] },
             ...(olderThan ? { created_at: { $lt: olderThan } } : {}),
@@ -144,7 +144,7 @@ export class OrderRepository extends IOrderRepository {
     }
     return (store.orders || [])
       .filter((order) => (
-        (order.payment?.gateway === 'razorpay' && order.payment?.payment_status === 'Pending' &&
+        (order.payment?.gateway === 'cashfree' && order.payment?.payment_status === 'Pending' &&
           ['New', 'Preparing'].includes(order.fulfillment?.status || 'New') &&
           (!olderThan || new Date(order.created_at) < new Date(olderThan))) ||
         (order.fulfillment?.status === 'Cancelled' && order.fulfillment?.inventory_release_status === 'pending')
@@ -154,15 +154,15 @@ export class OrderRepository extends IOrderRepository {
       .map((order) => new Order(order));
   }
 
-  async expirePendingRazorpayOrder(orderId, paymentIntentId, olderThan) {
+  async expirePendingCashfreeOrder(orderId, paymentIntentId, olderThan) {
     const cleanId = String(orderId || '').trim();
     const intentId = String(paymentIntentId || '').trim();
     const now = new Date();
-    const label = 'Unpaid Razorpay checkout expired; reserved stock release is pending';
+    const label = 'Unpaid Cashfree checkout expired; reserved stock release is pending';
     if (isDatabaseConnected()) {
       const record = await OrderModel.findOneAndUpdate({
         $or: [{ order_id: cleanId }, { id: cleanId }],
-        'payment.gateway': 'razorpay',
+        'payment.gateway': 'cashfree',
         'payment.payment_status': 'Pending',
         'payment.payment_intent_id': intentId,
         'fulfillment.status': { $in: ['New', 'Preparing'] },
@@ -183,7 +183,7 @@ export class OrderRepository extends IOrderRepository {
       return record ? new Order(record) : null;
     }
     const raw = (store.orders || []).find((order) => order.order_id === cleanId || order.id === cleanId);
-    if (!raw || raw.payment?.gateway !== 'razorpay' || raw.payment?.payment_status !== 'Pending' ||
+    if (!raw || raw.payment?.gateway !== 'cashfree' || raw.payment?.payment_status !== 'Pending' ||
         raw.payment?.payment_intent_id !== intentId || !['New', 'Preparing'].includes(raw.fulfillment?.status || 'New') ||
         raw.fulfillment?.shiprocket_shipment_id || raw.fulfillment?.awb_code || new Date(raw.created_at) >= new Date(olderThan)) return null;
     raw.payment = { ...raw.payment, gateway_status: 'expired' };
@@ -563,5 +563,78 @@ export class OrderRepository extends IOrderRepository {
       store.orders[idx] = updated.toJSON();
     }
     return updated;
+  }
+
+  async getCouponAnalytics() {
+    if (isDatabaseConnected()) {
+      const stats = await OrderModel.aggregate([
+        {
+          $match: {
+            'pricing.coupon_code': { $exists: true, $nin: [null, ''] },
+            'payment.status': { $in: ['Paid', 'Captured', 'captured', 'paid'] },
+          },
+        },
+        {
+          $group: {
+            _id: '$pricing.coupon_code',
+            discounted_sales: { $sum: '$pricing.total' },
+            total_discount: { $sum: '$pricing.discount' },
+            redemptions: { $sum: 1 },
+          },
+        },
+      ]);
+      const byCoupon = {};
+      let totalSales = 0;
+      let totalDiscount = 0;
+      let totalRedemptions = 0;
+      for (const row of stats) {
+        if (!row._id) continue;
+        const code = String(row._id).toUpperCase();
+        byCoupon[code] = {
+          discounted_sales: row.discounted_sales || 0,
+          total_discount: row.total_discount || 0,
+          redemptions: row.redemptions || 0,
+        };
+        totalSales += row.discounted_sales || 0;
+        totalDiscount += row.total_discount || 0;
+        totalRedemptions += row.redemptions || 0;
+      }
+      return {
+        available: true,
+        discounted_sales: totalSales,
+        total_discount_given: totalDiscount,
+        total_redemptions: totalRedemptions,
+        by_coupon: byCoupon,
+      };
+    }
+
+    const orders = (store.orders || []).filter((o) => {
+      const code = o.pricing?.coupon_code || o.coupon_code;
+      const status = String(o.payment?.status || o.payment_status || '').toLowerCase();
+      return Boolean(code) && ['paid', 'captured'].includes(status);
+    });
+
+    const byCoupon = {};
+    let totalSales = 0;
+    let totalDiscount = 0;
+    for (const o of orders) {
+      const code = String(o.pricing?.coupon_code || o.coupon_code).toUpperCase();
+      const orderTotal = Number(o.pricing?.total ?? o.total) || 0;
+      const orderDiscount = Number(o.pricing?.discount ?? o.discount) || 0;
+      byCoupon[code] ||= { discounted_sales: 0, total_discount: 0, redemptions: 0 };
+      byCoupon[code].discounted_sales += orderTotal;
+      byCoupon[code].total_discount += orderDiscount;
+      byCoupon[code].redemptions += 1;
+      totalSales += orderTotal;
+      totalDiscount += orderDiscount;
+    }
+
+    return {
+      available: true,
+      discounted_sales: totalSales,
+      total_discount_given: totalDiscount,
+      total_redemptions: orders.length,
+      by_coupon: byCoupon,
+    };
   }
 }

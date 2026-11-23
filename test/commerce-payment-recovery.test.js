@@ -14,7 +14,7 @@ function pendingOrder(userId = '7') {
     items: [{ product_id: 'p1', title: 'Product', price: 500, quantity: 1 }],
     shipping_address: { name: 'Patient', phone: '9000000000', house_number: '1', street: 'Road', city: 'Jaipur', state: 'Rajasthan', pincode: '302001' },
     pricing: { subtotal: 500, total: 500 },
-    payment: { gateway: 'razorpay', payment_status: 'Pending', payment_intent_id: 'order_recover_1' },
+    payment: { gateway: 'cashfree', payment_status: 'Pending', payment_intent_id: 'order_recover_1', payment_session_id: 'session_recover_1' },
     fulfillment: { status: 'Preparing' },
   });
 }

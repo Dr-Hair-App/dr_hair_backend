@@ -51,7 +51,9 @@ export class HairTest {
     scalp_photos = [],
     // AI Clinical Assessment
     ai_assessment = null,
-    ai_assessment_status = ai_assessment ? 'ready' : 'queued',
+    ai_assessment_status = ai_assessment?.ai_status === 'unavailable'
+      ? 'unavailable'
+      : ai_assessment ? 'ready' : 'queued',
     ai_assessment_updated_at = null,
     // Clinical Audit & Doctor Overrides
     clinical_notes = null,

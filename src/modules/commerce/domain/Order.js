@@ -141,10 +141,12 @@ export class Order {
 
     const paymentStatus = payment.payment_status || payment.status || 'Pending';
     this.payment = {
-      gateway: payment.gateway || 'razorpay',
+      gateway: payment.gateway || 'cashfree',
       payment_status: ORDER_PAYMENT_STATUSES.includes(paymentStatus) ? paymentStatus : 'Pending',
       gateway_status: String(payment.gateway_status || ''),
       payment_intent_id: payment.payment_intent_id || payment.paymentIntentId || null,
+      payment_session_id: payment.payment_session_id || null,
+      gateway_environment: payment.gateway_environment || null,
       transaction_id: payment.transaction_id || payment.transactionId || null,
       payment_signature: payment.payment_signature || null,
       paid_at: payment.paid_at || null,

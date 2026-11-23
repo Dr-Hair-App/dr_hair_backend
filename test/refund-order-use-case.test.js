@@ -10,10 +10,10 @@ function setup({ refundStatuses = ['processed', 'processed'] } = {}) {
     items: [{ product_id: 'serum-1', title: 'Serum', price: 100, quantity: 1 }],
     pricing: { subtotal: 100, delivery_fee: 0, total: 100 },
     payment: {
-      gateway: 'razorpay',
+      gateway: 'cashfree',
       payment_status: 'Paid',
-      payment_intent_id: 'order_rzp_1',
-      transaction_id: 'pay_rzp_1',
+      payment_intent_id: 'order_cf_1',
+      transaction_id: 'pay_cf_1',
     },
     fulfillment: { status: 'Delivered' },
   });

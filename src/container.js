@@ -30,7 +30,7 @@ import { InventoryRepository } from './modules/commerce/infrastructure/Inventory
 import { OrderRepository } from './modules/commerce/infrastructure/OrderRepository.js';
 import { ProviderWebhookEventRepository } from './modules/commerce/infrastructure/ProviderWebhookEventRepository.js';
 import { CouponRepository } from './modules/commerce/infrastructure/CouponRepository.js';
-import { PaymentGatewayService } from './modules/commerce/infrastructure/PaymentGatewayService.js';
+import { CashfreePaymentGatewayService } from './modules/commerce/infrastructure/CashfreePaymentGatewayService.js';
 import { FeatureFlagRepository } from './modules/admin/infrastructure/FeatureFlagRepository.js';
 import { AppReleasePolicyRepository } from './modules/admin/infrastructure/AppReleasePolicyRepository.js';
 import { SupportInquiryRepository } from './modules/support/infrastructure/SupportInquiryRepository.js';
@@ -172,7 +172,11 @@ export const createContainer = (overrides = {}) => {
   const orderRepository = overrides.orderRepository || new OrderRepository();
   const providerWebhookEventRepository = overrides.providerWebhookEventRepository || new ProviderWebhookEventRepository();
   const couponRepository = overrides.couponRepository || new CouponRepository();
-  const paymentGatewayService = overrides.paymentGatewayService || new PaymentGatewayService();
+  const cashfreePaymentGatewayService = overrides.cashfreePaymentGatewayService || new CashfreePaymentGatewayService();
+  // Cashfree is the sole online gateway for new checkout sessions. The
+  // explicit provider flag is retained for deployment configuration, but
+  // defaults to Cashfree so an unset variable cannot silently route to Razorpay.
+  const paymentGatewayService = overrides.paymentGatewayService || cashfreePaymentGatewayService;
   const featureFlagRepository = overrides.featureFlagRepository || new FeatureFlagRepository();
   const appReleasePolicyRepository = overrides.appReleasePolicyRepository || new AppReleasePolicyRepository();
   const supportInquiryRepository = overrides.supportInquiryRepository || new SupportInquiryRepository();
@@ -633,6 +637,7 @@ export const createContainer = (overrides = {}) => {
       patientArchiveService,
       campaignSchedulerService,
       paymentGatewayService,
+      cashfreePaymentGatewayService,
       geminiAiService,
     },
     useCases: {

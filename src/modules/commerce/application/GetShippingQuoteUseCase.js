@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { BadRequestError, NotFoundError } from '../../../shared/errors/index.js';
+import { BadGatewayError, BadRequestError, NotFoundError, ServiceUnavailableError } from '../../../shared/errors/index.js';
 
 export class GetShippingQuoteUseCase {
   constructor({ productRepository, addressRepository, shiprocketService }) {
@@ -8,8 +8,8 @@ export class GetShippingQuoteUseCase {
     this.shiprocketService = shiprocketService;
   }
 
-  async execute({ userId, addressId, deliveryPincode, items = [], paymentGateway = 'razorpay' }) {
-    if (!['cod', 'razorpay'].includes(paymentGateway)) {
+  async execute({ userId, addressId, deliveryPincode, items = [], paymentGateway = 'cashfree' }) {
+    if (!['cod', 'cashfree'].includes(paymentGateway)) {
       throw new BadRequestError('Select a supported checkout payment method before checking delivery.');
     }
     if (!Array.isArray(items) || items.length === 0 || items.length > 50) {
@@ -32,6 +32,9 @@ export class GetShippingQuoteUseCase {
     let height = 0;
     const packageLines = [];
     for (const requestItem of items) {
+      if (!requestItem || typeof requestItem !== 'object' || Array.isArray(requestItem)) {
+        throw new BadRequestError('Each delivery quote item must include a product and quantity.');
+      }
       const productId = String(requestItem.product_id || requestItem.productId || '').trim();
       const quantity = Number(requestItem.quantity);
       if (!productId || !Number.isInteger(quantity) || quantity < 1 || quantity > 100) {
@@ -80,24 +83,47 @@ export class GetShippingQuoteUseCase {
       throw new BadRequestError('Combined parcel exceeds the supported 500-unit shipping package limit.');
     }
 
-    const couriers = await this.shiprocketService.getCourierQuotes({
-      deliveryPincode: destination,
-      paymentMethod: paymentGateway,
-      weight: parcel.weight_kg,
-      length: parcel.length_cm,
-      breadth: parcel.breadth_cm,
-      height: parcel.height_cm,
-      declaredValue,
-    });
-    if (!couriers.length) {
+    let couriers;
+    try {
+      couriers = await this.shiprocketService.getCourierQuotes({
+        deliveryPincode: destination,
+        paymentMethod: paymentGateway,
+        weight: parcel.weight_kg,
+        length: parcel.length_cm,
+        breadth: parcel.breadth_cm,
+        height: parcel.height_cm,
+        declaredValue,
+      });
+    } catch (err) {
+      if (err.code === 'SHIPROCKET_NOT_CONFIGURED' || err.statusCode === 503) {
+        throw new ServiceUnavailableError(
+          'Shipping calculation is temporarily unavailable. Please try again shortly or contact support.',
+          null,
+          'SHIPROCKET_NOT_CONFIGURED',
+        );
+      }
+      throw err;
+    }
+    if (!Array.isArray(couriers)) {
+      throw new BadGatewayError('Shiprocket returned an invalid courier quote response.', null, 'SHIPROCKET_INVALID_QUOTE_RESPONSE');
+    }
+    const validCouriers = couriers.filter((courier) => (
+      courier && typeof courier === 'object'
+      && String(courier.courier_id || '').trim()
+      && String(courier.courier || '').trim()
+      && Number.isFinite(Number(courier.rate))
+      && Number(courier.rate) >= 0
+    ));
+    if (!validCouriers.length) {
       throw new BadRequestError('Shiprocket has no available courier for this delivery PIN and package.', null, 'DELIVERY_UNAVAILABLE');
     }
     const eligibleCouriers = paymentGateway === 'cod'
-      ? couriers.filter((courier) => courier.cod_available)
-      : couriers;
+      ? validCouriers.filter((courier) => courier.cod_available === true)
+      : validCouriers;
     if (!eligibleCouriers.length) {
       throw new BadRequestError('Cash on Delivery is not available for this PIN code and package.', null, 'COD_UNAVAILABLE');
     }
+    eligibleCouriers.sort((a, b) => Number(a.rate) - Number(b.rate) || (Number(b.rating) || 0) - (Number(a.rating) || 0));
     const selected = eligibleCouriers[0];
     const canonical = JSON.stringify({ destination, paymentGateway, declaredValue, parcel, courier: selected });
     const quoteId = createHash('sha256').update(canonical).digest('hex').slice(0, 32);

@@ -19,6 +19,11 @@ export class Treatment {
     routine_steps = [],
     diet_meals = [],
     date = new Date().toISOString().split('T')[0],
+    status = 'active',
+    withdrawn_at = null,
+    withdrawn_reason = null,
+    withdrawn_by = '',
+    updated_at = null,
   }) {
     this.id = id;
     this.test_id = test_id;
@@ -36,6 +41,11 @@ export class Treatment {
     this.routine_steps = routine_steps;
     this.diet_meals = diet_meals;
     this.date = date;
+    this.status = status;
+    this.withdrawn_at = withdrawn_at;
+    this.withdrawn_reason = withdrawn_reason;
+    this.withdrawn_by = withdrawn_by;
+    this.updated_at = updated_at;
   }
 
   toResponse() {
@@ -53,6 +63,11 @@ export class Treatment {
       routine_steps: this.routine_steps,
       diet_meals: this.diet_meals,
       date: this.date,
+      status: this.status || 'active',
+      withdrawn_at: this.withdrawn_at || null,
+      withdrawn_reason: this.withdrawn_reason || null,
+      withdrawn_by: this.withdrawn_by || '',
+      updated_at: this.updated_at || null,
     };
   }
 }

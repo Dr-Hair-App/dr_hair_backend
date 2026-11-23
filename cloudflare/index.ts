@@ -103,10 +103,10 @@ export default {
     const respond = () => {
       if (isPublicRead && database && typeof database.withSession === "function") {
         return runWithDatabaseBinding(database.withSession("first-unconstrained"), () =>
-          runWithExecutionContext(ctx, () => expressHandler.fetch(request, requestEnv, ctx)),
+          runWithExecutionContext(ctx, () => expressHandler.fetch!(request as any, requestEnv, ctx)),
         );
       }
-      return runWithExecutionContext(ctx, () => expressHandler.fetch(request, requestEnv, ctx));
+      return runWithExecutionContext(ctx, () => expressHandler.fetch!(request as any, requestEnv, ctx));
     };
 
     if (!isPublicRead) return respond();

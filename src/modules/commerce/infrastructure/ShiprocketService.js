@@ -17,11 +17,32 @@ function positiveNumber(name) {
 
 export class ShiprocketService {
   getConfiguration() {
+    const deploymentEnvironment = process.env.DRHAIR_DEPLOYMENT_ENV?.trim().toLowerCase();
+    const productionTestMode = process.env.SHIPROCKET_TEST_MODE?.trim().toLowerCase() === 'true'
+      && deploymentEnvironment === 'production';
+    const localSimulatorEnabled = deploymentEnvironment === 'development'
+      && process.env.SHIPROCKET_STAGING_MODE?.trim().toLowerCase() === 'mock';
+
+    // Production test mode deliberately routes every Shiprocket call to the
+    // local simulator, even when live credentials are present.
+    if (productionTestMode || localSimulatorEnabled) {
+      return {
+        environment: 'mock',
+        apiBase: 'mock://shiprocket',
+        email: 'test-mode-mock',
+        password: 'test-mode-mock',
+        pickupLocation: process.env.SHIPROCKET_STAGING_PICKUP_NAME?.trim() || 'Dr Hair Test Mode',
+        package: {},
+        configured: true,
+        testMode: productionTestMode,
+      };
+    }
+
     // Shiprocket's documented external API is live and does not provide a
     // separate API sandbox. Staging therefore uses an explicit local simulator.
     if (isSandboxCommerceDeployment()) {
       if (process.env.SHIPROCKET_STAGING_MODE?.trim().toLowerCase() !== 'mock') {
-        return { environment: 'disabled', apiBase: '', email: '', password: '', pickupLocation: '', package: {}, configured: false };
+        return { environment: 'disabled', apiBase: '', email: '', password: '', pickupLocation: '', package: {}, configured: false, testMode: false };
       }
       return {
         environment: 'mock',
@@ -31,6 +52,7 @@ export class ShiprocketService {
         pickupLocation: process.env.SHIPROCKET_STAGING_PICKUP_NAME?.trim() || 'Dr Hair Staging',
         package: {},
         configured: true,
+        testMode: false,
       };
     }
 
@@ -56,6 +78,7 @@ export class ShiprocketService {
       pickupLocation,
       package: { length, breadth, height, weight },
       configured: Boolean(apiBase && email && password && pickupLocation),
+      testMode: false,
     };
   }
 
@@ -485,7 +508,7 @@ export class ShiprocketService {
     const timestamp = new Date().toISOString();
     if (pathname === '/auth/login') return { token: 'staging-shiprocket-mock-token' };
     if (pathname === '/settings/company/pickup') {
-      return { data: [{ pickup_location: process.env.SHIPROCKET_STAGING_PICKUP_NAME?.trim() || 'Dr Hair Staging', pin_code: process.env.SHIPROCKET_STAGING_PICKUP_PIN || '110001', city: 'New Delhi', state: 'Delhi', address: 'Staging simulator address', phone: '9999999999', contact_name: 'Staging Store' }] };
+      return { data: [{ pickup_location: process.env.SHIPROCKET_STAGING_PICKUP_NAME?.trim() || 'Dr Hair Test Mode', pin_code: process.env.SHIPROCKET_STAGING_PICKUP_PIN || '110001', city: 'New Delhi', state: 'Delhi', address: 'Staging simulator address', phone: '9999999999', contact_name: 'Staging Store' }] };
     }
     if (pathname.startsWith('/courier/serviceability/')) {
       const query = new URLSearchParams(String(path).split('?')[1] || '');

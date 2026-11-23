@@ -115,35 +115,12 @@ describe('Razorpay & Shiprocket Comprehensive Test Mode Audit', () => {
       async releaseStock() { return true; },
     };
 
-    const paymentGateway = new PaymentGatewayService({
-      keyId: TEST_KEY_ID,
-      keySecret: TEST_KEY_SECRET,
-      webhookSecret: TEST_WEBHOOK_SECRET,
-      fetchImpl: async (url, opts) => {
-        if (url.includes('/orders')) {
-          const body = JSON.parse(opts.body);
-          return {
-            ok: true,
-            status: 200,
-            json: async () => ({
-              id: 'order_rzp_mock_123',
-              entity: 'order',
-              amount: body.amount,
-              currency: 'INR',
-              receipt: body.receipt,
-              status: 'created',
-            }),
-          };
-        }
-        return { ok: false, status: 404, json: async () => ({}) };
+    const paymentGateway = {
+      provider: 'cashfree',
+      async verifyCapturedPayment({ paymentId }) {
+        return { transaction_id: paymentId, payment: { cf_payment_id: paymentId, payment_status: 'SUCCESS' } };
       },
-    });
-
-    // Provide verified mock captured payment
-    paymentGateway.verifyCapturedPayment = async ({ paymentId }) => ({
-      id: paymentId,
-      status: 'captured',
-    });
+    };
 
     const verifyPaymentUseCase = new VerifyPaymentUseCase({
       orderRepository: mockOrderRepo,
@@ -151,7 +128,7 @@ describe('Razorpay & Shiprocket Comprehensive Test Mode Audit', () => {
       paymentGatewayService: paymentGateway,
     });
 
-    it('creates a Razorpay order intent for checkout and transitions order to paid on verification', async () => {
+    it('verifies a Cashfree captured payment and transitions order to paid', async () => {
       // 1. Setup pending order
       const order = new Order({
         id: 'ord_test_001',
@@ -160,7 +137,7 @@ describe('Razorpay & Shiprocket Comprehensive Test Mode Audit', () => {
         items: [{ product_id: 'prod_1', name: 'Anti-Hairfall Shampoo', quantity: 1, price: 650, total_price: 650 }],
         pricing: { subtotal: 650, discount: 0, shipping: 0, tax: 0, total: 650 },
         payment: {
-          gateway: 'razorpay',
+          gateway: 'cashfree',
           status: 'pending',
           payment_intent_id: 'order_rzp_mock_123',
         },
@@ -168,17 +145,10 @@ describe('Razorpay & Shiprocket Comprehensive Test Mode Audit', () => {
       });
       mockOrderStore = [order];
 
-      // 2. Generate valid signature for pay_mock_abc
-      const validSignature = crypto
-        .createHmac('sha256', TEST_KEY_SECRET)
-        .update('order_rzp_mock_123|pay_mock_abc')
-        .digest('hex');
-
       // 3. Execute payment verification
       const updatedOrder = await verifyPaymentUseCase.execute({
         orderId: 'ord_test_001',
         paymentId: 'pay_mock_abc',
-        paymentSignature: validSignature,
         userId: 101,
       });
 
@@ -263,7 +233,7 @@ describe('Razorpay & Shiprocket Comprehensive Test Mode Audit', () => {
         userId: 1,
         addressId: 'addr_1',
         items: [{ productId: 'p1', quantity: 1 }],
-        paymentGateway: 'razorpay',
+        paymentGateway: 'cashfree',
       });
 
       assert.ok(quote.quote_id);

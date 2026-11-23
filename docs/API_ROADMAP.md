@@ -23,7 +23,7 @@ Dev and staging D1 databases are fresh; no MongoDB documents or media were impor
 
 ## Remaining verification and hardening
 
-1. Run the staging acceptance flow for admin authentication, API reads/writes, media access, Razorpay test callbacks, simulated Shiprocket callbacks, and Flutter API compatibility.
+1. Run the staging acceptance flow for admin authentication, API reads/writes, media access, Cashfree sandbox callbacks, simulated Shiprocket callbacks, and Flutter API compatibility.
 2. Verify all production Worker secrets and the D1/R2 bindings from Cloudflare before relying on production transactions.
 3. Restore the two custom domains by checking DNS records and Worker custom-domain routing.
 4. Keep production deployment gated until staging acceptance passes.

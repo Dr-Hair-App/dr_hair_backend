@@ -291,7 +291,9 @@ export class SubmitHairTestUseCase {
           );
           if (!saved) throw new Error('assessment_result_save_failed');
           hairTest = saved;
-          aiAssessmentStatus = 'ready';
+          aiAssessmentStatus = aiAssessment?.ai_status === 'unavailable'
+            ? 'unavailable'
+            : 'ready';
         } catch {
           // The queued job remains recoverable by the scheduled processor.
           aiAssessment = null;

@@ -16,14 +16,14 @@ export class RefundOrderUseCase {
       throw new NotFoundError(`Order not found: ${cleanOrderId}`);
     }
 
-    if (order.payment.gateway !== 'razorpay' || !order.payment.transaction_id) {
-      throw new BadRequestError('Automatic refunds are available only for orders with a captured Razorpay payment. Process COD or offline refunds through the original payment method.');
+    if (order.payment.gateway !== 'cashfree' || !order.payment.transaction_id) {
+      throw new BadRequestError('Automatic refunds are available only for orders with a captured online payment. Process COD or offline refunds through the original payment method.');
     }
     if (!['Paid', 'Partially refunded'].includes(order.payment.payment_status)) {
-      throw new BadRequestError('Only a captured Razorpay payment can be refunded.');
+      throw new BadRequestError('Only a captured online payment can be refunded.');
     }
     if (order.payment.refund_status === 'pending' || Number(order.payment.refund_pending_amount) > 0) {
-      throw new ConflictError('A Razorpay refund is already pending. Check its status before requesting another refund.');
+      throw new ConflictError('A refund is already pending. Check its status before requesting another refund.');
     }
 
     const refundAmount = amount !== null ? Number(amount) : order.pricing.total;
@@ -43,7 +43,7 @@ export class RefundOrderUseCase {
       .digest('hex')
       .slice(0, 32)}`;
 
-    // Razorpay accepts refunds asynchronously; never mark a pending refund as complete.
+    // Cashfree can process a refund asynchronously; never mark a pending refund complete.
     const refundResult = await this.paymentGatewayService.processRefund({
       orderId: cleanOrderId,
       transactionId: order.payment.transaction_id,
@@ -52,7 +52,7 @@ export class RefundOrderUseCase {
       receipt,
     });
     if (refundResult.status === 'failed') {
-      throw new BadGatewayError('Razorpay rejected this refund. The order and inventory were not changed.');
+      throw new BadGatewayError('Cashfree rejected this refund. The order and inventory were not changed.');
     }
     const isProcessed = refundResult.status === 'processed';
     const refundedTotal = isProcessed ? nextRefundTotal : previouslyRefunded;
@@ -99,7 +99,7 @@ export class RefundOrderUseCase {
 
     updated.addTimelineEvent(isProcessed
       ? `Refund of ₹${refundAmount} processed (${refundResult.id}): ${reason}`
-      : `Razorpay refund of ₹${refundAmount} initiated (${refundResult.id}); awaiting provider confirmation: ${reason}`);
+      : `Cashfree refund of ₹${refundAmount} initiated (${refundResult.id}); awaiting provider confirmation: ${reason}`);
     await this.orderRepository.update(cleanOrderId, { timeline: updated.timeline });
 
     // Save the provider-confirmed financial state before the separate inventory write.

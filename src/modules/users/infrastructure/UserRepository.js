@@ -328,12 +328,15 @@ export class UserRepository extends IUserRepository {
     }
     const query = cleanSearch.toLowerCase();
     const segmentIds = segmentUserIds === null ? null : new Set(segmentUserIds);
-    const matched = store.users.filter((user) =>
-      (user.role || 'user') === 'user'
-      && (segmentIds === null || segmentIds.has(Number(user.id)))
-      && (!query || [user.name, user.email, user.phone, user.patient_code || formatPatientCode(user.id)].some((value) => String(value || '').toLowerCase().includes(query))
-        || resolvePatientId(cleanSearch) === user.id),
-    );
+    const matched = store.users.filter((user) => {
+      if ((user.role || 'user') !== 'user') return false;
+      if (segmentIds !== null && !segmentIds.has(Number(user.id))) return false;
+      if (!query) return true;
+      const exactMatch = resolvePatientId(cleanSearch) === user.id;
+      const textMatch = [user.name, user.email, user.phone, user.patient_code || formatPatientCode(user.id)]
+        .some((value) => String(value || '').toLowerCase().includes(query));
+      return exactMatch || textMatch;
+    });
     const start = (safePage - 1) * safeLimit;
     matched.forEach((user) => { user.patient_code ||= formatPatientCode(user.id); });
     const assessedIds = new Set(await getPatientSegmentUserIds('assessed'));

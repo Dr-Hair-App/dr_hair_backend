@@ -76,6 +76,12 @@ export class VerifySocialSignupUseCase {
       if (!currentProviders.includes(decoded.provider)) {
         updatePayload.authProviders = [...currentProviders, decoded.provider];
       }
+      if (existingPhone.age == null && decoded.age != null) {
+        updatePayload.age = decoded.age;
+      }
+      if (!existingPhone.gender && decoded.gender != null) {
+        updatePayload.gender = decoded.gender;
+      }
       user = await this.userRepository.update(existingPhone.id, updatePayload);
     } else {
       const userData = {
@@ -87,6 +93,8 @@ export class VerifySocialSignupUseCase {
       };
       if (decoded.provider === 'google') userData.googleId = decoded.providerId;
       if (decoded.provider === 'apple') userData.appleId = decoded.providerId;
+      if (decoded.age != null) userData.age = decoded.age;
+      if (decoded.gender != null) userData.gender = decoded.gender;
 
       user = await this.userRepository.create(userData);
     }

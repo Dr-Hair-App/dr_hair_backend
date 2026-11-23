@@ -6,7 +6,7 @@ import { ConflictError } from '../../../shared/errors/index.js';
 const staleClaimMs = 5 * 60 * 1000;
 
 export class ProviderWebhookEventRepository {
-  async claim({ provider = 'razorpay', eventId, eventType, payloadHash }) {
+  async claim({ provider = 'cashfree', eventId, eventType, payloadHash }) {
     const key = String(eventId || '').trim();
     if (!key) throw new Error('A provider webhook event ID is required.');
     if (key.length > 200) throw new Error('Provider webhook event ID is invalid.');
@@ -58,7 +58,7 @@ export class ProviderWebhookEventRepository {
     return { claimed: true, duplicate: false };
   }
 
-  async markProcessed({ provider = 'razorpay', eventId }) {
+  async markProcessed({ provider = 'cashfree', eventId }) {
     const filter = { provider, event_id: String(eventId) };
     if (isDatabaseConnected()) {
       await ProviderWebhookEventModel.updateOne(filter, { $set: { status: 'processed', updated_at: new Date() } });
@@ -68,7 +68,7 @@ export class ProviderWebhookEventRepository {
     if (event) Object.assign(event, { status: 'processed', updated_at: new Date() });
   }
 
-  async markFailed({ provider = 'razorpay', eventId, errorCode = 'processing_failed' }) {
+  async markFailed({ provider = 'cashfree', eventId, errorCode = 'processing_failed' }) {
     const filter = { provider, event_id: String(eventId) };
     if (isDatabaseConnected()) {
       await ProviderWebhookEventModel.updateOne(filter, { $set: { status: 'failed', last_error_code: String(errorCode).slice(0, 80), updated_at: new Date() } });

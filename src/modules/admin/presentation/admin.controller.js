@@ -1,4 +1,4 @@
-import { AppError, BadRequestError, ForbiddenError, NotFoundError, ServiceUnavailableError } from '../../../shared/errors/index.js';
+import { AppError, BadRequestError, ConflictError, ForbiddenError, NotFoundError, ServiceUnavailableError } from '../../../shared/errors/index.js';
 import { sendSuccess } from '../../../shared/utils/response.js';
 import { config } from '../../../config/env.js';
 import { uploadClinicalReport, createClinicalReportDownloadUrl, deleteClinicalReport } from '../infrastructure/ClinicalReportStorage.js';
@@ -40,9 +40,21 @@ const reportResponse = (report) => ({
   created_at: report.created_at,
 });
 
-const reportScanBlockedMessage = (status) => status === 'not_scanned'
-  ? 'This report is still private because malware scanning is not configured. Upload a new copy to share it after security scanning is enabled.'
-  : 'A report must pass a clean malware scan before it can be shared with a patient.';
+const reportScanBlockedMessage = (status) => {
+  if (status === 'not_scanned') {
+    return 'This report is still private because malware scanning is not configured. Upload a new copy to share it after security scanning is enabled. A report must pass a clean malware scan before it can be shared with a patient.';
+  }
+  if (status === 'pending') {
+    return 'The report cannot be shared while its security scan is still pending. Wait for the scan to finish. A report must pass a clean malware scan before it can be shared with a patient.';
+  }
+  if (status === 'infected') {
+    return 'This report failed the security scan and was marked infected. A report must pass a clean malware scan before it can be shared with the patient.';
+  }
+  if (status === 'error') {
+    return 'The security scan encountered an error. A report must pass a clean malware scan before it can be shared with a patient.';
+  }
+  return 'A report must pass a clean malware scan before it can be shared with a patient.';
+};
 
 export class AdminController {
   constructor({
@@ -132,8 +144,8 @@ export class AdminController {
       if (!this.adminApiTrafficRepository) {
         throw new ServiceUnavailableError('API traffic history is temporarily unavailable.');
       }
-      const { page, limit, window, statusClass } = req.query;
-      const result = await this.adminApiTrafficRepository.list({ page, limit, window, statusClass });
+      const { page, limit, window, statusClass, surface, scope } = req.query;
+      const result = await this.adminApiTrafficRepository.list({ page, limit, window, statusClass, surface, scope });
       return sendSuccess(res, { data: { items: result.items }, meta: result.meta });
     } catch (error) {
       next(error);
@@ -204,8 +216,62 @@ export class AdminController {
     }
   };
 
+  searchUsers = async (req, res, next) => {
+    try {
+      const search = String(req.query.q || req.query.query || req.query.search || '').trim();
+      const result = await this.userRepository.list({
+        page: req.query.page,
+        limit: req.query.limit,
+        search,
+        segment: req.query.segment,
+      });
+      return sendSuccess(res, {
+        data: {
+          ...result,
+          items: result.items.map((user) => ({
+            ...user.toPublicProfile(),
+            role: user.role,
+            created_at: user.created_at,
+            has_completed_assessment: Boolean(user.has_completed_assessment),
+          })),
+          segment: result.segment,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  lookupPatient = async (req, res, next) => {
+    try {
+      const patient = await this.userRepository.findById(req.params.userId);
+      if (!patient || patient.role !== 'user') throw new NotFoundError('Patient not found.');
+      return sendSuccess(res, {
+        data: {
+          patient: {
+            id: patient.id,
+            patient_code: patient.patient_code,
+            name: patient.name,
+            phone: patient.phone,
+            email: patient.email,
+            age: patient.age,
+            gender: patient.gender,
+            city: patient.city,
+            occupation: patient.occupation,
+            created_at: patient.created_at,
+          },
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
   getPatient = async (req, res, next) => {
     try {
+      if (!req.user || (req.user.role !== 'super_admin' && !hasPermission(req.user, 'patients.view'))) {
+        throw new ForbiddenError("Permission 'patients.view' is required for full clinical detail.");
+      }
       const patient = await this.userRepository.findById(req.params.userId);
       if (!patient || patient.role !== 'user') throw new NotFoundError('Patient not found.');
       const assessments = await this.hairTestRepository.findByUserId(patient.id, { includeArchived: true });
@@ -260,21 +326,37 @@ export class AdminController {
       const patientId = req.params.userId;
       const current = await this.userRepository.findById(patientId);
       if (!current || current.role !== 'user') throw new NotFoundError('Patient not found.');
-      const baseFields = ['name', 'age', 'gender', 'city', 'occupation', 'medical_conditions'];
-      const contactFields = ['phone', 'email'];
-      const metaKeys = ['allow_contact_updates', 'confirm_contact_change', 'admin_override'];
+
+      const isSuperAdmin = req.user?.role === 'super_admin';
+      const hasEditPerm = isSuperAdmin || hasPermission(req.user, 'patients.edit');
+      const hasClinicalPerm = isSuperAdmin || hasPermission(req.user, 'care-plans.edit') || hasPermission(req.user, 'patients.view');
       const body = req.body || {};
-      const allowContact = Boolean(
-        body.allow_contact_updates ||
-        body.confirm_contact_change ||
-        body.admin_override ||
-        req.query?.allow_contact === 'true'
-      );
-      const allowedFields = allowContact ? [...baseFields, ...contactFields] : baseFields;
+
+      // Reject unauthorized contact edits & client override bypass attempts
+      if (body.phone !== undefined || body.email !== undefined) {
+        if (!hasEditPerm) {
+          throw new ForbiddenError("Permission 'patients.edit' is required to update patient contact details. Client override flags are not permitted.");
+        }
+      }
+      if (body.admin_override && !isSuperAdmin) {
+        throw new ForbiddenError("Permission 'patients.edit' is required for admin overrides.");
+      }
+      if (!hasClinicalPerm && body.medical_conditions !== undefined) {
+        throw new ForbiddenError("Permission 'care-plans.edit' is required to update medical conditions.");
+      }
+
+      const baseFields = ['name', 'age', 'gender', 'city', 'occupation'];
+      const allowedFields = [
+        ...baseFields,
+        ...(hasClinicalPerm ? ['medical_conditions'] : []),
+        ...(hasEditPerm ? ['phone', 'email'] : []),
+      ];
+      const metaKeys = ['allow_contact_updates', 'confirm_contact_change', 'admin_override'];
+
       const unknownFields = Object.keys(body).filter((field) => !allowedFields.includes(field) && !metaKeys.includes(field));
       if (unknownFields.length) {
-        if (!allowContact && (body.phone !== undefined || body.email !== undefined)) {
-          throw new BadRequestError('Only name, age, gender, city, and occupation can be changed here. Contact details require patient verification.');
+        if (!hasEditPerm && (body.phone !== undefined || body.email !== undefined)) {
+          throw new ForbiddenError("Permission 'patients.edit' is required to update patient contact details.");
         }
         throw new BadRequestError(`Unsupported patient fields: ${unknownFields.join(', ')}.`);
       }
@@ -309,6 +391,12 @@ export class AdminController {
             if (digits.length < 10 || digits.length > 15) {
               throw new BadRequestError('Phone number must contain between 10 and 15 digits.');
             }
+            if (this.userRepository.findByPhone) {
+              const existingPhoneUser = await this.userRepository.findByPhone(digits);
+              if (existingPhoneUser && Number(existingPhoneUser.id) !== Number(current.id)) {
+                throw new ConflictError('This phone number is already registered to another patient.');
+              }
+            }
             update.phone = value.trim();
           } else if (value === null) {
             update.phone = null;
@@ -322,6 +410,12 @@ export class AdminController {
             const trimmed = value.trim().toLowerCase();
             if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
               throw new BadRequestError('email must be a valid email address.');
+            }
+            if (this.userRepository.findByEmail) {
+              const existingEmailUser = await this.userRepository.findByEmail(trimmed);
+              if (existingEmailUser && Number(existingEmailUser.id) !== Number(current.id)) {
+                throw new ConflictError('This email is already registered to another patient.');
+              }
             }
             update.email = trimmed;
           } else if (value === null) {
@@ -474,14 +568,16 @@ export class AdminController {
     }
   };
 
-  notifyPatientRoutineAdded = async (patientId) => {
+  notifyPatientRoutineAdded = async (patientId, { updated = false } = {}) => {
     if (!this.notificationRepository) return { inboxCreated: false, pushSent: 0, pushFailed: 0, pushStatus: 'unavailable' };
     let notification;
     try {
       notification = await this.notificationRepository.create({
         userId: Number(patientId),
-        title: 'Your daily routine is ready',
-        body: 'Your clinic added care steps to your daily routine. Open the tracker to review and mark them complete.',
+        title: updated ? 'Your daily routine was updated' : 'Your daily routine is ready',
+        body: updated
+          ? 'Your clinic updated care steps in your daily routine. Open the tracker to review the latest steps.'
+          : 'Your clinic added care steps to your daily routine. Open the tracker to review and mark them complete.',
         type: 'reminder',
         destination: { type: 'screen', screen: 'routine' },
         data: { destination_type: 'screen', screen: 'routine' },
@@ -979,18 +1075,14 @@ export class AdminController {
         diet_meals: normalizedDietMeals,
         ...(date ? { date } : {}),
       });
-      if (this.hairTestRepository?.updateStatus) {
-        await this.hairTestRepository.updateStatus(hairTest.reference_no, 'reviewed', {
-          changed_by: String(req.user?.email || req.user?.login || 'Super Admin'),
-          note: `Care plan assigned: ${treatment_name.trim()}`,
-        }).catch(() => null);
-      }
+      // P0 Decoupling: Assigning a care plan updates recommendations, but does NOT mark the assessment reviewed.
+      // Explicit clinician review via updateHairTestStatus is required to approve the assessment.
       if (this.auditEventRepository?.record) {
         await this.auditEventRepository.record({
           actor: String(req.user?.email || req.user?.login || 'Super Admin'),
           action: 'care_plan.created',
           target: `patient:${hairTest.userId}`,
-          metadata: { reference_no: hairTest.reference_no, treatment_name: treatment_name.trim() },
+          metadata: { reference_no: hairTest.reference_no, treatment_name: treatment_name.trim(), treatment_id: treatment.id },
         }).catch(() => null);
       }
       await this.patientActivityRepository?.record({ userId: hairTest.userId, type: 'care_plan', title: 'Care plan added', summary: treatment_name.trim(), actor: String(req.user?.email || req.user?.login || 'Super Admin'), metadata: { reference_no: hairTest.reference_no } });
@@ -1007,10 +1099,125 @@ export class AdminController {
     }
   };
 
+  assignTreatmentPlan = this.createTreatment;
+
+  getTreatment = async (req, res, next) => {
+    try {
+      const treatmentId = req.params.treatmentId;
+      const treatment = await this.treatmentRepository.findById(treatmentId);
+      if (!treatment) throw new NotFoundError('Care plan not found.');
+      return sendSuccess(res, { data: treatment.toResponse() });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updateTreatment = async (req, res, next) => {
+    try {
+      const treatmentId = req.params.treatmentId;
+      const existing = await this.treatmentRepository.findById(treatmentId);
+      if (!existing) throw new NotFoundError('Care plan not found.');
+
+      const body = req.body || {};
+      const updateData = {};
+      const textFields = ['treatment_name', 'duration', 'instructions', 'doctor_name', 'diagnosis', 'stage', 'next_review_date'];
+      for (const field of textFields) {
+        if (body[field] !== undefined) {
+          if (typeof body[field] !== 'string') throw new BadRequestError(`${field} must be a string.`);
+          updateData[field] = body[field].trim();
+        }
+      }
+      if (body.medications !== undefined) {
+        if (!Array.isArray(body.medications) || body.medications.length > 25) {
+          throw new BadRequestError('medications must be a list of up to 25 selected medicines or care products.');
+        }
+        updateData.medications = body.medications;
+      }
+      if (body.routine_steps !== undefined) {
+        if (!Array.isArray(body.routine_steps) || body.routine_steps.length > 30) {
+          throw new BadRequestError('routine_steps must contain up to 30 care steps.');
+        }
+        updateData.routine_steps = body.routine_steps;
+      }
+      if (body.diet_meals !== undefined) {
+        if (!Array.isArray(body.diet_meals) || body.diet_meals.length > 20) {
+          throw new BadRequestError('diet_meals must contain up to 20 meal suggestions.');
+        }
+        updateData.diet_meals = body.diet_meals;
+      }
+
+      const updated = await this.treatmentRepository.update(treatmentId, updateData);
+      const actor = String(req.user?.email || req.user?.login || 'Super Admin');
+      if (this.auditEventRepository?.record) {
+        await this.auditEventRepository.record({
+          actor,
+          action: 'care_plan.updated',
+          target: `patient:${existing.userId}`,
+          metadata: { treatment_id: treatmentId, fields: Object.keys(updateData) },
+        }).catch(() => null);
+      }
+      await this.patientActivityRepository?.record({
+        userId: existing.userId,
+        type: 'care_plan',
+        title: 'Care plan updated',
+        summary: updated.treatment_name || 'Care plan details modified',
+        actor,
+        metadata: { treatment_id: treatmentId },
+      }).catch(() => null);
+
+      if (updateData.routine_steps !== undefined) {
+        await this.notifyPatientRoutineAdded(existing.userId, { updated: true });
+      }
+
+      return sendSuccess(res, {
+        message: 'Care plan updated successfully.',
+        data: updated.toResponse(),
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  withdrawTreatment = async (req, res, next) => {
+    try {
+      const treatmentId = req.params.treatmentId;
+      const existing = await this.treatmentRepository.findById(treatmentId);
+      if (!existing) throw new NotFoundError('Care plan not found.');
+
+      const reason = String(req.body?.reason || req.body?.withdrawn_reason || 'Withdrawn by clinical admin').trim().slice(0, 500);
+      const actor = String(req.user?.email || req.user?.login || 'Super Admin');
+
+      const withdrawn = await this.treatmentRepository.withdraw(treatmentId, { reason, actor });
+      if (this.auditEventRepository?.record) {
+        await this.auditEventRepository.record({
+          actor,
+          action: 'care_plan.withdrawn',
+          target: `patient:${existing.userId}`,
+          metadata: { treatment_id: treatmentId, reason },
+        }).catch(() => null);
+      }
+      await this.patientActivityRepository?.record({
+        userId: existing.userId,
+        type: 'care_plan',
+        title: 'Care plan withdrawn',
+        summary: `Reason: ${reason}`,
+        actor,
+        metadata: { treatment_id: treatmentId, status: 'withdrawn' },
+      }).catch(() => null);
+
+      return sendSuccess(res, {
+        message: 'Care plan withdrawn successfully.',
+        data: withdrawn.toResponse(),
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
   updatePatientDietPlan = async (req, res, next) => {
     try {
       const { userId } = req.params;
-      const { diet_meals } = req.body || {};
+      const { diet_meals, assessment_id, reference_no } = req.body || {};
       if (!Array.isArray(diet_meals) || diet_meals.length > 20) {
         throw new BadRequestError('diet_meals must contain up to 20 meal suggestions.');
       }
@@ -1032,17 +1239,24 @@ export class AdminController {
       });
 
       const updated = await this.treatmentRepository.updateDietMeals(userId, normalizedDietMeals);
+      const planId = updated?.id ? String(updated.id) : `diet-${userId}`;
+      const items = updated?.diet_meals || normalizedDietMeals;
       const actor = String(req.user?.email || req.user?.login || 'Admin');
       await this.auditEventRepository?.record({
         actor,
         action: 'care_plan.diet_updated',
         target: `patient:${userId}`,
-        metadata: { meal_count: normalizedDietMeals.length },
+        metadata: { plan_id: planId, meal_count: normalizedDietMeals.length, assessment_id, reference_no },
       }).catch(() => null);
 
       return sendSuccess(res, {
         message: 'Patient diet plan updated successfully.',
-        data: { diet_meals: updated?.diet_meals || [] },
+        data: {
+          plan_id: planId,
+          items,
+          diet_meals: items,
+          updated_at: updated?.updated_at || new Date().toISOString(),
+        },
       });
     } catch (err) {
       next(err);
@@ -1058,6 +1272,25 @@ export class AdminController {
       if (statusNeedsReason && (typeof note !== 'string' || note.trim().length < 8)) {
         throw new BadRequestError('Add a short reason when archiving or restoring an assessment.');
       }
+      const isSuper = req.user?.role === 'super_admin';
+      const hasReviewPerm = isSuper || hasPermission(req.user, 'assessments.review') || hasPermission(req.user, 'reports.approve');
+      const hasSubmitPerm = isSuper || hasPermission(req.user, 'hair-tests.submit') || hasPermission(req.user, 'hair-tests.upload') || hasReviewPerm;
+      const targetStatus = status.trim().toLowerCase();
+
+      if (['reviewed', 'approved'].includes(targetStatus)) {
+        if (!hasReviewPerm) {
+          throw new ForbiddenError("Permission 'assessments.review' is required to approve assessments.");
+        }
+      } else if (['submitted', 'under_review'].includes(targetStatus)) {
+        if (!hasSubmitPerm) {
+          throw new ForbiddenError("Permission 'hair-tests.submit' is required to submit assessments for review.");
+        }
+      } else if (targetStatus === 'archived') {
+        if (!hasReviewPerm) {
+          throw new ForbiddenError("Permission 'assessments.review' is required to archive assessments.");
+        }
+      }
+
       const actor = String(req.user?.email || req.user?.login || 'Admin');
       const updated = await this.hairTestRepository.updateStatus(referenceNo, status.trim(), {
         changed_by: actor,
@@ -1090,6 +1323,46 @@ export class AdminController {
         status,
         status_note,
       } = req.body || {};
+
+      const isSuper = req.user?.role === 'super_admin';
+      const hasReviewPerm = isSuper || hasPermission(req.user, 'assessments.review') || hasPermission(req.user, 'reports.approve');
+      const hasCarePlanPerm = isSuper || hasPermission(req.user, 'care-plans.edit');
+      const hasSubmitPerm = isSuper || hasPermission(req.user, 'hair-tests.submit') || hasPermission(req.user, 'hair-tests.upload') || hasReviewPerm;
+
+      if (clinical_notes !== undefined) {
+        if (!hasReviewPerm) {
+          throw new ForbiddenError("Permission 'assessments.review' is required to update clinical notes.");
+        }
+      }
+
+      if (ai_assessment_override !== undefined) {
+        if (!hasReviewPerm) {
+          throw new ForbiddenError("Permission 'assessments.review' is required to override AI assessment.");
+        }
+      }
+
+      if (recommended_treatments !== undefined) {
+        if (!hasCarePlanPerm) {
+          throw new ForbiddenError("Permission 'care-plans.edit' is required to update treatment recommendations.");
+        }
+      }
+
+      if (status !== undefined && typeof status === 'string' && status.trim() && status.trim() !== hairTest.status) {
+        const targetStatus = status.trim().toLowerCase();
+        if (['reviewed', 'approved'].includes(targetStatus)) {
+          if (!hasReviewPerm) {
+            throw new ForbiddenError("Permission 'assessments.review' is required to approve assessments.");
+          }
+        } else if (['submitted', 'under_review'].includes(targetStatus)) {
+          if (!hasSubmitPerm) {
+            throw new ForbiddenError("Permission 'hair-tests.submit' is required to submit assessments for review.");
+          }
+        } else if (targetStatus === 'archived') {
+          if (!hasReviewPerm) {
+            throw new ForbiddenError("Permission 'assessments.review' is required to archive assessments.");
+          }
+        }
+      }
 
       const updateData = {};
       const actor = String(req.user?.name || req.user?.email || req.user?.login || 'Doctor');
@@ -1163,11 +1436,19 @@ export class AdminController {
       }
 
       // 4. Status update
+      let explicitlyReviewed = false;
+      let statusChanged = false;
       if (status !== undefined && typeof status === 'string' && status.trim() && status.trim() !== hairTest.status) {
         const newStatus = status.trim();
+        statusChanged = true;
+        explicitlyReviewed = newStatus === 'reviewed';
         await this.hairTestRepository.updateStatus(referenceNo, newStatus, {
           changed_by: actor,
-          note: typeof status_note === 'string' && status_note.trim() ? status_note.trim() : `Status updated to ${newStatus} with clinical review`,
+          note: typeof status_note === 'string' && status_note.trim()
+            ? status_note.trim()
+            : newStatus === 'reviewed'
+              ? 'Assessment explicitly marked reviewed by the care team.'
+              : `Assessment status changed to ${newStatus.replaceAll('_', ' ')}.`,
         });
       }
 
@@ -1180,23 +1461,33 @@ export class AdminController {
       }
 
       if (this.auditEventRepository?.record) {
-        await this.auditEventRepository.record({
-          actor,
-          action: 'assessment.clinical_updated',
-          target: `assessment:${referenceNo}`,
-          metadata: { reference_no: referenceNo, fields: Object.keys(updateData) },
-        }).catch(() => null);
+        const assessmentEvents = [];
+        if (Object.hasOwn(updateData, 'clinical_notes')) assessmentEvents.push({ action: 'assessment.notes_updated', fields: ['clinical_notes'] });
+        if (Object.hasOwn(updateData, 'recommended_treatments')) assessmentEvents.push({ action: 'assessment.recommendations_updated', fields: ['recommended_treatments'] });
+        if (Object.hasOwn(updateData, 'ai_assessment_override')) assessmentEvents.push({ action: 'assessment.ai_override_updated', fields: ['ai_assessment_override'] });
+        if (explicitlyReviewed) assessmentEvents.push({ action: 'assessment.reviewed', fields: ['status'] });
+        else if (statusChanged) {
+          assessmentEvents.push({ action: 'assessment.status_changed', fields: ['status'] });
+        }
+        for (const event of assessmentEvents) {
+          await this.auditEventRepository.record({
+            actor,
+            action: event.action,
+            target: `assessment:${referenceNo}`,
+            metadata: { reference_no: referenceNo, fields: event.fields },
+          }).catch(() => null);
+        }
       }
 
-      if (this.patientActivityRepository?.record && hairTest.userId) {
+      if (explicitlyReviewed && this.patientActivityRepository?.record && hairTest.userId) {
         await this.patientActivityRepository.record({
           userId: hairTest.userId,
           patientCode: hairTest.patient_code,
-          type: 'care_plan',
-          title: 'Clinical assessment updated',
-          summary: `Assessment ${referenceNo} updated with doctor clinical review`,
+          type: 'assessment',
+          title: 'Assessment reviewed',
+          summary: 'Your assessment has been reviewed by the care team.',
           actor,
-          metadata: { reference_no: referenceNo },
+          metadata: { reference_no: referenceNo, action: 'explicit_review' },
         }).catch(() => null);
       }
 
@@ -1357,14 +1648,20 @@ export class AdminController {
     try {
       // These sources are independent. Start all reads together so dashboard
       // latency is bounded by the slowest repository call instead of their sum.
-      const [patientCountResult, appts, tests, reps, prods, logs] = await Promise.all([
+      const [patientCountResult, apptMetrics, testSummary, reps, prods, logs] = await Promise.all([
         this.userRepository?.count
           ? this.userRepository.count()
           : this.userRepository?.list
             ? this.userRepository.list({ limit: 1 })
             : Promise.resolve(0),
-        this.appointmentRepository?.list?.({ limit: 500 }) ?? Promise.resolve(null),
-        this.hairTestRepository?.listAdmin?.({ limit: 500 }) ?? Promise.resolve(null),
+        this.appointmentRepository?.getDashboardMetrics
+          ? this.appointmentRepository.getDashboardMetrics({ timeZone: 'Asia/Kolkata' })
+          : (this.appointmentRepository?.list?.({ limit: 500 }) ?? Promise.resolve(null)),
+        this.hairTestRepository?.getStatusSummary
+          ? this.hairTestRepository.getStatusSummary()
+          : (this.hairTestRepository?.listAdmin
+            ? this.hairTestRepository.listAdmin({ limit: 100 })
+            : (this.hairTestRepository?.list?.({ limit: 100 }) ?? Promise.resolve(null))),
         this.clinicalReportRepository?.listAll?.() ?? Promise.resolve(null),
         this.productRepository?.list?.({ limit: 100 }) ?? Promise.resolve(null),
         this.auditEventRepository?.list?.({ limit: 10 }) ?? Promise.resolve(null),
@@ -1379,24 +1676,40 @@ export class AdminController {
       let pendingAppointments = 0;
       let confirmedAppointments = 0;
       let completedAppointments = 0;
-      if (appts) {
-        const items = Array.isArray(appts) ? appts : (appts?.items || []);
-        totalAppointments = Array.isArray(appts) ? appts.length : (appts?.total || items.length);
-        const todayStr = new Date().toISOString().slice(0, 10);
-        todayAppointments = items.filter(
-          (a) => (a.starts_at || '').slice(0, 10) === todayStr && !['Cancelled', 'No show'].includes(a.status),
-        ).length;
-        pendingAppointments = items.filter((a) => a.status === 'Pending').length;
-        confirmedAppointments = items.filter((a) => a.status === 'Confirmed').length;
-        completedAppointments = items.filter((a) => a.status === 'Completed').length;
+      if (apptMetrics) {
+        if (typeof apptMetrics.total === 'number' && apptMetrics.today !== undefined) {
+          totalAppointments = apptMetrics.total;
+          todayAppointments = apptMetrics.today;
+          pendingAppointments = apptMetrics.pending || 0;
+          confirmedAppointments = apptMetrics.confirmed || 0;
+          completedAppointments = apptMetrics.completed || 0;
+        } else {
+          const items = Array.isArray(apptMetrics) ? apptMetrics : (apptMetrics?.items || []);
+          totalAppointments = Array.isArray(apptMetrics) ? apptMetrics.length : (apptMetrics?.total || items.length);
+          const kolkataDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+          todayAppointments = items.filter(
+            (a) => (a.starts_at || '').slice(0, 10) === kolkataDateStr && !['Cancelled', 'No show'].includes(a.status),
+          ).length;
+          pendingAppointments = items.filter((a) => a.status === 'Pending').length;
+          confirmedAppointments = items.filter((a) => a.status === 'Confirmed').length;
+          completedAppointments = items.filter((a) => a.status === 'Completed').length;
+        }
       }
 
       let totalAssessments = 0;
       let pendingAssessments = 0;
-      if (tests) {
-        const items = Array.isArray(tests) ? tests : (tests?.items || []);
-        totalAssessments = Array.isArray(tests) ? tests.length : (tests?.total || items.length);
-        pendingAssessments = items.filter((t) => t.status === 'Submitted' || t.status === 'Review' || !t.reviewed).length;
+      if (testSummary) {
+        if (typeof testSummary.total === 'number' && (testSummary.submitted !== undefined || testSummary.under_review !== undefined)) {
+          totalAssessments = testSummary.total;
+          pendingAssessments = (testSummary.submitted || 0) + (testSummary.under_review || 0);
+        } else {
+          const items = Array.isArray(testSummary) ? testSummary : (testSummary?.items || []);
+          totalAssessments = Array.isArray(testSummary) ? testSummary.length : (testSummary?.total || items.length);
+          pendingAssessments = items.filter((t) => {
+            const st = String(t.status || '').toLowerCase();
+            return st === 'submitted' || st === 'under_review' || st === 'review' || !t.reviewed;
+          }).length;
+        }
       }
 
       let totalReports = 0;
@@ -1788,6 +2101,11 @@ export class AdminController {
         flags = Object.fromEntries(flagList.map((f) => [f.key, f.enabled]));
         const billingFlag = flagList.find((f) => f.key === 'clinic_appointment_billing');
         if (billingFlag) {
+          const rawFee = billingFlag.metadata?.consultation_fee;
+          const fee = typeof rawFee === 'number' || (typeof rawFee === 'string' && rawFee.trim() !== '')
+            ? Number(rawFee)
+            : 500;
+          const configured = billingFlag.metadata?.configured !== false && Number.isFinite(fee) && fee >= 0;
           const payAtClinic = billingFlag.metadata?.pay_at_clinic_enabled != null
             ? Boolean(billingFlag.metadata.pay_at_clinic_enabled)
             : (billingFlag.metadata?.payment_required != null ? !billingFlag.metadata.payment_required : true);
@@ -1795,11 +2113,11 @@ export class AdminController {
             ? Boolean(billingFlag.metadata.online_pay_enabled)
             : (billingFlag.metadata?.payment_required != null ? Boolean(billingFlag.metadata.payment_required) : true);
           appointmentBilling = {
-            configured: true,
-            pay_at_clinic_enabled: payAtClinic || !onlinePay,
-            online_pay_enabled: onlinePay,
-            payment_required: onlinePay && !payAtClinic,
-            consultation_fee: Number(billingFlag.metadata?.consultation_fee ?? 500),
+            configured,
+            pay_at_clinic_enabled: configured ? (payAtClinic || !onlinePay) : true,
+            online_pay_enabled: configured ? onlinePay : true,
+            payment_required: configured ? (onlinePay && !payAtClinic) : false,
+            consultation_fee: configured ? fee : 500,
             currency: String(billingFlag.metadata?.currency ?? 'INR'),
             first_appointment_free: Boolean(billingFlag.metadata?.first_appointment_free ?? false),
           };
@@ -2011,7 +2329,7 @@ export class AdminController {
         customer_name: a.patient_code || 'Patient',
         customer_phone: '',
         customer_email: '',
-        amount: a.consultation_fee != null ? Number(a.consultation_fee) : 500,
+        amount: a.consultation_fee != null ? Number(a.consultation_fee) : (a.payment_status === 'Waived' ? 0 : 0),
         gateway: String(a.payment_method || '').toLowerCase() === 'razorpay' ? 'razorpay' : 'offline',
         method: a.payment_method || (a.payment_transaction_id ? 'Razorpay' : 'Pay at clinic'),
         status: a.payment_status || 'Pending',

@@ -125,7 +125,7 @@ export class AuthController {
 
   socialLogin = async (req, res, next) => {
     try {
-      const { provider, email, name, provider_id, id_token } = req.body || {};
+      const { provider, email, name, provider_id, id_token, age, gender } = req.body || {};
       // Google identity must come from a verifiable ID token. Apple retains its
       // existing provider ID flow until its token verifier is implemented.
       const providerId = provider?.toLowerCase() === 'google'
@@ -142,6 +142,8 @@ export class AuthController {
         email: provider?.toLowerCase() === 'google' ? undefined : email,
         name: provider?.toLowerCase() === 'google' ? undefined : name,
         providerId,
+        age,
+        gender,
         deviceMetadata,
       });
 

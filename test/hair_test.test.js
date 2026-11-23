@@ -100,6 +100,25 @@ describe('Hair Test & Treatment Modules - Clean Architecture Tests', () => {
     assert.equal(typeof status.ai_assessment.scalp_health_score, 'number');
   });
 
+  it('preserves unavailable AI state instead of marking the assessment ready', async () => {
+    const originalGenerator = container.services.geminiAiService.generateHairTestAssessment;
+    container.services.geminiAiService.generateHairTestAssessment = async () => ({
+      ai_status: 'unavailable',
+      summary: 'Automated analysis is unavailable; clinician review is required.',
+    });
+    try {
+      const result = await submitHairTestUseCase.execute({
+        userId: 9913,
+        formData: { full_name: 'Test Patient' },
+        files: {},
+      });
+      assert.equal(result.ai_assessment_status, 'unavailable');
+      assert.equal(result.test.ai_assessment_status, 'unavailable');
+    } finally {
+      container.services.geminiAiService.generateHairTestAssessment = originalGenerator;
+    }
+  });
+
   it('archives an assessment from patient history without deleting the admin record and restores it with a reason', async () => {
     const repository = container.repositories.hairTestRepository;
     const record = await repository.create({ userId: 9912, full_name: 'Archive Test', status: 'submitted' });

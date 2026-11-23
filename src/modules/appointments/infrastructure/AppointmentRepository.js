@@ -2,7 +2,7 @@ import { AppointmentModel, ClinicClosedDateModel, nextId } from '../../../shared
 import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { store } from '../../../shared/database/store.js';
 import { ConflictError } from '../../../shared/errors/index.js';
-import { clinicDateBoundary } from '../domain/clinic-time.js';
+import { clinicDateBoundary, clinicDateTimeParts } from '../domain/clinic-time.js';
 
 const plain = (value) => value && typeof value.toObject === 'function' ? value.toObject() : value;
 const addCalendarDay = (dateKey) => {
@@ -23,6 +23,7 @@ export class AppointmentRepository {
       payment_status: data.payment_status || 'Pending',
       payment_method: data.payment_method || 'UPI',
       payment_transaction_id: data.payment_transaction_id || '',
+      payment_order_id: data.payment_order_id || '',
       payment_time: data.payment_time ? new Date(data.payment_time) : (data.payment_status === 'Paid' ? now : null),
       ...data,
       id: `APT-${year}-${String(sequence).padStart(4, '0')}`,
@@ -37,14 +38,14 @@ export class AppointmentRepository {
         return plain(await AppointmentModel.create(record));
       } catch (error) {
         if (error?.code === 11000 && error?.keyPattern?.payment_transaction_id) {
-          throw new ConflictError('This Razorpay payment has already been used for an appointment.');
+          throw new ConflictError('This online payment has already been used for an appointment.');
         }
         if (error?.code === 11000) throw new ConflictError('This clinic slot has just been booked. Choose another time.');
         throw error;
       }
     }
     if (record.payment_transaction_id && store.appointments.some((item) => item.payment_transaction_id === record.payment_transaction_id)) {
-      throw new ConflictError('This Razorpay payment has already been used for an appointment.');
+      throw new ConflictError('This online payment has already been used for an appointment.');
     }
     if (record.slot_key && store.appointments.some((item) => item.slot_key === record.slot_key && item.status !== 'Cancelled')) {
       throw new ConflictError('This clinic slot is already booked. Choose another time.');
@@ -75,6 +76,68 @@ export class AppointmentRepository {
       return plain(await AppointmentModel.findOne({ payment_transaction_id: normalized }).lean());
     }
     return store.appointments.find((item) => item.payment_transaction_id === normalized) || null;
+  }
+
+  async findByPaymentOrderId(orderId) {
+    const normalized = String(orderId || '').trim();
+    if (!normalized) return null;
+    if (isDatabaseConnected()) {
+      return plain(await AppointmentModel.findOne({ payment_order_id: normalized }).lean());
+    }
+    return store.appointments.find((item) => item.payment_order_id === normalized) || null;
+  }
+
+  async getDashboardMetrics({ timeZone = 'Asia/Kolkata', now = new Date() } = {}) {
+    const parts = clinicDateTimeParts(now, timeZone);
+    const todayKey = `${parts.year}-${parts.month}-${parts.day}`;
+    const tomorrowKey = addCalendarDay(todayKey);
+
+    const todayStartIso = clinicDateBoundary(todayKey, timeZone);
+    const tomorrowStartIso = clinicDateBoundary(tomorrowKey, timeZone);
+
+    if (isDatabaseConnected()) {
+      const [statusCounts, todayCount, totalCount] = await Promise.all([
+        AppointmentModel.aggregate([
+          { $group: { _id: '$status', count: { $sum: 1 } } },
+        ]),
+        AppointmentModel.countDocuments({
+          starts_at: { $gte: todayStartIso, $lt: tomorrowStartIso },
+          status: { $nin: ['Cancelled', 'No show'] },
+        }),
+        AppointmentModel.countDocuments({}),
+      ]);
+      const countsByStatus = {};
+      for (const row of statusCounts) {
+        if (row._id) countsByStatus[row._id] = row.count;
+      }
+      return {
+        total: totalCount,
+        today: todayCount,
+        pending: countsByStatus['Pending'] || 0,
+        confirmed: countsByStatus['Confirmed'] || 0,
+        completed: countsByStatus['Completed'] || 0,
+      };
+    }
+
+    const items = store.appointments || [];
+    const countsByStatus = {};
+    let todayCount = 0;
+    for (const item of items) {
+      countsByStatus[item.status] = (countsByStatus[item.status] || 0) + 1;
+      const startsAt = item.starts_at || '';
+      if (startsAt >= todayStartIso && startsAt < tomorrowStartIso) {
+        if (!['Cancelled', 'No show'].includes(item.status)) {
+          todayCount += 1;
+        }
+      }
+    }
+    return {
+      total: items.length,
+      today: todayCount,
+      pending: countsByStatus['Pending'] || 0,
+      confirmed: countsByStatus['Confirmed'] || 0,
+      completed: countsByStatus['Completed'] || 0,
+    };
   }
 
   async listByPatient(userId) {

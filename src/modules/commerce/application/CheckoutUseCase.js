@@ -41,7 +41,7 @@ export class CheckoutUseCase {
     if (!cleanUserId) {
       throw new BadRequestError('User ID is required for checkout');
     }
-    if (!['cod', 'pay_at_clinic', 'razorpay'].includes(paymentGateway)) {
+    if (!['cod', 'pay_at_clinic', 'cashfree'].includes(paymentGateway)) {
       throw new BadRequestError('Unsupported payment method');
     }
 
@@ -53,16 +53,18 @@ export class CheckoutUseCase {
         if (existing.payment.payment_status === 'Paid') {
           return { order: existing, paymentIntent: null, idempotentReplay: true };
         }
-        const intent = existing.payment.gateway === 'razorpay'
+        const intent = existing.payment.gateway === 'cashfree'
           ? (existing.payment.payment_intent_id
             ? {
                 intentId: existing.payment.payment_intent_id,
                 orderId: existing.order_id,
-                amount: Math.round(existing.pricing.total * 100),
+                payment_session_id: existing.payment.payment_session_id || '',
+                amount: existing.pricing.total,
                 amountFormatted: existing.pricing.total,
                 currency: 'INR',
-                status: 'created',
-                keyId: this.paymentGatewayService.keyId || process.env.RAZORPAY_KEY_ID || '',
+                status: 'ACTIVE',
+                gateway: 'cashfree',
+                environment: process.env.CASHFREE_ENV || 'TEST',
               }
             : await this.paymentGatewayService.createPaymentIntent({
                 orderId: existing.order_id,
@@ -84,7 +86,7 @@ export class CheckoutUseCase {
       }
     }
 
-    if (paymentGateway === 'razorpay' && typeof this.paymentGatewayService.assertConfigured === 'function') {
+    if (paymentGateway === 'cashfree' && typeof this.paymentGatewayService.assertConfigured === 'function') {
       this.paymentGatewayService.assertConfigured();
     }
 
@@ -270,7 +272,7 @@ export class CheckoutUseCase {
     // provider error leaves the shopper's cart available for another attempt.
     let paymentIntent = null;
     try {
-      paymentIntent = paymentGateway === 'razorpay'
+      paymentIntent = paymentGateway === 'cashfree'
         ? await this.paymentGatewayService.createPaymentIntent({
           orderId: savedOrder.order_id,
           amount: savedOrder.pricing.total,
@@ -291,7 +293,11 @@ export class CheckoutUseCase {
 
     const completedOrder = paymentIntent?.intentId
       ? await this.orderRepository.update(savedOrder.order_id, {
-          payment: { payment_intent_id: paymentIntent.intentId },
+          payment: {
+            payment_intent_id: paymentIntent.intentId,
+            payment_session_id: paymentIntent.payment_session_id,
+            gateway_environment: paymentIntent.environment || 'TEST',
+          },
         })
       : savedOrder;
 

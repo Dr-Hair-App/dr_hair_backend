@@ -3,31 +3,66 @@
   "name": "dr-hair-backend",
   "main": "cloudflare/index.ts",
   "compatibility_date": "2026-11-16",
-  "compatibility_flags": ["nodejs_compat", "nodejs_compat_populate_process_env", "enable_nodejs_http_server_modules"],
+  "compatibility_flags": [
+    "nodejs_compat",
+    "nodejs_compat_populate_process_env",
+    "enable_nodejs_http_server_modules"
+  ],
   "workers_dev": true,
-  "images": { "binding": "IMAGES" },
-  "durable_objects": {
-    "bindings": [{ "name": "DAILY_USAGE_QUOTA", "class_name": "DailyUsageQuota" }]
+  "images": {
+    "binding": "IMAGES"
   },
-  "migrations": [{ "tag": "daily-usage-quota-v1", "new_sqlite_classes": ["DailyUsageQuota"] }],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "DAILY_USAGE_QUOTA",
+        "class_name": "DailyUsageQuota"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "daily-usage-quota-v1",
+      "new_sqlite_classes": [
+        "DailyUsageQuota"
+      ]
+    }
+  ],
   "ratelimits": [
-    { "name": "SHIPPING_QUOTE_RATE_LIMIT", "namespace_id": "8173313", "simple": { "limit": 20, "period": 60 } }
+    {
+      "name": "SHIPPING_QUOTE_RATE_LIMIT",
+      "namespace_id": "8173313",
+      "simple": {
+        "limit": 20,
+        "period": 60
+      }
+    }
   ],
   "vars": {
     "NODE_ENV": "production",
     "DRHAIR_DEPLOYMENT_ENV": "production",
+    "SHIPROCKET_TEST_MODE": "true",
     "BASE_URL": "https://api.drhairindia.com",
     "CORS_ORIGINS": "https://admin.drhairindia.com",
     "SUPER_ADMIN_ID": "dr.hair@admin",
-    "SUPER_ADMIN_NAME": "Dr. Jai Bansal"
+    "SUPER_ADMIN_NAME": "Dr. Jai Bansal",
+    "CASHFREE_ENV": "TEST"
   },
   "observability": {
     "enabled": true,
-    "logs": { "enabled": true, "head_sampling_rate": 1 },
-    "traces": { "enabled": true, "head_sampling_rate": 0.1 }
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.1
+    }
   },
   "triggers": {
-    "crons": ["*/10 * * * *"]
+    "crons": [
+      "*/10 * * * *"
+    ]
   },
   "d1_databases": [
     {
@@ -52,10 +87,16 @@
     }
   ],
   "kv_namespaces": [
-    { "binding": "PUBLIC_CONFIG_KV", "id": "ed114227c83c431cb0e7c8e4c4c5c93f" }
+    {
+      "binding": "PUBLIC_CONFIG_KV",
+      "id": "ed114227c83c431cb0e7c8e4c4c5c93f"
+    }
   ],
   "routes": [
-    { "pattern": "api.drhairindia.com", "custom_domain": true }
+    {
+      "pattern": "api.drhairindia.com",
+      "custom_domain": true
+    }
   ],
   "env": {
     "testing": {
@@ -64,6 +105,7 @@
       "vars": {
         "NODE_ENV": "development",
         "DRHAIR_DEPLOYMENT_ENV": "testing",
+        "SHIPROCKET_TEST_MODE": "false",
         "SHIPROCKET_STAGING_MODE": "mock",
         "SHIPROCKET_STAGING_PICKUP_NAME": "Dr Hair Testing",
         "SHIPROCKET_STAGING_PICKUP_PIN": "110001",
@@ -72,7 +114,9 @@
         "SUPER_ADMIN_ID": "dr.hair@admin",
         "SUPER_ADMIN_NAME": "Dr. Jai Bansal"
       },
-      "durable_objects": { "bindings": [] },
+      "durable_objects": {
+        "bindings": []
+      },
       "ratelimits": [],
       "d1_databases": [
         {
@@ -103,7 +147,9 @@
         }
       ],
       "routes": [],
-      "images": { "binding": "IMAGES" }
+      "images": {
+        "binding": "IMAGES"
+      }
     }
   }
 }

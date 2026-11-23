@@ -8,10 +8,10 @@ function mockResponse() {
   return { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } };
 }
 
-test('clinic staff cannot create an appointment falsely marked as Razorpay-paid', async () => {
+test('clinic staff cannot create an appointment falsely marked as Cashfree-paid', async () => {
   let created = false;
   const controller = new AppointmentController({
-    appointmentRepository: { async create() { created = true; } },
+    appointmentRepository: { async listByPatient() { return []; }, async create() { created = true; } },
     userRepository: { async findById() { return { id: 7, role: 'user', patient_code: 'PT-7' }; } },
   });
   controller.validateSlot = async () => {};
@@ -19,7 +19,7 @@ test('clinic staff cannot create an appointment falsely marked as Razorpay-paid'
   controller.getBillingConfig = async () => ({ consultation_fee: 500 });
   let error;
   await controller.createAdmin({
-    body: { patient_id: 7, starts_at: '2027-01-05T05:00:00.000Z', payment_status: 'Paid', payment_method: 'Razorpay' },
+    body: { patient_id: 7, starts_at: '2027-01-05T05:00:00.000Z', payment_status: 'Paid', payment_method: 'Cashfree' },
   }, {}, (reason) => { error = reason; });
 
   assert.equal(error?.name, 'BadRequestError');
@@ -27,14 +27,14 @@ test('clinic staff cannot create an appointment falsely marked as Razorpay-paid'
   assert.equal(created, false);
 });
 
-test('clinic staff cannot override an unresolved Razorpay appointment payment', async () => {
+test('clinic staff cannot override an unresolved Cashfree appointment payment', async () => {
   let updated = false;
   const controller = new AppointmentController({
     appointmentRepository: {
       async findById() {
         return {
           id: 'APT-2027-0001', userId: 7, status: 'Confirmed', starts_at: '2027-01-05T05:00:00.000Z',
-          payment_status: 'Pending', payment_method: 'Razorpay', payment_transaction_id: '', consultation_fee: 500,
+          payment_status: 'Pending', payment_method: 'Cashfree', payment_transaction_id: '', consultation_fee: 500,
         };
       },
       async update() { updated = true; },
@@ -51,11 +51,12 @@ test('clinic staff cannot override an unresolved Razorpay appointment payment', 
   assert.equal(updated, false);
 });
 
-test('Razorpay appointment refunds use provider state and stay pending until webhook confirmation', async () => {
+test('Cashfree appointment refunds use provider state and stay pending until webhook confirmation', async () => {
   let appointment = {
     id: 'APT-2027-0002', userId: 7, status: 'Confirmed', starts_at: '2027-01-05T05:00:00.000Z',
     timezone: 'Asia/Kolkata', patient_code: 'PT-7', consultation_fee: 750, payment_status: 'Paid',
-    payment_method: 'Razorpay', payment_transaction_id: 'pay_appointment_1', refunds: [], status_history: [],
+    payment_method: 'Cashfree', payment_transaction_id: 'pay_appointment_1',
+    payment_order_id: 'APT-2027-0002', refunds: [], status_history: [],
   };
   let providerCalls = 0;
   const notifications = [];
@@ -90,6 +91,8 @@ test('Razorpay appointment refunds use provider state and stay pending until web
   assert.equal(appointment.payment_status, 'Paid');
   assert.equal(appointment.refund_status, 'pending');
   assert.equal(appointment.refund_pending_amount, 250);
+  assert.match(res.body.message, /Cashfree/i);
+  assert.match(appointment.status_history.at(-1).action, /Cashfree/i);
   assert.equal(notifications.length, 1);
   assert.match(notifications[0].title, /requested/i);
 

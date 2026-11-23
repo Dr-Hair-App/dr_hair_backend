@@ -85,6 +85,58 @@ export class TreatmentRepository extends ITreatmentRepository {
     };
   }
 
+  async findById(treatmentId) {
+    const numericId = Number(treatmentId);
+    if (isDatabaseConnected()) {
+      const record = await TreatmentModel.findOne({
+        $or: [{ id: numericId }, { _id: treatmentId }],
+      }).lean();
+      return record ? toTreatment(record) : null;
+    }
+    const record = store.treatments.find((t) => Number(t.id) === numericId || String(t.id) === String(treatmentId));
+    return record ? new Treatment(record) : null;
+  }
+
+  async update(treatmentId, updateData) {
+    const numericId = Number(treatmentId);
+    const safeData = { ...updateData, updated_at: new Date().toISOString() };
+    if (isDatabaseConnected()) {
+      const record = await TreatmentModel.findOneAndUpdate(
+        { $or: [{ id: numericId }, { _id: treatmentId }] },
+        { $set: safeData },
+        { new: true },
+      ).lean();
+      return record ? toTreatment(record) : null;
+    }
+    const idx = store.treatments.findIndex((t) => Number(t.id) === numericId || String(t.id) === String(treatmentId));
+    if (idx === -1) return null;
+    Object.assign(store.treatments[idx], safeData);
+    return new Treatment(store.treatments[idx]);
+  }
+
+  async withdraw(treatmentId, { reason = '', actor = '' } = {}) {
+    const numericId = Number(treatmentId);
+    const withdrawData = {
+      status: 'withdrawn',
+      withdrawn_at: new Date().toISOString(),
+      withdrawn_reason: String(reason || 'Withdrawn by clinical admin').slice(0, 500),
+      withdrawn_by: String(actor || 'Admin'),
+      updated_at: new Date().toISOString(),
+    };
+    if (isDatabaseConnected()) {
+      const record = await TreatmentModel.findOneAndUpdate(
+        { $or: [{ id: numericId }, { _id: treatmentId }] },
+        { $set: withdrawData },
+        { new: true },
+      ).lean();
+      return record ? toTreatment(record) : null;
+    }
+    const idx = store.treatments.findIndex((t) => Number(t.id) === numericId || String(t.id) === String(treatmentId));
+    if (idx === -1) return null;
+    Object.assign(store.treatments[idx], withdrawData);
+    return new Treatment(store.treatments[idx]);
+  }
+
   async updateDietMeals(userId, dietMeals) {
     const numericId = Number(userId);
     const meals = Array.isArray(dietMeals) ? dietMeals : [];

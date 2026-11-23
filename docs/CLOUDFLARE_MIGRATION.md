@@ -29,7 +29,7 @@ npx wrangler d1 migrations apply dr-hair-testing --env testing --remote
 
 ## Secrets and integrations
 
-Add secrets to the production Worker with Wrangler or the Cloudflare dashboard. Required values include `JWT_SECRET`, Super Admin credentials, exact admin origin in `CORS_ORIGINS`, SMS/OTP provider configuration, Razorpay credentials and webhook secret, Shiprocket credentials and webhook secret, and optional Gemini/Firebase credentials. Local development uses local environment files and must not connect to production payment or shipping credentials.
+Add secrets to the intended Worker environment with Wrangler or the Cloudflare dashboard. Required values include `JWT_SECRET`, Super Admin credentials, exact admin origin in `CORS_ORIGINS`, SMS/OTP provider configuration, Cashfree's `CASHFREE_App_ID` and `CASHFREE_KEY_SECRET`, Shiprocket credentials and webhook secret, and optional Gemini/Firebase credentials. Set `CASHFREE_WEBHOOK_URL` to that environment's public HTTPS webhook endpoint. The current payment migration is sandbox-only; keep test credentials and callbacks out of the production data environment. Local development uses local environment files and must not connect to production payment or shipping credentials.
 
 Never put secrets in `wrangler.jsonc`, source control, the mobile app, or committed `.dev.vars`. The admin Worker must use its configured backend URL and keep API responses dynamic. No shared caching or image optimization is enabled for the admin panel.
 

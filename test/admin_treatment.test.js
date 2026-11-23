@@ -49,6 +49,31 @@ describe('Admin prescription medicines', () => {
     assert.equal(notificationCalls, 0);
   });
 
+  it('notifies the patient when an existing routine plan is edited', async () => {
+    const notifications = [];
+    const plan = { id: 51, userId: 12, treatment_name: 'Daily care plan', routine_steps: [] };
+    const controller = new AdminController({
+      treatmentRepository: {
+        findById: async () => plan,
+        update: async (_id, patch) => ({ ...plan, ...patch, toResponse: () => ({ ...plan, ...patch }) }),
+      },
+      notificationRepository: { create: async (item) => { notifications.push(item); return { id: 'ntf-routine-update-1', ...item }; } },
+    });
+    const res = responseRecorder();
+
+    await controller.updateTreatment({
+      params: { treatmentId: '51' },
+      body: { routine_steps: [{ title: 'Evening scalp care' }] },
+      user: { role: 'super_admin', email: 'doctor@example.test' },
+    }, res, (error) => { throw error; });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(notifications.length, 1);
+    assert.equal(notifications[0].title, 'Your daily routine was updated');
+    assert.match(notifications[0].body, /updated care steps/);
+    assert.equal(notifications[0].destination.screen, 'routine');
+  });
+
   it('validates and saves selected medicines with a treatment plan', async () => {
     let saved;
     const controller = new AdminController({

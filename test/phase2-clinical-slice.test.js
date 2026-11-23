@@ -185,8 +185,22 @@ test('Phase 2 - Patient Clinical Vertical Slice', async (t) => {
 
     assert.equal(res.statusCode, 201);
     const updatedTest = await hairTestRepository.findByReferenceNo(assessment.reference_no);
-    assert.equal(updatedTest.status, 'reviewed');
-    assert.ok(updatedTest.status_history.some((h) => h.status === 'reviewed'));
+    // P0 Decoupling: Care plan creation leaves assessment unreviewed until explicit clinician review
+    assert.equal(updatedTest.status, 'submitted');
+
+    // Explicit clinician review transitions status to reviewed
+    await adminController.updateHairTestStatus(
+      {
+        params: { referenceNo: assessment.reference_no },
+        body: { status: 'reviewed', note: 'Clinician confirmed review' },
+        user: { role: 'super_admin' },
+      },
+      mockResponse(),
+      (err) => { if (err) throw err; },
+    );
+    const reviewedTest = await hairTestRepository.findByReferenceNo(assessment.reference_no);
+    assert.equal(reviewedTest.status, 'reviewed');
+    assert.ok(reviewedTest.status_history.some((h) => h.status === 'reviewed'));
   });
 
   await t.test('Progress check-in deletion and ownership protection', async () => {

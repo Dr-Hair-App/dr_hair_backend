@@ -1,5 +1,7 @@
 export const ALL_ADMIN_PERMISSIONS = [
   'patients.view',
+  'patients.lookup',
+  'patients.edit',
   'assessments.review',
   'care-plans.edit',
   'progress.review',
@@ -7,7 +9,6 @@ export const ALL_ADMIN_PERMISSIONS = [
   'documents.upload',
   'documents.share',
   'patients.export',
-  'patients.lookup',
   'hair-tests.view',
   'hair-tests.upload',
   'hair-tests.submit',
@@ -31,11 +32,19 @@ export const ROLE_TEMPLATES = {
     label: 'Clinical Admin',
     permissions: [
       'patients.view',
+      'patients.lookup',
+      'patients.edit',
       'assessments.review',
+      'care-plans.edit',
+      'reports.approve',
+      'reports.share',
       'progress.review',
       'documents.view',
       'documents.upload',
+      'documents.share',
       'hair-tests.view',
+      'hair-tests.upload',
+      'hair-tests.submit',
     ],
   },
   'operations-admin': {
@@ -72,8 +81,19 @@ export function getEffectivePermissions(account) {
     return [...ALL_ADMIN_PERMISSIONS];
   }
 
-  const templateKey = account.roleTemplate || 'clinical-admin';
-  const basePermissions = ROLE_TEMPLATES[templateKey]?.permissions || ['patients.view'];
+  let basePermissions = [];
+  if (account.roleTemplate && ROLE_TEMPLATES[account.roleTemplate]) {
+    basePermissions = ROLE_TEMPLATES[account.roleTemplate].permissions;
+  } else if (account.role && ROLE_TEMPLATES[account.role]) {
+    basePermissions = ROLE_TEMPLATES[account.role].permissions;
+  } else if (account.role === 'operator' || account.role === 'hair-test-operator') {
+    basePermissions = ROLE_TEMPLATES['hair-test-operator']?.permissions || [];
+  } else if (Array.isArray(account.permissions)) {
+    basePermissions = [];
+  } else {
+    basePermissions = ROLE_TEMPLATES['clinical-admin']?.permissions || ['patients.view'];
+  }
+
   const permissionsSet = new Set(basePermissions);
 
   if (Array.isArray(account.permissions)) {

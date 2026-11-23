@@ -22,11 +22,11 @@ export class VerifyPaymentUseCase {
       return order; // Already verified idempotent
     }
 
-    if (order.payment.gateway !== 'razorpay' || !order.payment.payment_intent_id || !paymentId) {
-      throw new BadRequestError('This order does not have a Razorpay payment to verify');
+    if (order.payment.gateway !== 'cashfree' || !order.payment.payment_intent_id) {
+      throw new BadRequestError('This order does not have an online payment to verify');
     }
 
-    if (!isWebhook) {
+    if (!isWebhook && this.paymentGatewayService.provider !== 'cashfree') {
       const isValid = this.paymentGatewayService.verifyPaymentSignature({
         orderId: order.payment.payment_intent_id,
         paymentId,
@@ -38,11 +38,13 @@ export class VerifyPaymentUseCase {
       }
     }
 
-    await this.paymentGatewayService.verifyCapturedPayment({
+    const verified = await this.paymentGatewayService.verifyCapturedPayment({
+      orderId: order.payment.payment_intent_id,
       paymentId,
       expectedOrderId: order.payment.payment_intent_id,
       expectedAmount: order.pricing.total,
     });
+    paymentId = verified.transaction_id || verified.payment?.cf_payment_id || paymentId || order.payment.payment_intent_id;
 
     const updated = await this.orderRepository.markPaymentCaptured({
       orderId: cleanOrderId,
@@ -121,7 +123,7 @@ export class VerifyPaymentUseCase {
         refunds: refundHistory,
       },
     });
-    updated.addTimelineEvent(`Late Razorpay capture refunded after order cancellation (${refund.id})`);
+    updated.addTimelineEvent(`Late Cashfree capture refunded after order cancellation (${refund.id})`);
     await this.orderRepository.update(order.order_id, { timeline: updated.timeline });
     return updated;
   }

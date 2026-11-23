@@ -409,6 +409,15 @@ describe('Phase 3: Admin Clinical Operations & Concurrency', () => {
           sessions: [{ label: 'Clinic', opens_at: '09:00', closes_at: '18:00' }],
         },
       });
+      await container.repositories.featureFlagRepository.setFlag('clinic_appointment_billing', {
+        group: 'Appointments', enabled: true,
+        metadata: {
+          consultation_fee: 500,
+          currency: 'INR',
+          pay_at_clinic_enabled: true,
+          online_pay_enabled: true,
+        },
+      });
       const slot = getFutureSlot(18, '10:00:00');
       const res = mockResponse();
 

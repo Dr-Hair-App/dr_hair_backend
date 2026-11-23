@@ -4,30 +4,19 @@ import { createContainer } from '../src/container.js';
 import { TokenService } from '../src/shared/utils/token.service.js';
 import { store } from '../src/shared/database/store.js';
 import { ConflictError, BadRequestError } from '../src/shared/errors/index.js';
-import { PaymentGatewayService } from '../src/modules/commerce/infrastructure/PaymentGatewayService.js';
 
 test('Phase 5: Commerce Foundation & Order Lifecycle Tests', async (t) => {
-  const paymentGatewayService = new PaymentGatewayService({
-    keyId: 'rzp_test_unit_key',
-    keySecret: 'unit-test-only-secret',
-    fetchImpl: async (url, options = {}) => {
-      const method = options.method || 'GET';
-      const payload = method === 'POST' ? JSON.parse(options.body || '{}') : {};
-      let body;
-      if (url.endsWith('/orders')) {
-        body = { id: 'order_test_unit_123', amount: payload.amount, currency: payload.currency, status: 'created' };
-      } else if (url.endsWith('/payments/pay_test_rzp_999/refund')) {
-        body = { id: 'rfnd_test_unit_123', amount: payload.amount, status: 'processed' };
-      } else if (url.endsWith('/payments/pay_test_rzp_999')) {
-        body = { id: 'pay_test_rzp_999', order_id: 'order_test_unit_123', amount: 204000, currency: 'INR', status: 'captured' };
-      } else {
-        return new Response('{}', { status: 404 });
-      }
-      return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const paymentGatewayService = {
+    provider: 'cashfree', environment: 'TEST', assertConfigured() {},
+    async createPaymentIntent({ orderId, amount }) { return { intentId: orderId, orderId, payment_session_id: `session_${orderId}`, gateway: 'cashfree', amount: amount * 100, currency: 'INR', status: 'ACTIVE' }; },
+    async verifyCapturedPayment({ paymentId }) {
+      if (paymentId === 'bad_payment_id') throw new BadRequestError('Cashfree payment is not captured.');
+      return { transaction_id: paymentId, payment: { cf_payment_id: paymentId, payment_status: 'SUCCESS' } };
     },
-  });
+    async processRefund() { return { id: 'rfnd_test_unit_123', status: 'processed' }; },
+  };
   const container = createContainer({
-    paymentGatewayService,
+    cashfreePaymentGatewayService: paymentGatewayService,
     getShippingQuoteUseCase: { execute: async () => ({ quote_id: 'quote_test', shipping_fee: 0, courier: 'Test courier', estimated_delivery: 'Test estimate' }) },
   });
   const {
@@ -144,7 +133,7 @@ test('Phase 5: Commerce Foundation & Order Lifecycle Tests', async (t) => {
       ],
       addressId: address.id,
       couponCode: 'FIRSTDR',
-      paymentGateway: 'razorpay',
+      paymentGateway: 'cashfree',
       shippingQuoteId: 'quote_test',
       idempotencyKey: 'idem-key-checkout-001',
     });
@@ -187,7 +176,7 @@ test('Phase 5: Commerce Foundation & Order Lifecycle Tests', async (t) => {
       items: [{ productId: 'serum-follicle-1', quantity: 2 }],
       addressId: address.id,
       couponCode: 'FIRSTDR',
-      paymentGateway: 'razorpay',
+      paymentGateway: 'cashfree',
       shippingQuoteId: 'quote_test',
       idempotencyKey: 'idem-key-checkout-001',
     });
@@ -266,36 +255,33 @@ test('Phase 5: Commerce Foundation & Order Lifecycle Tests', async (t) => {
     assert.ok(releaseEntry);
   });
 
-  await t.test('6. Payment Verification via Gateway Signature & Tamper Rejection', async () => {
+  await t.test('6. Cashfree server-side payment verification rejects failed and accepts captured payments', async () => {
     const orders = await container.controllers.commerceController.orderRepository.listByUserId(patientId);
-    const orderToPay = orders.items.find((o) => o.fulfillment.status === 'New' && o.payment.payment_status === 'Pending' && o.payment.gateway === 'razorpay');
+    const orderToPay = orders.items.find((o) => o.fulfillment.status === 'New' && o.payment.payment_status === 'Pending' && o.payment.gateway === 'cashfree');
     assert.ok(orderToPay);
 
     const orderId = orderToPay.order_id;
     const paymentId = 'pay_test_rzp_999';
 
-    // 6.1 Tampered signature fails verification
+    // 6.1 Provider verification rejects a failed payment attempt
     await assert.rejects(
       async () => {
         await verifyPaymentUseCase.execute({
           orderId,
-          paymentId,
-          paymentSignature: 'fake_tampered_signature_hex_123',
+          paymentId: 'bad_payment_id',
         });
       },
       (err) => {
         assert.ok(err instanceof BadRequestError);
-        assert.match(err.message, /Invalid payment verification signature/);
+        assert.match(err.message, /not captured/i);
         return true;
       },
     );
 
-    // 6.2 Valid signature verifies payment
-    const validSignature = paymentGatewayService.generateSignature(orderToPay.payment.payment_intent_id, paymentId);
+    // 6.2 Server-side provider verification settles the order
     const verifiedOrder = await verifyPaymentUseCase.execute({
       orderId,
       paymentId,
-      paymentSignature: validSignature,
     });
 
     assert.equal(verifiedOrder.payment.payment_status, 'Paid');

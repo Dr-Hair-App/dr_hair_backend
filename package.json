@@ -10,6 +10,7 @@
     "admin:setup": "node src/scripts/setup-super-admin.js",
     "test": "node --test test/**/*.test.js",
     "build:cloudflare": "wrangler deploy --dry-run --env=\"\"",
+    "typecheck": "tsc --noEmit",
     "deploy:cloudflare": "wrangler deploy --env=\"\"",
     "deploy": "wrangler deploy --env=\"\"",
     "postinstall": "node scripts/patch-iconv-lite.js"
@@ -37,6 +38,8 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261123.1",
+    "typescript": "^7.0.2",
     "wrangler": "^4.162.0"
   },
   "engines": {

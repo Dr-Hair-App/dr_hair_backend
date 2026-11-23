@@ -16,7 +16,7 @@ type UsageResult = {
 export class DailyUsageQuota extends DurableObject<WorkerEnv> {
   constructor(ctx: DurableObjectState, env: WorkerEnv) {
     super(ctx, env);
-    ctx.blockConcurrencyWhile(() => {
+    ctx.blockConcurrencyWhile(async () => {
       this.ctx.storage.sql.exec(`
         CREATE TABLE IF NOT EXISTS daily_usage (
           singleton INTEGER PRIMARY KEY CHECK (singleton = 1),

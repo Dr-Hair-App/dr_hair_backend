@@ -31,7 +31,7 @@ export class CreateShiprocketShipmentUseCase {
       const quote = await this.getShippingQuoteUseCase.execute({
         userId: order.user_id,
         deliveryPincode: order.shipping_address?.pincode,
-        paymentGateway: isCod ? 'cod' : 'razorpay',
+        paymentGateway: isCod ? 'cod' : 'cashfree',
         items: order.items.map((item) => ({ productId: item.product_id, plan: item.plan, quantity: item.quantity })),
       });
       order = await this.orderRepository.update(cleanOrderId, {

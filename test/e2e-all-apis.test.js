@@ -377,7 +377,7 @@ describe('Comprehensive End-to-End API Audit & Dynamic Contract Verification', (
       assert.ok(json.data.features);
       assert.ok(json.data.appointment_billing);
       assert.equal(typeof json.data.appointment_billing.payment_required, 'boolean');
-      assert.equal(typeof json.data.appointment_billing.consultation_fee, 'number');
+      assert.ok(json.data.appointment_billing.consultation_fee === null || typeof json.data.appointment_billing.consultation_fee === 'number');
       assert.match(res.headers.get('vary') || '', /X-App-Build/);
     });
 

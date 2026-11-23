@@ -153,3 +153,64 @@ test('admin saves a valid clinic timezone and rejects unsupported timezone names
   assert.match(overlapping.error.message, /prevent overlapping visits/);
   assert.equal((await appointmentController.getScheduleConfig()).timezone, 'America/Los_Angeles');
 });
+
+test('admin configures max_daily_appointments and enforces limit per date', async (t) => {
+  const container = createContainer();
+  const { appointmentRepository } = container.repositories;
+  const { appointmentController } = container.controllers;
+  const res = mockResponse();
+
+  store.appointments = [];
+  store.clinicClosedDates = [];
+  t.after(() => {
+    store.appointments = [];
+    store.clinicClosedDates = [];
+  });
+
+  await appointmentController.updateScheduleConfigAdmin(
+    {
+      body: {
+        timezone: 'Asia/Kolkata',
+        booking_window_days: 30,
+        weekly_closed_weekdays: [7],
+        slot_interval_minutes: 30,
+        appointment_duration_minutes: 30,
+        sessions: [{ label: 'OPD', opens_at: '09:00', closes_at: '13:00' }],
+        appointment_services: ['Consultation'],
+        max_daily_appointments: 1,
+      },
+      user: { email: 'admin@example.test' },
+    },
+    res,
+    (error) => { if (error) throw error; }
+  );
+
+  const schedule = await appointmentController.getScheduleConfig();
+  assert.equal(schedule.max_daily_appointments, 1);
+
+  // Seed 1 appointment on 2026-12-10
+  await appointmentRepository.create({
+    userId: 1,
+    starts_at: '2026-12-10T04:00:00.000Z',
+    status: 'Booked',
+    reason: 'Consultation',
+  });
+
+  // Query patient availability for range covering 2026-12-10
+  const availRes = mockResponse();
+  await appointmentController.getPatientAvailability(
+    { query: { from: '2026-12-08', to: '2026-12-12' } },
+    availRes,
+    (error) => { if (error) throw error; }
+  );
+  assert.equal(availRes.data.data.max_daily_appointments, 1);
+  const closedLimitDate = availRes.data.data.closed_dates.find((d) => d.date === '2026-12-10');
+  assert.ok(closedLimitDate);
+  assert.equal(closedLimitDate.reason, 'Daily appointment limit reached');
+
+  // Attempting to validate a slot on 2026-12-10 should reject due to daily limit
+  await assert.rejects(
+    () => appointmentController.validateSlot('2026-12-10T04:30:00.000Z', { patientRequest: true }),
+    /maximum appointment limit for this date/
+  );
+});
