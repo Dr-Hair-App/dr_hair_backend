@@ -10,6 +10,35 @@ const responseRecorder = () => ({
 });
 
 describe('Admin prescription medicines', () => {
+  it('keeps an unreviewed assessment unreviewed when a care plan is assigned', async () => {
+    const assessment = { id: 101, reference_no: 'HT-2026-0042', userId: 12, status: 'submitted' };
+    const statusUpdates = [];
+    const auditEvents = [];
+    const controller = new AdminController({
+      hairTestRepository: {
+        findByReferenceNo: async () => assessment,
+        updateStatus: async (...args) => { statusUpdates.push(args); },
+      },
+      treatmentRepository: { create: async (treatment) => ({ toResponse: () => ({ id: 51, ...treatment }) }) },
+      auditEventRepository: { record: async (event) => { auditEvents.push(event); } },
+    });
+
+    const res = responseRecorder();
+    await controller.createTreatment({
+      body: {
+        reference_no: 'HT-2026-0042',
+        treatment_name: 'Daily care plan',
+        routine_steps: [{ title: 'Gentle scalp wash', time_of_day: 'Morning' }],
+      },
+      user: { role: 'super_admin', email: 'doctor@example.test' },
+    }, res, (error) => { throw error; });
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(assessment.status, 'submitted');
+    assert.deepEqual(statusUpdates, []);
+    assert.deepEqual(auditEvents.map(({ action }) => action), ['care_plan.created']);
+  });
+
   it('sends an inbox and routine-screen push notification when a clinician adds routine steps', async () => {
     const notifications = [];
     let tokenLookups = 0;
