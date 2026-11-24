@@ -78,6 +78,46 @@ test('order cancellation first confirms Shiprocket cancellation before releasing
   assert.equal(cancelled.fulfillment.status, 'Cancelled');
 });
 
+test('order cancellation requires a non-empty reason within 300 characters', async () => {
+  let released = false;
+  let order = makeOrder();
+  const useCase = new CancelOrderUseCase({
+    orderRepository: {
+      async findById() { return order; },
+      async update(_id, patch) { order = mergeOrder(order, patch); return order; },
+    },
+    inventoryRepository: { async releaseStock() { released = true; } },
+  });
+
+  await assert.rejects(useCase.execute({ orderId: 'ORD-SR-TEST', reason: '   ' }), /reason is required/i);
+  await assert.rejects(useCase.execute({ orderId: 'ORD-SR-TEST', reason: 'x'.repeat(301) }), /300 characters or fewer/i);
+  assert.equal(released, false);
+  const cancelled = await useCase.execute({ orderId: 'ORD-SR-TEST', reason: '  Address entered incorrectly  ' });
+  assert.equal(cancelled.fulfillment.cancellation_reason, 'Address entered incorrectly');
+});
+
+test('patient cannot self-cancel a captured online payment without the support refund review', async () => {
+  let released = false;
+  const order = new Order({
+    order_id: 'ORD-PAID-TEST',
+    user_id: 'patient-1',
+    items: [{ product_id: 'serum-1', title: 'Serum', price: 100, quantity: 1 }],
+    pricing: { subtotal: 100, total: 100 },
+    payment: { gateway: 'cashfree', payment_status: 'Paid', transaction_id: 'cf-payment-test' },
+    fulfillment: { status: 'Preparing' },
+  });
+  const useCase = new CancelOrderUseCase({
+    orderRepository: { async findById() { return order; } },
+    inventoryRepository: { async releaseStock() { released = true; } },
+  });
+
+  await assert.rejects(
+    useCase.execute({ orderId: order.order_id, userId: 'patient-1', reason: 'Changed my mind' }),
+    /already paid.*contact support/i,
+  );
+  assert.equal(released, false);
+});
+
 test('reverse shipment is available only for a reviewed return and cannot be duplicated', async () => {
   let order = new Order({
     order_id: 'ORD-SR-RETURN', user_id: 'patient-1',

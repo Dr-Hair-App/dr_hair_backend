@@ -150,6 +150,10 @@ export class GeminiAiService {
 
     const maxInlineImages = 5;
     const maxInlineImageBytes = 2 * 1024 * 1024;
+    // Assessment originals are preserved in private R2. Read a bounded source
+    // image and create a temporary inference derivative when it exceeds the
+    // per-photo Gemini budget.
+    const maxAssessmentSourceImageBytes = 20 * 1024 * 1024;
     const maxInlineImageTotalBytes = maxInlineImages * maxInlineImageBytes;
     let inlineImageBytes = 0;
     const inlineImages = Array.isArray(patientData.inlineImages)
@@ -195,13 +199,24 @@ export class GeminiAiService {
             const image = await this.imageStorage.downloadAuthenticatedImage(
               candidate.fileName,
               candidate.format,
+              { maxBytes: maxAssessmentSourceImageBytes },
+            );
+            if (!image?.data || !image?.mimeType) continue;
+            const source = Buffer.from(image.data, 'base64');
+            const prepared = await optimizeImageForInference(
+              source,
+              image.mimeType,
+              getImageOptimizationBinding(),
               { maxBytes: maxInlineImageBytes },
             );
-            const imageBytes = Math.floor((image?.data?.length || 0) * 3 / 4);
-            if (image?.data && image?.mimeType && imageBytes > 0 &&
-                imageBytes <= maxInlineImageBytes &&
+            const imageBytes = prepared.buffer.length;
+            if (imageBytes > 0 && imageBytes <= maxInlineImageBytes &&
                 inlineImageBytes + imageBytes <= maxInlineImageTotalBytes) {
-              inlineImages.push({ ...image, angle });
+              inlineImages.push({
+                data: prepared.resized ? prepared.buffer.toString('base64') : image.data,
+                mimeType: prepared.contentType,
+                angle,
+              });
               inlineImageBytes += imageBytes;
               includedAngles.add(angle);
               break;

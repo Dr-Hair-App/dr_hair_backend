@@ -858,7 +858,94 @@ paths:
       description: Returns prioritized action cards derived from authoritative assessments, care plans, shared reports, and appointments.
       security: [{ bearerAuth: [] }]
       responses:
-        '200': { $ref: '#/components/responses/Success' }
+        '200':
+          description: Real-time dynamic home dashboard summary
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          action_cards:
+                            type: array
+                            items:
+                              type: object
+                          assessment:
+                            type: object
+                            nullable: true
+                            properties:
+                              id: { type: string }
+                              reference_no: { type: string }
+                              status: { type: string }
+                              is_reviewed: { type: boolean }
+                              is_under_review: { type: boolean }
+                              requires_clinician: { type: boolean }
+                              doctor_review_complete: { type: boolean }
+                              ai_review_complete: { type: boolean }
+                              assessment_review_complete: { type: boolean }
+                              show_expert_review_card: { type: boolean }
+                              show_today_card: { type: boolean }
+                              scalp_health_score: { type: integer, nullable: true }
+                              hair_loss_stage: { type: string, nullable: true }
+                              hair_loss_type: { type: string, nullable: true }
+                              doctor_name: { type: string, nullable: true }
+                              doctor_review_note: { type: string, nullable: true }
+                              created_at: { type: string, nullable: true }
+                              reviewed_at: { type: string, nullable: true }
+                          latest_report:
+                            type: object
+                            nullable: true
+                            properties:
+                              id: { type: string }
+                              title: { type: string }
+                              file_name: { type: string }
+                              bytes: { type: integer }
+                              uploaded_by: { type: string }
+                              created_at: { type: string }
+                              mime_type: { type: string }
+                          reports_summary:
+                            type: object
+                            properties:
+                              total_count: { type: integer }
+                              shared_count: { type: integer }
+                              latest_shared_id: { type: string, nullable: true }
+                              latest_shared_title: { type: string, nullable: true }
+                              latest_shared_at: { type: string, nullable: true }
+                              has_new_report: { type: boolean }
+                          reminders:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                id: { type: string }
+                                type: { type: string }
+                                title: { type: string }
+                                message: { type: string }
+                                action_route: { type: string }
+                                priority: { type: string }
+                          patient_status:
+                            type: object
+                            properties:
+                              has_completed_assessment: { type: boolean }
+                              assessment_status: { type: string }
+                              is_reviewed: { type: boolean }
+                              is_under_review: { type: boolean }
+                              show_expert_review_card: { type: boolean }
+                              show_today_card: { type: boolean }
+                              doctor_review_complete: { type: boolean }
+                              assessment_review_complete: { type: boolean }
+                              has_active_care_plan: { type: boolean }
+                              shared_reports_count: { type: integer }
+                              upcoming_appointments_count: { type: integer }
+                          feature_flags:
+                            type: object
+                            properties:
+                              shop_enabled: { type: boolean }
+                              clinic_appointment_enabled: { type: boolean }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
@@ -893,8 +980,55 @@ paths:
                                 name: { type: string, example: "Sprouted Moong & Boiled Eggs" }
                                 nutrients: { type: string, example: "Protein 18g, Biotin 25mcg" }
                                 benefit: { type: string, example: "Strengthens hair cortex and keratin synthesis." }
+                          patient_diet_suggestions:
+                            type: array
+                            description: Optional food suggestions saved by the patient from their assessment; not a clinician prescription.
+                            items:
+                              type: object
+                              properties:
+                                id: { type: string }
+                                name: { type: string }
+                                frequency: { type: string, enum: [daily, alternate_days, weekly] }
+                                weekdays: { type: array, items: { type: integer, minimum: 1, maximum: 7 } }
+                                start_date: { type: string, format: date }
+                                assessment_reference: { type: string }
+                                source: { type: string, enum: [assessment_ai] }
+                                active: { type: boolean }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/patient/diet-plan/suggestions:
+    put:
+      tags: [Patient app]
+      summary: Save patient-selected food suggestions and schedule
+      description: Saves optional AI assessment suggestions separately from clinician-curated diet meals. The authenticated patient may save only suggestions linked to their own assessment.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reference_no, suggestions]
+              properties:
+                reference_no: { type: string, minLength: 1, maxLength: 100 }
+                suggestions:
+                  type: array
+                  maxItems: 20
+                  items:
+                    type: object
+                    required: [id, name, frequency, start_date]
+                    properties:
+                      id: { type: string, pattern: '^[a-zA-Z0-9_.:-]{1,80}$' }
+                      name: { type: string, minLength: 1, maxLength: 160 }
+                      frequency: { type: string, enum: [daily, alternate_days, weekly] }
+                      weekdays: { type: array, items: { type: integer, minimum: 1, maximum: 7 } }
+                      start_date: { type: string, format: date }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/patient/care-events:
     get:
@@ -1124,16 +1258,42 @@ paths:
   /api/v1/reviews/review_get:
     get:
       tags: [Reviews]
-      summary: List reviews for app content
-      description: Returns active reviews only. Pending and rejected reviews cannot be selected through public filters.
+      summary: List approved reviews for app content or one product
+      description: Returns active, consent-verified reviews only. Supply product_id with review_type=product for a product detail page. Pending and rejected reviews cannot be selected through public filters.
+      parameters:
+        - name: category
+          in: query
+          description: Flutter-compatible alias for review_type.
+          schema: { type: string, enum: [doctor, product, clinic] }
+        - name: review_type
+          in: query
+          schema: { type: string, enum: [doctor, product, clinic] }
+        - name: page
+          in: query
+          schema: { type: string, enum: [home, reels] }
+        - name: product_id
+          in: query
+          description: Exact product ID; applies only to product reviews.
+          schema: { type: string, maxLength: 100 }
       x-legacy-path: /Review/review_get
       responses:
-        '200': { $ref: '#/components/responses/Success' }
+        '200':
+          description: Approved review records; product reviews include product_id.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/PublicReview' }
         '500': { $ref: '#/components/responses/ServerError' }
     post:
       tags: [Reviews]
       summary: List reviews using the legacy form body
-      description: Prefer GET for new integrations. This POST is retained for the Flutter-compatible legacy contract. Public filters are review_type and page; status is always restricted to active.
+      description: Prefer GET for new integrations. This POST is retained for the Flutter-compatible legacy contract. Public filters are review_type, page, and optional product_id; status is always restricted to active.
       x-legacy-path: /Review/review_get
       requestBody:
         required: false
@@ -1776,12 +1936,14 @@ paths:
       summary: Cancel patient order and atomically release reserved items back to inventory
       security: [{ bearerAuth: [] }]
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
+              required: [reason]
               properties:
-                reason: { type: string }
+                reason: { type: string, minLength: 1, maxLength: 300, description: Trimmed patient or admin cancellation reason. }
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -3906,7 +4068,20 @@ components:
       type: object
       properties:
         review_type: { type: string }
+        product_id: { type: string, maxLength: 100 }
         page: { type: string }
+    PublicReview:
+      type: object
+      properties:
+        id: { type: [string, integer] }
+        product_id: { type: string, description: Present for product-specific reviews. }
+        name: { type: string }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        category: { type: string }
+        message: { type: string }
+        avatar: { type: string }
+        is_verified: { type: boolean }
+      required: [id, name, rating, category, message, is_verified]
     ReviewCreateRequest:
       type: object
       properties:
@@ -3915,6 +4090,7 @@ components:
         category: { type: string }
         message: { type: string }
         review_type: { type: string }
+        product_id: { type: string, maxLength: 100, description: Required to associate a product review with a specific product. }
         page: { type: string }
       required: [name, rating, message]
     DeviceTokenRequest:
@@ -4062,6 +4238,7 @@ components:
         treatment: { type: string, maxLength: 120 }
         duration: { type: string, maxLength: 120 }
         review_type: { type: string, enum: [doctor, product, clinic] }
+        product_id: { type: string, maxLength: 100, description: Required when review_type is product. }
         page: { type: string, enum: [home, reels] }
         status: { type: string, enum: [draft, pending, active, rejected] }
         patient_consent_confirmed: { type: boolean }
@@ -4079,6 +4256,7 @@ components:
         treatment: { type: string, maxLength: 120 }
         duration: { type: string, maxLength: 120 }
         review_type: { type: string, enum: [doctor, product, clinic] }
+        product_id: { type: string, maxLength: 100, description: Must remain paired with review_type product. }
         page: { type: string, enum: [home, reels] }
         patient_consent_confirmed: { type: boolean }
     AdminPushRequest:

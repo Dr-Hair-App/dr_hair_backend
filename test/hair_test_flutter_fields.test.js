@@ -79,6 +79,43 @@ describe('Flutter hair assessment fields', () => {
     assert.equal(saved.scalp_photos[0].optimized_sha256, 'b'.repeat(64));
   });
 
+  it('persists all five named scalp angles from one assessment request', async () => {
+    let saved;
+    const angles = ['front', 'top', 'left', 'right', 'back'];
+    const useCase = new SubmitHairTestUseCase({
+      hairTestRepository: {
+        create: async (data) => {
+          saved = data;
+          return { ...data, reference_no: 'HT-2026-0005' };
+        },
+      },
+      imageStorage: {
+        async getAuthenticatedImage(publicId) {
+          return {
+            public_id: publicId,
+            type: 'authenticated',
+            secure_url: `https://api.drhair.local/api/v1/media/assets/${encodeURIComponent(publicId)}?sig=test`,
+            format: 'jpg',
+            bytes: 800_000,
+          };
+        },
+        async deleteImage() {},
+      },
+    });
+
+    await useCase.execute({
+      userId: '42',
+      formData: { full_name: 'Synthetic Patient' },
+      files: Object.fromEntries(angles.map((angle) => [
+        `photo_${angle}`,
+        [{ publicId: `drhair/images/user-42/assessment/${angle}.jpg` }],
+      ])),
+    });
+
+    assert.deepEqual(saved.scalp_photos.map((photo) => photo.angle), angles);
+    assert.equal(saved.scalp_photos.length, 5);
+  });
+
   it('rejects a streamed R2 image owned by a different patient', async () => {
     const useCase = new SubmitHairTestUseCase({
       hairTestRepository: { create: async (data) => data },

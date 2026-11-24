@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { GeminiAiService } from '../src/modules/ai/infrastructure/GeminiAiService.js';
 import { config } from '../src/config/env.js';
+import { clearStorageBindings, setStorageBindings } from '../src/shared/storage/runtime.js';
 
 describe('GeminiAiService Unit & Integration Tests', () => {
   it('should not invent a score, stage, or product plan when no API key is provided', async () => {
@@ -286,14 +287,14 @@ describe('GeminiAiService Unit & Integration Tests', () => {
     assert.ok(fallback.scalp_photo_verification.every((photo) => photo.status === 'verificationUnavailable'));
   });
 
-  it('falls back from an oversized optimized derivative to the original only within the 2 MiB cap', async () => {
+  it('falls back from an oversized optimized derivative to the original within the 20 MiB source cap', async () => {
     const requested = [];
     const service = new GeminiAiService({
       apiKey: 'test-key',
       imageStorage: {
         downloadAuthenticatedImage: async (fileName, _format, { maxBytes }) => {
           requested.push(fileName);
-          assert.equal(maxBytes, 2 * 1024 * 1024);
+          assert.equal(maxBytes, 20 * 1024 * 1024);
           if (fileName.endsWith('.webp')) throw new Error('derivative exceeds bounded read');
           return { data: 'aW1hZ2U=', mimeType: 'image/jpeg' };
         },
@@ -322,6 +323,75 @@ describe('GeminiAiService Unit & Integration Tests', () => {
 
     assert.deepEqual(requested, ['assessment/front.webp', 'assessment/front.jpg']);
     assert.equal(result.scalp_photo_verification[0].status, 'lowClarity');
+  });
+
+  it('creates a bounded temporary derivative so large private photos reach Gemini', async () => {
+    const inputWidths = [];
+    const received = [];
+    const source = Buffer.alloc(3 * 1024 * 1024, 0x7f).toString('base64');
+    const webp = (size) => {
+      const bytes = Buffer.alloc(size);
+      bytes.write('RIFF', 0);
+      bytes.writeUInt32LE(size - 8, 4);
+      bytes.write('WEBP', 8);
+      return bytes;
+    };
+    setStorageBindings({
+      MEDIA_BUCKET: { async put() {} },
+      IMAGES: {
+        input() {
+          let width = 0;
+          return {
+            transform(options) { width = options.width; inputWidths.push(width); return this; },
+            output() {
+              const bytes = webp(width === 2048 ? 2_400_000 : 1_400_000);
+              return Promise.resolve({ response: async () => ({ ok: true, arrayBuffer: async () => bytes }) });
+            },
+          };
+        },
+      },
+    });
+
+    try {
+      const service = new GeminiAiService({
+        apiKey: 'test-key',
+        imageStorage: {
+          async downloadAuthenticatedImage(_fileName, _format, options) {
+            assert.equal(options.maxBytes, 20 * 1024 * 1024);
+            return { data: source, mimeType: 'image/jpeg' };
+          },
+        },
+        fetchFn: async (_url, options) => {
+          received.push(JSON.parse(options.body).contents[0].parts);
+          return {
+            ok: true,
+            json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+              scalp_health_score: 80,
+              stage_classification: 'Reported pattern',
+              summary: 'Screening summary.',
+              scalp_photo_verification: [{ angle: 'front', status: 'hairDetected', is_hair: true, confidence: 0.9 }],
+              recommended_regimen: { daily_steps: [] },
+            }) }] } }] }),
+          };
+        },
+        logger: { warn() {}, error() {} },
+      });
+
+      const result = await service.generateHairTestAssessment({ scalp_photos: [{
+        file_name: 'assessment/front.jpg',
+        format: 'jpg',
+        angle: 'front',
+        delivery_type: 'authenticated',
+      }] });
+
+      const imagePart = received[0].find((part) => part.inline_data);
+      assert.deepEqual(inputWidths, [2048, 1600]);
+      assert.equal(Buffer.from(imagePart.inline_data.data, 'base64').length, 1_400_000);
+      assert.equal(imagePart.inline_data.mime_type, 'image/webp');
+      assert.equal(result.scalp_photo_verification[0].status, 'hairDetected');
+    } finally {
+      clearStorageBindings();
+    }
   });
 
   it('should use the configured fallback model when the primary model is unavailable', async () => {

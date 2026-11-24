@@ -174,6 +174,49 @@ export class TreatmentRepository extends ITreatmentRepository {
     return new Treatment(newRecord);
   }
 
+  async updatePatientDietSuggestions(userId, referenceNo, suggestions) {
+    const numericId = Number(userId);
+    const ref = String(referenceNo || '').trim();
+    const items = Array.isArray(suggestions) ? suggestions : [];
+    if (isDatabaseConnected()) {
+      let treatment = await TreatmentModel.findOne({ userId: numericId, reference_no: ref }).sort({ date: -1, id: -1 });
+      if (treatment) {
+        treatment.patient_diet_suggestions = items;
+        await treatment.save();
+        return toTreatment(treatment);
+      }
+      return toTreatment(await TreatmentModel.create({
+        id: await nextId('treatments'),
+        userId: numericId,
+        reference_no: ref,
+        treatment_name: 'Patient-selected AI food suggestions',
+        patient_diet_suggestions: items,
+        date: new Date().toISOString().split('T')[0],
+      }));
+    }
+
+    const treatment = store.treatments.find((item) =>
+      Number(item.userId) === numericId && String(item.reference_no || '') === ref,
+    );
+    if (treatment) {
+      treatment.patient_diet_suggestions = items;
+      treatment.updated_at = new Date().toISOString();
+      return new Treatment(treatment);
+    }
+    const id = store.treatments.length > 0 ? Math.max(...store.treatments.map((item) => Number(item.id) || 0)) + 1 : 1;
+    const record = {
+      id,
+      userId: numericId,
+      reference_no: ref,
+      treatment_name: 'Patient-selected AI food suggestions',
+      patient_diet_suggestions: items,
+      date: new Date().toISOString().split('T')[0],
+      status: 'active',
+    };
+    store.treatments.push(record);
+    return new Treatment(record);
+  }
+
   async getRoutineSteps(userId) {
     const numericId = Number(userId);
     if (isDatabaseConnected()) {

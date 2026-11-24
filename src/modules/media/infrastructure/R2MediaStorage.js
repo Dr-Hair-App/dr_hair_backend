@@ -136,27 +136,49 @@ export async function optimizeImageForStorage(buffer, mimeType, binding = getIma
 
 /** Prepare a temporary, bounded derivative for AI inference. Callers must keep
  * the validated source bytes for storage and clinical records. */
-export async function optimizeImageForInference(buffer, mimeType, binding = getImageOptimizationBinding()) {
+export async function optimizeImageForInference(
+  buffer,
+  mimeType,
+  binding = getImageOptimizationBinding(),
+  { maxBytes = Number.POSITIVE_INFINITY } = {},
+) {
   const original = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
   const normalizedMime = normalizedImageMime(mimeType);
   if (!binding || typeof binding.input !== 'function' || original.length === 0 || original.length > 20 * 1024 * 1024
     || !['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'image/avif'].includes(normalizedMime)) {
     return { buffer: original, contentType: normalizedMime, resized: false };
   }
-  try {
-    const output = await binding.input(original)
-      .transform({ width: 2048, height: 2048, fit: 'scale-down' })
-      .output({ format: 'image/webp', quality: 100 })
-      .then((result) => result.response());
-    if (!output?.ok) throw new Error('Image transform returned a non-success response.');
-    const candidate = Buffer.from(await output.arrayBuffer());
-    if (!candidate.length || candidate.length >= original.length || detectImageMime(candidate.subarray(0, 32)) !== 'image/webp') {
-      return { buffer: original, contentType: normalizedMime, resized: false };
-    }
-    return { buffer: candidate, contentType: 'image/webp', resized: true };
-  } catch {
+  if (Number.isFinite(maxBytes) && original.length <= maxBytes) {
     return { buffer: original, contentType: normalizedMime, resized: false };
   }
+  try {
+    // Gemini assessment requests have a strict per-photo budget. Try a few
+    // progressively smaller WebP derivatives in memory, retaining the source
+    // object untouched in R2 and the clinical record.
+    const variants = maxBytes < Number.POSITIVE_INFINITY
+      ? [
+          { width: 2048, quality: 85 },
+          { width: 1600, quality: 78 },
+          { width: 1280, quality: 70 },
+        ]
+      : [{ width: 2048, quality: 100 }];
+    for (const variant of variants) {
+      const output = await binding.input(original)
+        .transform({ width: variant.width, height: variant.width, fit: 'scale-down' })
+        .output({ format: 'image/webp', quality: variant.quality })
+        .then((result) => result.response());
+      if (!output?.ok) continue;
+      const candidate = Buffer.from(await output.arrayBuffer());
+      if (!candidate.length || candidate.length >= original.length ||
+          detectImageMime(candidate.subarray(0, 32)) !== 'image/webp') continue;
+      if (candidate.length <= maxBytes) {
+        return { buffer: candidate, contentType: 'image/webp', resized: true };
+      }
+    }
+  } catch {
+    // Preserve the source if the edge transform is unavailable.
+  }
+  return { buffer: original, contentType: normalizedMime, resized: false };
 }
 
 export async function compressLosslessly(buffer, enabled = true) {

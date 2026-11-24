@@ -15,6 +15,7 @@ export class Review {
     treatment = '',
     duration = '',
     review_type = 'doctor',
+    product_id = '',
     status = 'pending',
     page = 'home',
     created_at = new Date().toISOString(),
@@ -32,6 +33,7 @@ export class Review {
     this.treatment = treatment;
     this.duration = duration;
     this.review_type = review_type;
+    this.product_id = String(product_id || '');
     this.status = status;
     this.page = page;
     this.created_at = created_at;
@@ -41,6 +43,7 @@ export class Review {
   toPublicResponse() {
     return {
       id: this.id,
+      ...(this.product_id ? { product_id: this.product_id } : {}),
       name: this.name,
       rating: this.rating,
       category: this.category,

@@ -2,6 +2,7 @@ import { AppError, BadRequestError, NotFoundError } from '../../../shared/errors
 import { sendSuccess } from '../../../shared/utils/response.js';
 import { createClinicalReportDownloadUrl } from '../../admin/infrastructure/ClinicalReportStorage.js';
 import { progressCheckInResponse } from '../../../shared/utils/progress-checkin-response.js';
+import { normalizePatientDietSuggestions } from '../../treatment/domain/patient-diet-suggestion.js';
 
 const publicReport = (report) => ({
   id: report.id,
@@ -156,6 +157,32 @@ export class PatientClinicalController {
         },
       });
     } catch (error) { next(error); }
+  };
+
+  savePatientDietSuggestions = async (req, res, next) => {
+    try {
+      const userId = Number(req.user?.id);
+      const referenceNo = String(req.body?.reference_no || '').trim();
+      if (!referenceNo || referenceNo.length > 100) {
+        throw new BadRequestError('A valid assessment reference is required.');
+      }
+      const assessment = await this.hairTestRepository?.findByReferenceNo?.(referenceNo);
+      if (!assessment || Number(assessment.userId) !== userId) {
+        throw new NotFoundError('Assessment not found.');
+      }
+      const suggestions = normalizePatientDietSuggestions(req.body?.suggestions);
+      const updated = await this.treatmentRepository.updatePatientDietSuggestions(
+        userId,
+        referenceNo,
+        suggestions,
+      );
+      return sendSuccess(res, {
+        message: 'Food suggestions saved to your diet plan.',
+        data: { patient_diet_suggestions: updated.patient_diet_suggestions || [] },
+      });
+    } catch (error) {
+      next(error);
+    }
   };
 
   getHomeSummary = async (req, res, next) => {
@@ -363,9 +390,102 @@ export class PatientClinicalController {
 
       actionCards.sort((a, b) => a.priority - b.priority);
 
+      const assessmentReviewComplete = Boolean(
+        latestAssessment && (
+          latestAssessment.status === 'reviewed' ||
+          (!isClinicianRequired && latestAssessment.status !== 'under_review')
+        )
+      );
+      const isUnderReview = Boolean(
+        latestAssessment && latestAssessment.status === 'under_review'
+      );
+      const isReviewed = Boolean(
+        latestAssessment && latestAssessment.status === 'reviewed'
+      );
+      const showExpertReviewCard = Boolean(
+        latestAssessment && !assessmentReviewComplete
+      );
+      const showTodayCard = Boolean(
+        latestAssessment && assessmentReviewComplete
+      );
+
+      // Smart real-time reminders
+      const reminders = [];
+      if (hasDraftData) {
+        reminders.push({
+          id: 'rem_pending_draft',
+          type: 'assessment_draft',
+          title: 'Hair Assessment Pending',
+          message: 'Complete your hair assessment to receive your clinical diagnosis.',
+          action_route: '/hair-test',
+          priority: 'high',
+        });
+      }
+      if (isUnderReview) {
+        reminders.push({
+          id: 'rem_under_review',
+          type: 'assessment_under_review',
+          title: 'Assessment Under Review',
+          message: 'Our clinical team is reviewing your scalp test photos and answers.',
+          action_route: '/assessment-result',
+          priority: 'medium',
+        });
+      }
+      if (latestCarePlan) {
+        reminders.push({
+          id: 'rem_care_plan',
+          type: 'care_plan_routine',
+          title: 'Daily Care Routine',
+          message: `Follow your prescribed care routine: ${latestCarePlan.treatment_name || 'Hair Care Plan'}.`,
+          action_route: '/treatment-details',
+          priority: 'low',
+        });
+      }
+      if (pendingAppointments.length > 0) {
+        const apt = pendingAppointments[0];
+        reminders.push({
+          id: `rem_apt_${apt.id}`,
+          type: 'appointment_pending',
+          title: 'Appointment Requires Action',
+          message: `Your appointment for ${apt.reason || 'Consultation'} needs confirmation.`,
+          action_route: '/appointments',
+          priority: 'high',
+        });
+      }
+      if (latestSharedReport) {
+        reminders.push({
+          id: `rem_rpt_${latestSharedReport.id}`,
+          type: 'shared_report',
+          title: 'New Clinical Report Available',
+          message: `${latestSharedReport.title} is ready to view.`,
+          action_route: '/treatment-details',
+          priority: 'low',
+        });
+      }
+
       return sendSuccess(res, {
         data: {
           action_cards: actionCards,
+          assessment: latestAssessment ? {
+            id: String(latestAssessment.id),
+            reference_no: latestAssessment.reference_no || String(latestAssessment.id),
+            status: latestAssessment.status,
+            is_reviewed: isReviewed,
+            is_under_review: isUnderReview,
+            requires_clinician: Boolean(isClinicianRequired),
+            doctor_review_complete: isReviewed,
+            ai_review_complete: !isClinicianRequired && !isUnderReview,
+            assessment_review_complete: assessmentReviewComplete,
+            show_expert_review_card: showExpertReviewCard,
+            show_today_card: showTodayCard,
+            scalp_health_score: aiAssessment?.scalp_health_score ?? null,
+            hair_loss_stage: latestAssessment.hair_loss_stage || aiAssessment?.hair_loss_stage || null,
+            hair_loss_type: latestAssessment.hair_loss_type || aiAssessment?.hair_loss_type || null,
+            doctor_name: latestAssessment.reviewer_name || latestCarePlan?.doctor_name || 'Dr. Jai Bansal',
+            doctor_review_note: latestAssessment.reviewer_notes || latestAssessment.review_notes || null,
+            created_at: latestAssessment.created_at || null,
+            reviewed_at: latestAssessment.reviewed_at || null,
+          } : null,
           latest_report: latestSharedReport ? {
             id: String(latestSharedReport.id),
             title: latestSharedReport.title || 'Clinical Report',
@@ -375,9 +495,24 @@ export class PatientClinicalController {
             created_at: latestSharedReport.created_at || new Date().toISOString(),
             mime_type: latestSharedReport.mime_type || '',
           } : null,
+          reports_summary: {
+            total_count: (reports || []).length,
+            shared_count: sharedReports.length,
+            latest_shared_id: latestSharedReport ? String(latestSharedReport.id) : null,
+            latest_shared_title: latestSharedReport?.title || null,
+            latest_shared_at: latestSharedReport?.created_at || null,
+            has_new_report: sharedReports.length > 0,
+          },
+          reminders,
           patient_status: {
             has_completed_assessment: Boolean(latestAssessment),
             assessment_status: latestAssessment?.status || (hasDraftData ? 'draft' : 'none'),
+            is_reviewed: isReviewed,
+            is_under_review: isUnderReview,
+            show_expert_review_card: showExpertReviewCard,
+            show_today_card: showTodayCard,
+            doctor_review_complete: isReviewed,
+            assessment_review_complete: assessmentReviewComplete,
             has_active_care_plan: Boolean(latestCarePlan),
             shared_reports_count: sharedReports.length,
             upcoming_appointments_count: (appointments || []).filter((a) => !['cancelled', 'completed'].includes(String(a.status).toLowerCase())).length,

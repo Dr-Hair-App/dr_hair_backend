@@ -30,10 +30,15 @@ export class TreatmentController {
 
       const treatments = await this.treatmentRepository.findByUserId(userId);
       const treatmentWithDiet = treatments.find((t) => t.diet_meals && t.diet_meals.length > 0) || treatments[0];
+      const patientSuggestions = treatments
+        .filter((treatment) => treatment.status !== 'withdrawn')
+        .flatMap((treatment) => treatment.patient_diet_suggestions || [])
+        .filter((suggestion) => suggestion.active !== false);
 
       return sendSuccess(res, {
         data: {
           diet_meals: treatmentWithDiet?.diet_meals || [],
+          patient_diet_suggestions: patientSuggestions,
           treatment_name: treatmentWithDiet?.diet_meals?.length ? treatmentWithDiet.treatment_name : '',
           doctor_name: treatmentWithDiet?.diet_meals?.length ? (treatmentWithDiet.doctor_name || '') : '',
         },

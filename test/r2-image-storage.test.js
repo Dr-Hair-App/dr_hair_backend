@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import { setStorageBindings, clearStorageBindings } from '../src/shared/storage/runtime.js';
-import { hasSafeImageDimensions, optimizeImageForStorage, R2MediaStorage, verifyPrivateMediaSignature } from '../src/modules/media/infrastructure/R2MediaStorage.js';
+import { hasSafeImageDimensions, optimizeImageForInference, optimizeImageForStorage, R2MediaStorage, verifyPrivateMediaSignature } from '../src/modules/media/infrastructure/R2MediaStorage.js';
 import { R2ImageStorage as ImageStorage } from '../src/modules/media/infrastructure/R2ImageStorage.js';
 
 const pngHeader = (width = 1, height = 1) => {
@@ -273,6 +273,32 @@ test('shared backend image optimizer uses lossless WebP only when smaller and ot
   });
   assert.equal(bigger.compressed, false);
   assert.deepEqual(bigger.buffer, source);
+});
+
+test('unbounded inference optimization preserves the existing 2048px transformation path', async () => {
+  const source = Buffer.alloc(3 * 1024 * 1024, 0x01);
+  const webp = Buffer.alloc(16);
+  webp.write('RIFF', 0);
+  webp.write('WEBP', 8);
+  let transformOptions;
+  let outputOptions;
+  const result = await optimizeImageForInference(source, 'image/jpeg', {
+    input(bytes) {
+      assert.equal(bytes.length, source.length);
+      return {
+        transform(options) { transformOptions = options; return this; },
+        output(options) {
+          outputOptions = options;
+          return Promise.resolve({ response: async () => ({ ok: true, arrayBuffer: async () => webp }) });
+        },
+      };
+    },
+  });
+
+  assert.deepEqual(transformOptions, { width: 2048, height: 2048, fit: 'scale-down' });
+  assert.deepEqual(outputOptions, { format: 'image/webp', quality: 100 });
+  assert.equal(result.resized, true);
+  assert.deepEqual(result.buffer, webp);
 });
 
 test('shared backend image optimizer transcodes supported HEIC uploads to smaller WebP', async () => {

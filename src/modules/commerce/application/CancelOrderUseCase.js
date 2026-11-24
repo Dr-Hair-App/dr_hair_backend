@@ -10,6 +10,10 @@ export class CancelOrderUseCase {
 
   async execute({ orderId, userId, reason = 'Customer requested cancellation', actor = null }) {
     const cleanOrderId = String(orderId).trim();
+    const cleanReason = String(reason ?? '').trim();
+    if (!cleanReason || cleanReason.length > 300) {
+      throw new BadRequestError('Cancellation reason is required and must be 300 characters or fewer.');
+    }
     const order = await this.orderRepository.findById(cleanOrderId);
     if (!order) {
       throw new NotFoundError(`Order not found: ${cleanOrderId}`);
@@ -43,12 +47,12 @@ export class CancelOrderUseCase {
       fulfillment: {
         status: 'Cancelled',
         inventory_release_status: 'completed',
-        cancellation_reason: reason,
+        cancellation_reason: cleanReason,
         cancelled_at: new Date().toISOString(),
       },
     });
 
-    updated.addTimelineEvent(`Order cancelled: ${reason}`);
+    updated.addTimelineEvent(`Order cancelled: ${cleanReason}`);
     await this.orderRepository.update(cleanOrderId, { timeline: updated.timeline });
 
     if (this.auditEventRepository) {
@@ -57,7 +61,7 @@ export class CancelOrderUseCase {
         action: 'commerce.order.cancelled',
         target: { id: cleanOrderId, type: 'order' },
         metadata: {
-          reason,
+          reason: cleanReason,
           previousStatus: currentStatus,
         },
       });

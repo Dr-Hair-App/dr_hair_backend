@@ -5,6 +5,7 @@ import { uploadClinicalReport, createClinicalReportDownloadUrl, deleteClinicalRe
 import { clinicalReportFormat } from '../infrastructure/R2ClinicalReportUploadStorage.js';
 import { MalwareScanner, normalizeScanStatus } from '../infrastructure/MalwareScanner.js';
 import { progressCheckInResponse } from '../../../shared/utils/progress-checkin-response.js';
+import { normalizePatientDietSuggestions } from '../../treatment/domain/patient-diet-suggestion.js';
 import { getEffectivePermissions, hasPermission } from '../../../shared/utils/admin-permissions.js';
 import { hashPassword } from '../../../shared/utils/password-hasher.js';
 import { sendPushNotification } from '../../notifications/infrastructure/FirebaseAdminMessaging.js';
@@ -1001,6 +1002,7 @@ export class AdminController {
         next_review_date = '',
         routine_steps = [],
         diet_meals = [],
+        patient_diet_suggestions = [],
         date,
       } = req.body || {};
       if (typeof reference_no !== 'string' || !reference_no.trim()) {
@@ -1055,6 +1057,7 @@ export class AdminController {
         if (!meal.type?.trim() || !meal.name?.trim()) throw new BadRequestError('Each diet meal needs a meal type and name.');
         return Object.fromEntries(Object.keys(fields).map((field) => [field, typeof meal[field] === 'string' ? meal[field].trim() : '']));
       });
+      const normalizedPatientDietSuggestions = normalizePatientDietSuggestions(patient_diet_suggestions);
       const hairTest = await this.hairTestRepository.findByReferenceNo(reference_no.trim());
       if (!hairTest) throw new NotFoundError('Hair test not found for that reference number.');
 
@@ -1073,6 +1076,7 @@ export class AdminController {
         next_review_date: next_review_date.trim(),
         routine_steps: normalizedRoutineSteps,
         diet_meals: normalizedDietMeals,
+        patient_diet_suggestions: normalizedPatientDietSuggestions,
         ...(date ? { date } : {}),
       });
       // P0 Decoupling: Assigning a care plan updates recommendations, but does NOT mark the assessment reviewed.
@@ -1144,6 +1148,9 @@ export class AdminController {
           throw new BadRequestError('diet_meals must contain up to 20 meal suggestions.');
         }
         updateData.diet_meals = body.diet_meals;
+      }
+      if (body.patient_diet_suggestions !== undefined) {
+        updateData.patient_diet_suggestions = normalizePatientDietSuggestions(body.patient_diet_suggestions);
       }
 
       const updated = await this.treatmentRepository.update(treatmentId, updateData);
@@ -1517,8 +1524,12 @@ export class AdminController {
     try {
       const {
         name, rating, category, message, avatar = '', media_assets = null, treatment = '', duration = '',
-        review_type = 'doctor', page = 'home', status = 'draft', patient_consent_confirmed = false,
+        review_type = 'doctor', product_id = '', page = 'home', status = 'draft', patient_consent_confirmed = false,
       } = req.body || {};
+      const productId = String(product_id || '').trim();
+      if ((review_type === 'product' && !productId) || (productId && review_type !== 'product')) {
+        throw new BadRequestError('Product reviews must include a product ID, and product IDs can only be attached to product reviews.');
+      }
       if (status === 'active' && !hasPermission(req.user, 'content.publish')) {
         throw new ForbiddenError("Permission 'content.publish' is required to publish a patient story.");
       }
@@ -1537,6 +1548,7 @@ export class AdminController {
         treatment: treatment.trim(),
         duration: duration.trim(),
         review_type,
+        product_id: productId,
         page,
         status,
         consent_verified: patient_consent_confirmed === true,
@@ -1567,6 +1579,13 @@ export class AdminController {
       }
       const body = req.body || {};
       const { patient_consent_confirmed, ...updates } = body;
+      if (Object.hasOwn(updates, 'product_id') || Object.hasOwn(updates, 'review_type')) {
+        const nextType = updates.review_type ?? current.review_type;
+        const nextProductId = String(updates.product_id ?? current.product_id ?? '').trim();
+        if ((nextType === 'product' && !nextProductId) || (nextProductId && nextType !== 'product')) {
+          throw new BadRequestError('Product reviews must include a product ID, and product IDs can only be attached to product reviews.');
+        }
+      }
       const consentVerified = patient_consent_confirmed === true || current.consent_verified === true;
       if (patient_consent_confirmed === true && !hasPermission(req.user, 'content.publish')) {
         throw new ForbiddenError("Permission 'content.publish' is required to confirm publication consent.");

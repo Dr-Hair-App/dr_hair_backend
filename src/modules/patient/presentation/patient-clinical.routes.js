@@ -31,6 +31,7 @@ export const createPatientClinicalRouter = ({ patientClinicalController, appoint
   if (treatmentController?.getPatientDietPlan) {
     router.get('/diet-plan', treatmentController.getPatientDietPlan);
   }
+  router.put('/diet-plan/suggestions', patientClinicalController.savePatientDietSuggestions);
   router.get('/routine-steps', patientClinicalController.getRoutineSteps);
   router.post('/routine-steps', patientClinicalController.addRoutineStep);
   router.delete('/routine-steps/:stepIndex', patientClinicalController.deleteRoutineStep);

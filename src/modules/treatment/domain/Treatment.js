@@ -18,6 +18,7 @@ export class Treatment {
     next_review_date = '',
     routine_steps = [],
     diet_meals = [],
+    patient_diet_suggestions = [],
     date = new Date().toISOString().split('T')[0],
     status = 'active',
     withdrawn_at = null,
@@ -40,6 +41,7 @@ export class Treatment {
     this.next_review_date = next_review_date;
     this.routine_steps = routine_steps;
     this.diet_meals = diet_meals;
+    this.patient_diet_suggestions = patient_diet_suggestions;
     this.date = date;
     this.status = status;
     this.withdrawn_at = withdrawn_at;
@@ -62,6 +64,7 @@ export class Treatment {
       next_review_date: this.next_review_date,
       routine_steps: this.routine_steps,
       diet_meals: this.diet_meals,
+      patient_diet_suggestions: this.patient_diet_suggestions,
       date: this.date,
       status: this.status || 'active',
       withdrawn_at: this.withdrawn_at || null,

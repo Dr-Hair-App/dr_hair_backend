@@ -276,4 +276,72 @@ describe('Patient Home Summary APIs & Priority Logic', () => {
     assert.equal(res.body.data.patient_status.has_active_care_plan, false);
     assert.equal(res.body.data.patient_status.shared_reports_count, 0);
   });
+
+  it('provides real-time assessment status, flags, reports summary, and reminders for home dashboard', async () => {
+    const controller = new PatientClinicalController({
+      hairTestRepository: {
+        findByUserId: async () => [
+          {
+            id: 'assess_999',
+            reference_no: 'REF-999',
+            status: 'under_review',
+            hair_loss_stage: 'Stage 3 - Vertex',
+            created_at: new Date('2026-11-20T10:00:00Z'),
+            ai_assessment: {
+              scalp_health_score: 72,
+              requiresClinician: true,
+            },
+          },
+        ],
+        getDraft: async () => null,
+      },
+      treatmentRepository: { findByUserId: async () => [] },
+      clinicalReportRepository: {
+        listSharedByUserId: async () => [
+          {
+            id: 'rpt_10',
+            title: 'Diagnostic Trichoscopy',
+            visibility: 'Shared',
+            scanning_status: 'clean',
+            created_at: new Date('2026-11-21T10:00:00Z'),
+          },
+        ],
+      },
+      appointmentRepository: { listByPatient: async () => [] },
+    });
+
+    const res = recorder();
+    await controller.getHomeSummary({ user: { id: 77 } }, res, (err) => { throw err; });
+
+    assert.equal(res.body.status, 'success');
+    const data = res.body.data;
+
+    // Real-time assessment payload
+    assert.ok(data.assessment);
+    assert.equal(data.assessment.id, 'assess_999');
+    assert.equal(data.assessment.reference_no, 'REF-999');
+    assert.equal(data.assessment.status, 'under_review');
+    assert.equal(data.assessment.is_under_review, true);
+    assert.equal(data.assessment.is_reviewed, false);
+    assert.equal(data.assessment.show_expert_review_card, true);
+    assert.equal(data.assessment.show_today_card, false);
+    assert.equal(data.assessment.scalp_health_score, 72);
+
+    // Patient status flags
+    assert.equal(data.patient_status.is_under_review, true);
+    assert.equal(data.patient_status.is_reviewed, false);
+    assert.equal(data.patient_status.show_expert_review_card, true);
+    assert.equal(data.patient_status.show_today_card, false);
+
+    // Reports summary
+    assert.ok(data.reports_summary);
+    assert.equal(data.reports_summary.shared_count, 1);
+    assert.equal(data.reports_summary.has_new_report, true);
+    assert.equal(data.reports_summary.latest_shared_id, 'rpt_10');
+
+    // Smart reminders
+    assert.ok(Array.isArray(data.reminders));
+    assert.ok(data.reminders.some((r) => r.type === 'assessment_under_review'));
+    assert.ok(data.reminders.some((r) => r.type === 'shared_report'));
+  });
 });

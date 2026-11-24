@@ -10,6 +10,7 @@ const adminReviewFields = {
   treatment: z.string().trim().max(120).optional().default(''),
   duration: z.string().trim().max(120).optional().default(''),
   review_type: z.enum(['doctor', 'product', 'clinic']).optional().default('doctor'),
+  product_id: z.string().trim().max(100).optional(),
   page: z.enum(['home', 'reels']).optional().default('home'),
   status: z.enum(['draft', 'pending', 'active', 'rejected']).optional().default('draft'),
   patient_consent_confirmed: z.boolean().optional().default(false),
@@ -27,6 +28,7 @@ export const updateAdminReviewSchema = z.object({
   treatment: z.string().trim().max(120).optional(),
   duration: z.string().trim().max(120).optional(),
   review_type: z.enum(['doctor', 'product', 'clinic']).optional(),
+  product_id: z.string().trim().max(100).optional(),
   page: z.enum(['home', 'reels']).optional(),
   patient_consent_confirmed: z.boolean().optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, { message: 'Provide at least one review field to update.' });
@@ -48,5 +50,6 @@ export const createReviewSchema = z.object({
   message: z.string().trim().optional(),
   avatar: z.string().trim().optional(),
   review_type: z.string().trim().optional(),
+  product_id: z.string().trim().max(100).optional(),
   page: z.string().trim().optional(),
 });

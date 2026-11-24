@@ -12,12 +12,13 @@ const toReview = (record) => {
 };
 
 export class ReviewRepository extends IReviewRepository {
-  async findFiltered({ review_type, status, page, consent_verified } = {}) {
+  async findFiltered({ review_type, status, page, product_id, consent_verified } = {}) {
     if (isDatabaseConnected()) {
       const filter = {};
       if (review_type) filter.review_type = review_type;
       if (status) filter.status = status;
       if (page) filter.page = page;
+      if (product_id) filter.product_id = String(product_id);
       if (consent_verified === true) filter.consent_verified = true;
       const records = await ReviewModel.find(filter).sort({ created_at: -1 }).lean();
       return records.map(toReview);
@@ -34,6 +35,10 @@ export class ReviewRepository extends IReviewRepository {
 
     if (page) {
       results = results.filter((r) => !r.page || r.page === page);
+    }
+
+    if (product_id) {
+      results = results.filter((r) => String(r.product_id || '') === String(product_id));
     }
 
     if (consent_verified === true) {
