@@ -1,11 +1,47 @@
-import { BadRequestError, UnauthorizedError } from '../../../shared/errors/index.js';
+import { createHash } from 'node:crypto';
+import { BadRequestError, ConflictError, UnauthorizedError } from '../../../shared/errors/index.js';
+import { getExecutionContext } from '../../../shared/runtime/execution-context.js';
+
+const fingerprintSubmission = (formData, files) => {
+  const fields = Object.entries(formData).filter(([key]) => key !== 'submission_key')
+    .sort(([a], [b]) => a.localeCompare(b));
+  const images = Object.entries(files).sort(([a], [b]) => a.localeCompare(b)).map(([name, entries]) => [
+    name, entries.map((file) => {
+      const digest = file.sha256 || (file.buffer && createHash('sha256').update(file.buffer).digest('hex'));
+      if (!digest || !/^[a-f0-9]{64}$/i.test(digest)) {
+        throw new BadRequestError('Unable to verify the uploaded image for a safe submission retry.');
+      }
+      return digest.toLowerCase();
+    }),
+  ]);
+  return createHash('sha256').update(JSON.stringify({ fields, images })).digest('hex');
+};
+
+const publicAssessment = (test) => {
+  const { submission_key: _key, request_fingerprint: _fingerprint, ...assessment } = test;
+  return assessment;
+};
 
 export class SubmitHairTestUseCase {
-  constructor({ hairTestRepository, imageStorage, geminiAiService, assessmentProductAvailabilityService }) {
+  constructor({ hairTestRepository, imageStorage, geminiAiService, assessmentProductAvailabilityService, processQueuedAiAssessmentUseCase }) {
     this.hairTestRepository = hairTestRepository;
     this.imageStorage = imageStorage;
     this.geminiAiService = geminiAiService;
     this.assessmentProductAvailabilityService = assessmentProductAvailabilityService;
+    this.processQueuedAiAssessmentUseCase = processQueuedAiAssessmentUseCase;
+  }
+
+  scheduleAssessment(referenceNo) {
+    const context = getExecutionContext();
+    if (!context?.waitUntil || !this.processQueuedAiAssessmentUseCase) return false;
+    try {
+      context.waitUntil(this.processQueuedAiAssessmentUseCase.processOne({ referenceNo }).catch(() => {
+        console.error('Unable to start queued assessment; scheduled recovery remains available.');
+      }));
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async execute(input) {
@@ -28,6 +64,38 @@ export class SubmitHairTestUseCase {
   async _execute({ userId, formData, files = {} }) {
     if (!formData.full_name && !formData.name) {
       throw new BadRequestError('Full name is required.');
+    }
+    const submissionKey = formData.submission_key || null;
+    if (submissionKey && (typeof submissionKey !== 'string' || !/^[a-f0-9]{64}$/.test(submissionKey))) {
+      throw new BadRequestError('Invalid assessment submission key.');
+    }
+    const requestFingerprint = submissionKey ? fingerprintSubmission(formData, files) : null;
+    const replay = async () => {
+      if (!submissionKey || !this.hairTestRepository.findBySubmissionKey) return null;
+      const existing = await this.hairTestRepository.findBySubmissionKey(userId, submissionKey);
+      if (!existing) return null;
+      if (existing.request_fingerprint !== requestFingerprint) {
+        throw new ConflictError(
+          'An earlier assessment was already sent. Open that report before submitting your changed draft.',
+          { reference_no: existing.reference_no, reason: 'ASSESSMENT_ALREADY_SUBMITTED' },
+        );
+      }
+      const retained = new Set((existing.scalp_photos || []).flatMap((photo) => [photo.file_name, photo.optimized_file_name]).filter(Boolean));
+      const prefix = `drhair/images/user-${Number(userId)}/assessment/`;
+      const uploads = Object.values(files).flat().map((file) => file.publicId || file.key)
+        .filter((key) => typeof key === 'string' && key.startsWith(prefix) && !retained.has(key));
+      if (typeof this.imageStorage?.deleteImage === 'function') {
+        await Promise.all(uploads.map((key) => this.imageStorage.deleteImage(key, { deliveryType: 'authenticated' }).catch(() => null)));
+      }
+      return { message: 'Assessment already submitted.', reference_no: existing.reference_no, test: publicAssessment(existing),
+        ai_assessment: existing.ai_assessment, ai_assessment_status: existing.ai_assessment_status };
+    };
+    const existingSubmission = await replay();
+    if (existingSubmission) {
+      if (formData.background_ai === 'true' && existingSubmission.ai_assessment_status === 'queued') {
+        this.scheduleAssessment(existingSubmission.reference_no);
+      }
+      return existingSubmission;
     }
 
     // Helper to safely parse stringified JSON array fields from multipart/form-data
@@ -69,7 +137,23 @@ export class SubmitHairTestUseCase {
 
     // Process scalp photo uploads
     const scalpPhotos = [];
+    // Only files staged by this request can be removed on failure. Legacy
+    // references may also be used by an earlier, already-saved assessment.
+    const stagedPhotoKeys = new Set();
     const photoKeys = ['photo_front', 'photo_top', 'photo_left', 'photo_right', 'photo_back'];
+    let selectionOrder = [];
+    if (formData.photo_selection_order != null && formData.photo_selection_order !== '') {
+      try {
+        selectionOrder = JSON.parse(formData.photo_selection_order);
+      } catch {
+        throw new BadRequestError('photo_selection_order must be a JSON array of photo field names.');
+      }
+      if (!Array.isArray(selectionOrder) || selectionOrder.length > photoKeys.length ||
+          selectionOrder.some((key) => typeof key !== 'string' || !photoKeys.includes(key)) ||
+          new Set(selectionOrder).size !== selectionOrder.length) {
+        throw new BadRequestError('photo_selection_order must contain distinct valid photo field names.');
+      }
+    }
     const resolveOwnedPhoto = async (value, field) => {
       const val = String(value || '').trim();
       let publicId = val;
@@ -112,7 +196,7 @@ export class SubmitHairTestUseCase {
     };
 
     try {
-      for (const key of photoKeys) {
+      const photoTasks = photoKeys.map((key) => {
         const uploadedFiles = files[key] || [];
         const optimizedFiles = files[`${key}_optimized`] || [];
         const suppliedValue = formData[`${key}_url`] || formData[`${key}_id`] || formData[`${key}_public_id`];
@@ -143,6 +227,7 @@ export class SubmitHairTestUseCase {
                 throw new UnauthorizedError(`${fieldName} must belong to the authenticated patient's assessment uploads.`);
               }
               const asset = await this.imageStorage.getAuthenticatedImage(publicId);
+              stagedPhotoKeys.add(publicId);
               return {
                 file_name: publicId,
                 url: asset.secure_url,
@@ -158,6 +243,7 @@ export class SubmitHairTestUseCase {
               undefined,
               { deliveryType: 'authenticated', contentType: file.mimetype || 'image/jpeg' },
             );
+            stagedPhotoKeys.add(uploaded.publicId);
             const asset = await this.imageStorage.getAuthenticatedImage?.(uploaded.publicId);
             return {
               file_name: uploaded.publicId,
@@ -167,54 +253,75 @@ export class SubmitHairTestUseCase {
               bytes: asset?.bytes || file.buffer.length,
             };
           };
-          const original = await persistUploadedFile(uploadedFiles[0], key);
-          const photo = {
-            ...original,
-            angle: key.replace('photo_', ''),
-            verification_status: 'pending',
-            verification_message: 'Visual photo review is pending with the assessment.',
+
+          return async () => {
+            const [original, optimized] = await Promise.all([
+              persistUploadedFile(uploadedFiles[0], key),
+              optimizedFiles[0] ? persistUploadedFile(optimizedFiles[0], `${key}_optimized`) : Promise.resolve(null),
+            ]);
+            const photo = {
+              ...original,
+              angle: key.replace('photo_', ''),
+              verification_status: 'pending',
+              verification_message: 'Visual photo review is pending with the assessment.',
+            };
+            if (optimized) {
+              photo.optimized_file_name = optimized.file_name;
+              photo.optimized_format = optimized.format;
+              photo.optimized_bytes = optimized.bytes;
+              photo.optimized_sha256 = optimized.sha256;
+            }
+            return photo;
           };
-          scalpPhotos.push(photo);
-          if (optimizedFiles[0]) {
-            const optimized = await persistUploadedFile(optimizedFiles[0], `${key}_optimized`);
-            photo.optimized_file_name = optimized.file_name;
-            photo.optimized_format = optimized.format;
-            photo.optimized_bytes = optimized.bytes;
-            photo.optimized_sha256 = optimized.sha256;
-          }
-        } else if (suppliedValue) {
-          const { publicId, asset } = await resolveOwnedPhoto(suppliedValue, `${key}_url`);
-          const photo = {
-            file_name: publicId,
-            url: asset.secure_url,
-            delivery_type: 'authenticated',
-            format: asset.format,
-            bytes: asset.bytes,
-            angle: key.replace('photo_', ''),
-            verification_status: 'pending',
-            verification_message: 'Visual photo review is pending with the assessment.',
-          };
-          if (optimizedValue) {
-            const optimized = await resolveOwnedPhoto(
-              optimizedValue,
-              `${key}_optimized_url`,
-            );
-            photo.optimized_file_name = optimized.publicId;
-            photo.optimized_format = optimized.asset.format;
-            photo.optimized_bytes = optimized.asset.bytes;
-          }
-          scalpPhotos.push(photo);
         }
-      }
+
+        if (suppliedValue) {
+          return async () => {
+            const [{ publicId, asset }, optimized] = await Promise.all([
+              resolveOwnedPhoto(suppliedValue, `${key}_url`),
+              optimizedValue ? resolveOwnedPhoto(optimizedValue, `${key}_optimized_url`) : Promise.resolve(null),
+            ]);
+            const photo = {
+              file_name: publicId,
+              url: asset.secure_url,
+              delivery_type: 'authenticated',
+              format: asset.format,
+              bytes: asset.bytes,
+              angle: key.replace('photo_', ''),
+              verification_status: 'pending',
+              verification_message: 'Visual photo review is pending with the assessment.',
+            };
+            if (optimized) {
+              photo.optimized_file_name = optimized.publicId;
+              photo.optimized_format = optimized.asset.format;
+              photo.optimized_bytes = optimized.asset.bytes;
+            }
+            return photo;
+          };
+        }
+
+        return null;
+      }).filter(Boolean);
+
+      const resolvedPhotos = await Promise.all(photoTasks.map((task) => task()));
+      scalpPhotos.push(...resolvedPhotos);
     } catch (error) {
-      await Promise.all(scalpPhotos.flatMap((photo) => [photo.file_name, photo.optimized_file_name].filter(Boolean).map((key) => this.imageStorage.deleteImage(key, { deliveryType: photo.delivery_type }).catch(() => null))));
+      await Promise.all([...stagedPhotoKeys].map((key) => this.imageStorage.deleteImage(key, { deliveryType: 'authenticated' }).catch(() => null)));
       throw error;
+    }
+
+    if (selectionOrder.length) {
+      const order = new Map(selectionOrder.map((key, index) => [key.replace('photo_', ''), index]));
+      // Unknown/legacy angles precede explicitly ordered photos.
+      scalpPhotos.sort((a, b) => (order.get(a.angle) ?? -1) - (order.get(b.angle) ?? -1));
     }
 
     let hairTest;
     try {
       hairTest = await this.hairTestRepository.create({
         userId: userId ? parseInt(userId, 10) : null,
+        submission_key: submissionKey,
+        request_fingerprint: requestFingerprint,
         status: 'submitted',
         full_name: formData.full_name || formData.name,
         email: formData.email,
@@ -261,8 +368,27 @@ export class SubmitHairTestUseCase {
         await this.hairTestRepository.deleteDraft(userId).catch(() => null);
       }
     } catch (error) {
-      await Promise.all(scalpPhotos.flatMap((photo) => [photo.file_name, photo.optimized_file_name].filter(Boolean).map((key) => this.imageStorage.deleteImage(key, { deliveryType: photo.delivery_type }).catch(() => null))));
+      if (error?.code === 11000 && submissionKey) {
+        const concurrentSubmission = await replay();
+        if (concurrentSubmission) {
+          if (formData.background_ai === 'true' && concurrentSubmission.ai_assessment_status === 'queued') {
+            this.scheduleAssessment(concurrentSubmission.reference_no);
+          }
+          return concurrentSubmission;
+        }
+      }
+      await Promise.all([...stagedPhotoKeys].map((key) => this.imageStorage.deleteImage(key, { deliveryType: 'authenticated' }).catch(() => null)));
       throw error;
+    }
+
+    if (formData.background_ai === 'true' && this.scheduleAssessment(hairTest.reference_no)) {
+      return {
+        message: 'Hair test submitted successfully. AI analysis is in progress.',
+        reference_no: hairTest.reference_no,
+        test: publicAssessment(hairTest),
+        ai_assessment: null,
+        ai_assessment_status: 'queued',
+      };
     }
 
     let aiAssessment = null;
@@ -305,7 +431,7 @@ export class SubmitHairTestUseCase {
     return {
       message: 'Hair test submitted successfully.',
       reference_no: hairTest.reference_no,
-      test: hairTest,
+      test: publicAssessment(hairTest),
       ai_assessment: aiAssessment,
       ai_assessment_status: aiAssessmentStatus,
     };

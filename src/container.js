@@ -284,11 +284,18 @@ export const createContainer = (overrides = {}) => {
   const assessmentProductAvailabilityService = overrides.assessmentProductAvailabilityService ||
     new AssessmentProductAvailabilityService({ productRepository, featureFlagRepository });
 
+  const processQueuedAiAssessmentUseCase = new ProcessQueuedAiAssessmentUseCase({
+    hairTestRepository,
+    geminiAiService,
+    assessmentProductAvailabilityService,
+  });
+
   const submitHairTestUseCase = new SubmitHairTestUseCase({
     hairTestRepository,
     imageStorage,
     geminiAiService,
     assessmentProductAvailabilityService,
+    processQueuedAiAssessmentUseCase,
   });
 
   const getHairTestsUseCase = new GetHairTestsUseCase({
@@ -297,12 +304,6 @@ export const createContainer = (overrides = {}) => {
   });
 
   const generateHairTestAiAssessmentUseCase = new GenerateHairTestAiAssessmentUseCase({
-    hairTestRepository,
-    geminiAiService,
-    assessmentProductAvailabilityService,
-  });
-
-  const processQueuedAiAssessmentUseCase = new ProcessQueuedAiAssessmentUseCase({
     hairTestRepository,
     geminiAiService,
     assessmentProductAvailabilityService,

@@ -76,6 +76,12 @@ export class HairTestRepository extends IHairTestRepository {
       });
       return toHairTest(record);
     }
+    if (data.submission_key && store.hairTests.some((item) =>
+      item.userId === data.userId && item.submission_key === data.submission_key)) {
+      const error = new Error('Duplicate assessment submission key');
+      error.code = 11000;
+      throw error;
+    }
     const newId = store.hairTests.length > 0 ? Math.max(...store.hairTests.map((t) => t.id)) + 1 : 101;
     const year = new Date().getFullYear();
     const referenceNo = `HT-${year}-${String(newId).padStart(4, '0')}`;
@@ -91,6 +97,16 @@ export class HairTestRepository extends IHairTestRepository {
 
     store.hairTests.push(newRecord);
     return new HairTest(newRecord);
+  }
+
+  async findBySubmissionKey(userId, submissionKey) {
+    if (!submissionKey) return null;
+    const numericId = Number(userId);
+    if (!Number.isSafeInteger(numericId)) return null;
+    if (isDatabaseConnected()) {
+      return toHairTest(await HairTestModel.findOne({ userId: numericId, submission_key: submissionKey }).lean());
+    }
+    return toHairTest(store.hairTests.find((item) => item.userId === numericId && item.submission_key === submissionKey));
   }
 
   async findByUserId(userId, { includeArchived = false } = {}) {
@@ -196,7 +212,7 @@ export class HairTestRepository extends IHairTestRepository {
       const record = await HairTestModel.findOne(query);
       if (!record) throw new NotFoundError('Assessment not found for that reference number.');
 
-      const currentStatus = record.status || 'submitted';
+      const currentStatus = String(record.status || 'submitted').trim().toLowerCase();
       const allowedNext = VALID_TRANSITIONS[currentStatus] || [];
       if (currentStatus !== newStatus && !allowedNext.includes(newStatus)) {
         throw new BadRequestError(`Cannot transition assessment status from ${currentStatus} to ${newStatus}. Allowed transitions: ${allowedNext.join(', ') || 'none'}.`);
@@ -219,7 +235,7 @@ export class HairTestRepository extends IHairTestRepository {
     const test = store.hairTests.find((t) => String(t.reference_no) === String(trimmed) || (isNum && Number(t.id) === Number(trimmed)));
     if (!test) throw new NotFoundError('Assessment not found for that reference number.');
 
-    const currentStatus = test.status || 'submitted';
+    const currentStatus = String(test.status || 'submitted').trim().toLowerCase();
     const allowedNext = VALID_TRANSITIONS[currentStatus] || [];
     if (currentStatus !== newStatus && !allowedNext.includes(newStatus)) {
       throw new BadRequestError(`Cannot transition assessment status from ${currentStatus} to ${newStatus}. Allowed transitions: ${allowedNext.join(', ') || 'none'}.`);
@@ -352,13 +368,14 @@ export class HairTestRepository extends IHairTestRepository {
     return new HairTest(test);
   }
 
-  async claimNextAiAssessment(workerId, { staleAfterMs = 120000 } = {}) {
+  async claimNextAiAssessment(workerId, { staleAfterMs = 120000, referenceNo } = {}) {
     const now = new Date();
     const staleBefore = new Date(now.getTime() - staleAfterMs);
     if (isDatabaseConnected()) {
       const record = await HairTestModel.findOneAndUpdate(
         {
           ai_assessment: null,
+          ...(referenceNo ? { reference_no: referenceNo } : {}),
           status: { $ne: 'archived' },
           $or: [
             { ai_assessment_status: 'queued' },
@@ -373,6 +390,7 @@ export class HairTestRepository extends IHairTestRepository {
     }
 
     const record = store.hairTests.find((item) => {
+      if (referenceNo && item.reference_no !== referenceNo) return false;
       if (item.ai_assessment || item.status === 'archived') return false;
       if (!item.ai_assessment_status || item.ai_assessment_status === 'queued') return true;
       return item.ai_assessment_status === 'processing' && new Date(item.ai_assessment_locked_at || 0) < staleBefore;

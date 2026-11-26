@@ -84,7 +84,7 @@ describe('GeminiAiService Unit & Integration Tests', () => {
     assert.equal(result.confidence, 0.94);
   });
 
-  it('should verify cross-photo identity and reject when photos belong to different people', async () => {
+  it('does not infer identity or send the reference image', async () => {
     let capturedBody;
     const service = new GeminiAiService({
       apiKey: 'test-key',
@@ -120,12 +120,10 @@ describe('GeminiAiService Unit & Integration Tests', () => {
       label: 'Crown / Top',
     });
 
-    assert.equal(result.status, 'personMismatch');
+    assert.equal(result.status, 'verificationUnavailable');
     assert.equal(result.is_hair, false);
-    assert.equal(result.same_person, false);
-    assert.match(result.message, /different people/i);
-    assert.ok(capturedBody.contents[0].parts.some((p) => p.text?.includes('PERSON')));
-    assert.equal(capturedBody.contents[0].parts.filter((p) => p.inline_data).length, 2);
+    assert.equal(capturedBody.contents[0].parts.filter((p) => p.inline_data).length, 1);
+    assert.ok(!JSON.stringify(capturedBody).includes('cmVmZXJlbmNlLWltYWdl'));
   });
 
   it('should parse valid JSON returned from mocked Gemini API', async () => {

@@ -540,7 +540,20 @@ export class D1Model {
   async _findOneAndUpdate(filter, update, options = {}) {
     const database = getDatabaseBinding();
     for (let attempt = 0; attempt < 6; attempt += 1) {
-      const current = await this.findOne(filter).select(this.hidden.map((field) => `+${field}`).join(' ')).lean();
+      let current = null;
+      let rawRowKey = null;
+      let rawPayload = null;
+      if (database) {
+        const where = filterSql(filter);
+        const row = await database.prepare(`SELECT row_key, payload FROM "${this.table}" WHERE ${where.sql} LIMIT 1`).bind(...where.args).first();
+        if (row) {
+          rawRowKey = String(row.row_key);
+          rawPayload = String(row.payload);
+          current = JSON.parse(rawPayload);
+        }
+      } else {
+        current = await this.findOne(filter).select(this.hidden.map((field) => `+${field}`).join(' ')).lean();
+      }
       if (!current) {
         if (!options.upsert) return null;
         const seed = Object.fromEntries(Object.entries(filter || {}).filter(([key, value]) => !key.startsWith('$') && (!value || typeof value !== 'object' || value instanceof Date)));
@@ -555,9 +568,8 @@ export class D1Model {
         }
       }
       const next = updateDocument(current, update, false, options.arrayFilters || []);
-      const rowKey = String(current._id);
       if (database) {
-        const result = await database.prepare(`UPDATE "${this.table}" SET payload = ?, updated_at = CURRENT_TIMESTAMP WHERE row_key = ? AND payload = ?`).bind(JSON.stringify(next), rowKey, JSON.stringify(current)).run();
+        const result = await database.prepare(`UPDATE "${this.table}" SET payload = ?, updated_at = CURRENT_TIMESTAMP WHERE row_key = ? AND payload = ?`).bind(JSON.stringify(next), rawRowKey, rawPayload).run();
         if (!result.meta?.changes) continue;
       } else {
         const rows = memoryTables.get(this.table);

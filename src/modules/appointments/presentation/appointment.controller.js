@@ -1060,10 +1060,12 @@ export class AppointmentController {
 
   serialize = (appointment, patient = null) => {
     const timeZone = appointment.timezone || 'Asia/Kolkata';
-    const parts = localParts(new Date(appointment.starts_at), timeZone);
+    const startDate = appointment.starts_at ? new Date(appointment.starts_at) : null;
+    const hasValidStart = Boolean(startDate && !Number.isNaN(startDate.getTime()));
+    const parts = hasValidStart ? localParts(startDate, timeZone) : { hour: '0' };
     const hour = Number(parts.hour);
-    const time = new Intl.DateTimeFormat('en-IN', { timeZone, hour: '2-digit', minute: '2-digit' }).format(new Date(appointment.starts_at));
-    const date = new Intl.DateTimeFormat('en-IN', { timeZone, dateStyle: 'medium' }).format(new Date(appointment.starts_at));
+    const time = hasValidStart ? new Intl.DateTimeFormat('en-IN', { timeZone, hour: '2-digit', minute: '2-digit' }).format(startDate) : '--:--';
+    const date = hasValidStart ? new Intl.DateTimeFormat('en-IN', { timeZone, dateStyle: 'medium' }).format(startDate) : 'Date pending';
     const patientCode = patient?.patient_code || appointment.patient_code || (appointment.userId ? `DHP${String(appointment.userId).padStart(4, '0')}` : '');
     return {
       ...appointment,

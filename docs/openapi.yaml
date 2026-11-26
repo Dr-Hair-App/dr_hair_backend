@@ -599,6 +599,18 @@ paths:
                 - $ref: '#/components/schemas/HairTestFields'
                 - type: object
                   properties:
+                    submission_key:
+                      type: string
+                      pattern: '^[a-f0-9]{64}$'
+                      description: Optional patient-scoped retry key. Repeat an identical submission with the same key to recover its original assessment; changed data with the same key returns 409.
+                    background_ai:
+                      type: string
+                      enum: ['true']
+                      description: Opt in to return a saved assessment with queued AI status while analysis runs in the background where supported. Poll the assessment status endpoint for the result. Older clients may omit this field.
+                    photo_selection_order:
+                      type: string
+                      description: Optional JSON array of distinct photo field names in selection order, oldest first. The last supplied photo is the most recently selected. Omitted for older clients.
+                      example: '["photo_front","photo_back","photo_top"]'
                     photo_front: { type: string, format: binary, description: Original front image, maximum 25 MiB }
                     photo_front_optimized: { type: string, format: binary, description: Optional optimized front image for AI processing, maximum 25 MiB }
                     photo_top: { type: string, format: binary, description: Original crown image, maximum 25 MiB }
@@ -627,6 +639,24 @@ paths:
                       data: { $ref: '#/components/schemas/HairTestSubmissionData' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: The submission key belongs to an earlier assessment with different answers or photos. For this authenticated patient, error.details includes the existing reference and reason so the client can offer recovery without submitting a duplicate.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+                  - type: object
+                    properties:
+                      error:
+                        type: object
+                        properties:
+                          code: { type: string, example: CONFLICT }
+                          details:
+                            type: object
+                            properties:
+                              reason: { type: string, example: ASSESSMENT_ALREADY_SUBMITTED }
+                              reference_no: { type: string, example: HT-2026-0101 }
         '413': { description: Complete multipart request exceeds 90 MiB }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/ServerError' }
@@ -635,7 +665,7 @@ paths:
     post:
       tags: [Hair tests]
       summary: Check whether an uploaded photo shows a clear scalp
-      description: Optionally authenticated photo verification; send a registered patient's bearer token when available so the daily quota is applied per patient, otherwise it is applied per client IP. When reference_image is supplied, the service also compares the target photo with that reference for same-person consistency. Both images are sent to the configured vision provider. The caller must supply the same patient's own baseline photo; the API does not verify image provenance. Multipart requests accept one image and at most one reference_image (two files total), with a 25 MiB per-file limit and a 90 MiB complete-request ceiling. The result is a visual quality signal, not proof of identity or a diagnosis.
+      description: Optionally authenticated photo verification. The target image is sent to the vision provider for a scalp and image-clarity check. A legacy reference_image is accepted but is not used to infer identity or sent to the provider. Multipart requests accept one image and at most one reference_image (two files total), with a 25 MiB per-file limit and a 90 MiB complete-request ceiling. The result does not establish identity or provide a diagnosis.
       x-legacy-path: /HairTest/detect_scalp_image
       security: [{ bearerAuth: [] }, {}]
       requestBody:
@@ -651,7 +681,7 @@ paths:
                 reference_image: { type: string, format: binary, description: Optional baseline scalp photo supplied by the caller; maximum 25 MiB. The API does not verify its provenance. }
       responses:
         '200':
-          description: Scalp verification result. A different-person verdict is a photo-quality signal and should be confirmed by the patient or clinic if disputed.
+          description: Scalp verification result. Identity is not determined.
           content:
             application/json:
               schema:
@@ -667,7 +697,7 @@ paths:
                           confidence: { type: number, minimum: 0, maximum: 1 }
                           detected_angle: { type: string }
                           follicle_visibility: { type: string }
-                          same_person: { type: boolean }
+                          same_person: { type: boolean, nullable: true, description: Always null because identity is not assessed. }
                           message: { type: string }
                           details: { type: string }
                           source: { type: string }

@@ -116,6 +116,33 @@ describe('Flutter hair assessment fields', () => {
     assert.equal(saved.scalp_photos.length, 5);
   });
 
+  it('persists the patient selection order and rejects invalid ordering', async () => {
+    let saved;
+    const deleted = [];
+    const useCase = new SubmitHairTestUseCase({
+      hairTestRepository: { create: async (data) => { saved = data; return { ...data, reference_no: 'HT-ORDER' }; } },
+      imageStorage: {
+        async getAuthenticatedImage(publicId) {
+          return { public_id: publicId, type: 'authenticated', secure_url: `https://example.test/${publicId}`, format: 'jpg', bytes: 100 };
+        },
+        async deleteImage(key) { deleted.push(key); },
+      },
+    });
+    const files = Object.fromEntries(['front', 'top', 'back'].map((angle) => [
+      `photo_${angle}`, [{ publicId: `drhair/images/user-42/assessment/${angle}.jpg` }],
+    ]));
+    await useCase.execute({ userId: '42', formData: {
+      full_name: 'Test Patient',
+      photo_selection_order: JSON.stringify(['photo_back', 'photo_front', 'photo_top']),
+    }, files });
+    assert.deepEqual(saved.scalp_photos.map((photo) => photo.angle), ['back', 'front', 'top']);
+
+    await assert.rejects(useCase.execute({ userId: '42', formData: {
+      full_name: 'Test Patient', photo_selection_order: '["photo_front","photo_front"]',
+    }, files }), BadRequestError);
+    assert.equal(deleted.length, 3);
+  });
+
   it('rejects a streamed R2 image owned by a different patient', async () => {
     const useCase = new SubmitHairTestUseCase({
       hairTestRepository: { create: async (data) => data },

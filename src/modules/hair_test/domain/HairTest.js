@@ -5,6 +5,8 @@ export class HairTest {
   constructor({
     id,
     userId,
+    submission_key = null,
+    request_fingerprint = null,
     reference_no,
     status = 'submitted',
     status_history = [],
@@ -63,6 +65,10 @@ export class HairTest {
   }) {
     this.id = id;
     this.userId = userId;
+    Object.defineProperties(this, {
+      submission_key: { value: submission_key, enumerable: false },
+      request_fingerprint: { value: request_fingerprint, enumerable: false },
+    });
     this.reference_no = reference_no;
     this.status = status;
     this.status_history = Array.isArray(status_history) ? status_history : [];
