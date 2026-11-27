@@ -22,10 +22,10 @@ const resolveLimit = async (kv, feature, userHash, fallback) => {
 
   let limit = fallback;
   try {
-    const userPolicy = userHash ? await kv.get(`usage-policy:v1:${feature}:user:${userHash}`, { type: 'json' }) : null;
-    const defaultPolicy = userPolicy == null
-      ? await kv.get(`usage-policy:v1:${feature}:default`, { type: 'json' })
-      : null;
+    const [userPolicy, defaultPolicy] = await Promise.all([
+      userHash ? kv.get(`usage-policy:v1:${feature}:user:${userHash}`, { type: 'json' }) : Promise.resolve(null),
+      kv.get(`usage-policy:v1:${feature}:default`, { type: 'json' }),
+    ]);
     limit = parseLimit(userPolicy ?? defaultPolicy, fallback);
   } catch {
     // A policy KV outage falls back to the conservative code default.

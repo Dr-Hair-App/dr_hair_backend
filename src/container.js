@@ -35,6 +35,7 @@ import { FeatureFlagRepository } from './modules/admin/infrastructure/FeatureFla
 import { AppReleasePolicyRepository } from './modules/admin/infrastructure/AppReleasePolicyRepository.js';
 import { SupportInquiryRepository } from './modules/support/infrastructure/SupportInquiryRepository.js';
 import { GeminiAiService } from './modules/ai/infrastructure/GeminiAiService.js';
+import { sendPushNotification } from './modules/notifications/infrastructure/FirebaseAdminMessaging.js';
 
 // Use Cases
 import { SendOtpUseCase } from './modules/auth/application/SendOtpUseCase.js';
@@ -288,6 +289,9 @@ export const createContainer = (overrides = {}) => {
     hairTestRepository,
     geminiAiService,
     assessmentProductAvailabilityService,
+    deviceTokenRepository,
+    notificationRepository,
+    sendPushNotification,
   });
 
   const submitHairTestUseCase = new SubmitHairTestUseCase({

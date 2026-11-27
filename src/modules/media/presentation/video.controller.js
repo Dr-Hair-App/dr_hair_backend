@@ -1,5 +1,6 @@
 import { BadRequestError, NotFoundError } from '../../../shared/errors/index.js';
 import { sendSuccess } from '../../../shared/utils/response.js';
+import { bumpCatalogCacheVersion } from '../../../shared/cache/catalog-cache-version.js';
 
 export class VideoController {
   constructor({ videoRepository, listCategoriesUseCase }) {
@@ -60,6 +61,7 @@ export class VideoController {
         status: safeStatus,
         created_by: Number(req.user?.id) || null,
       });
+      await bumpCatalogCacheVersion();
       return sendSuccess(res, {
         message: safeStatus === 'published' ? 'YouTube video published successfully.' : 'YouTube video saved as a draft.',
         data: saved,
@@ -135,6 +137,7 @@ export class VideoController {
       }
       const updated = await this.videoRepository.updateVideo(publicId.trim(), updates);
       if (!updated) throw new NotFoundError('Video not found.');
+      await bumpCatalogCacheVersion();
       return sendSuccess(res, {
         message: 'Video updated successfully.',
         data: updated,
@@ -152,6 +155,7 @@ export class VideoController {
       }
       const deleted = await this.videoRepository.delete(publicId.trim());
       if (!deleted) throw new NotFoundError('Video not found.');
+      await bumpCatalogCacheVersion();
       return sendSuccess(res, { message: 'Video deleted successfully.' });
     } catch (error) {
       next(error);
@@ -181,6 +185,7 @@ export class VideoController {
       }
       const video = await this.videoRepository.updateStatus(public_id.trim(), status);
       if (!video) throw new NotFoundError('Video not found.');
+      await bumpCatalogCacheVersion();
       return sendSuccess(res, { message: 'Video status updated.', data: video });
     } catch (error) {
       next(error);

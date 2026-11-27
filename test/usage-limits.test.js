@@ -19,13 +19,13 @@ const bindings = (extra = {}) => ({
 });
 
 test('daily quota reads a KV policy and uses a hashed per-user DO key', async () => {
-  let observedPolicyKey;
+  const observedPolicyKeys = [];
   let observedObjectName;
   let observedLimit;
   setWorkerBindings(bindings({
     PUBLIC_CONFIG_KV: {
       async get(key) {
-        observedPolicyKey = key;
+        observedPolicyKeys.push(key);
         return key.includes(':user:') ? { daily_limit: 3 } : null;
       },
     },
@@ -44,7 +44,9 @@ test('daily quota reads a KV policy and uses a hashed per-user DO key', async ()
     await middleware(req, res, () => { nextCalled = true; });
 
     assert.equal(nextCalled, true);
-    assert.equal(observedPolicyKey, 'usage-policy:v1:unit_policy:user:' + observedObjectName.split(':').at(-1));
+    const expectedHash = observedObjectName.split(':').at(-1);
+    assert.ok(observedPolicyKeys.includes(`usage-policy:v1:unit_policy:user:${expectedHash}`));
+    assert.ok(observedPolicyKeys.includes('usage-policy:v1:unit_policy:default'));
     assert.equal(observedLimit, 3);
     assert.match(observedObjectName, /^unit_policy:[a-f0-9]{32}$/);
     assert.equal(res.headers['x-daily-remaining'], '2');

@@ -92,6 +92,56 @@ export const createCacheKey = (request: Request): Request => {
   });
 };
 
+const CATALOG_CACHE_VERSION_KEY = "catalog_cache_version";
+const CATALOG_CACHE_VERSION_TTL_MS = 10_000;
+
+let cachedCatalogVersion: string | null = null;
+let cachedCatalogVersionExpiresAt = 0;
+let inFlightCatalogVersionRead: Promise<string | null> | null = null;
+
+export const getCatalogCacheVersion = async (requestEnv: typeof env): Promise<string | null> => {
+  const now = Date.now();
+  if (now < cachedCatalogVersionExpiresAt) {
+    return cachedCatalogVersion;
+  }
+
+  const kv = requestEnv?.PUBLIC_CONFIG_KV;
+  if (!kv || typeof kv.get !== "function") {
+    return cachedCatalogVersion;
+  }
+
+  if (!inFlightCatalogVersionRead) {
+    inFlightCatalogVersionRead = kv
+      .get(CATALOG_CACHE_VERSION_KEY)
+      .then((value) => {
+        const normalized = typeof value === "string" && value.trim() ? value.trim() : null;
+        cachedCatalogVersion = normalized;
+        cachedCatalogVersionExpiresAt = Date.now() + CATALOG_CACHE_VERSION_TTL_MS;
+        return normalized;
+      })
+      .catch(() => {
+        cachedCatalogVersionExpiresAt = Date.now() + CATALOG_CACHE_VERSION_TTL_MS;
+        return cachedCatalogVersion;
+      })
+      .finally(() => {
+        inFlightCatalogVersionRead = null;
+      });
+  }
+
+  return inFlightCatalogVersionRead;
+};
+
+export const createVersionedCacheKey = (request: Request, cacheVersion?: string | null): Request => {
+  const baseKey = createCacheKey(request);
+  if (!cacheVersion) return baseKey;
+  const url = new URL(baseKey.url);
+  url.searchParams.set("_cv", cacheVersion);
+  return new Request(url.toString(), {
+    method: baseKey.method,
+    headers: baseKey.headers,
+  });
+};
+
 export default {
   ...expressHandler,
 
@@ -115,7 +165,8 @@ export default {
       const cache = typeof caches !== "undefined" ? caches.default : null;
       if (!cache) return respond();
 
-      const cacheKey = createCacheKey(request);
+      const cacheVersion = await getCatalogCacheVersion(requestEnv);
+      const cacheKey = createVersionedCacheKey(request, cacheVersion);
       const cached = await cache.match(cacheKey);
       if (cached) {
         const clientEtag = request.headers.get("if-none-match");

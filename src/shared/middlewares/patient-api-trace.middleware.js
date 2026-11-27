@@ -1,6 +1,7 @@
 import { logger as defaultLogger } from '../utils/logger.js';
 import { isServerRequestId } from './requestId.middleware.js';
 import { getExecutionContext } from '../runtime/execution-context.js';
+import { shouldPersistTrafficTrace } from '../../modules/admin/infrastructure/AdminApiTrafficRepository.js';
 
 const adminPathPrefixes = ['/api/v1/admin', '/api/v1/admin-auth', '/admin', '/Admin'];
 
@@ -12,7 +13,13 @@ const isAdminApiPath = (pathname) => adminPathPrefixes.some((prefix) =>
  * Captures status code, route template, method, duration, and server request ID.
  * Strictly omits query parameters, request bodies, patient identifiers, and credentials.
  */
-export function patientApiTraceMiddleware({ logger = defaultLogger, now = () => performance.now(), record = null } = {}) {
+export function patientApiTraceMiddleware({
+  logger = defaultLogger,
+  now = () => performance.now(),
+  record = null,
+  sampleRate = 0.1,
+  random = Math.random,
+} = {}) {
   return (req, res, next) => {
     const startedAt = now();
     const pathname = String(req.originalUrl || req.path || '').split('?', 1)[0];
@@ -35,7 +42,10 @@ export function patientApiTraceMiddleware({ logger = defaultLogger, now = () => 
 
       logger.info('patient.api.request', trace);
 
-      if (record) {
+      if (record && shouldPersistTrafficTrace(
+        { method: trace.method, status: trace.status, durationMs: trace.duration_ms },
+        { sampleRate, random },
+      )) {
         const persistence = Promise.resolve().then(() => record({
           requestId: trace.request_id,
           surface: trace.surface,

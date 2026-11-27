@@ -1,6 +1,7 @@
 import { sendSuccess } from '../../../shared/utils/response.js';
 import { BadRequestError } from '../../../shared/errors/index.js';
 import { cleanupUploadedProductFiles } from '../application/product-media-input.js';
+import { bumpCatalogCacheVersion } from '../../../shared/cache/catalog-cache-version.js';
 
 function getProductPayload(req) {
   if (!req.is('multipart/form-data')) return req.body || {};
@@ -135,6 +136,7 @@ export class ProductController {
       const payload = getProductPayload(req);
       delegatedToUseCase = true;
       const product = await this.createProductUseCase.execute(payload, { uploadedFiles: files, replaceMedia: multipart });
+      await bumpCatalogCacheVersion();
       return sendSuccess(res, {
         message: 'Product created successfully.',
         data: product,
@@ -157,6 +159,7 @@ export class ProductController {
         { id, ...payload },
         { uploadedFiles: files, replaceMedia: req.is('multipart/form-data') },
       );
+      await bumpCatalogCacheVersion();
       return sendSuccess(res, {
         message: 'Product updated successfully.',
         data: product,
@@ -171,6 +174,7 @@ export class ProductController {
     try {
       const { id } = req.params;
       await this.deleteProductUseCase.execute({ id });
+      await bumpCatalogCacheVersion();
       return sendSuccess(res, {
         message: 'Product deleted successfully.',
       });

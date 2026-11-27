@@ -2,6 +2,19 @@ import { FeatureFlagModel } from '../../../shared/database/models.js';
 import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { store } from '../../../shared/database/store.js';
 
+const EVALUATE_CACHE_TTL_MS = 30_000;
+const EVALUATE_CACHE_MAX_ENTRIES = 500;
+const evaluateCache = new Map();
+
+const invalidateEvaluateCache = (key) => {
+  const prefix = `${String(key || '').trim()}:`;
+  for (const cacheKey of evaluateCache.keys()) {
+    if (cacheKey.startsWith(prefix)) {
+      evaluateCache.delete(cacheKey);
+    }
+  }
+};
+
 export class FeatureFlagRepository {
   async list({ platform, enabled } = {}) {
     if (isDatabaseConnected()) {
@@ -38,6 +51,7 @@ export class FeatureFlagRepository {
 
   async setFlag(key, updates = {}) {
     const cleanKey = String(key).trim();
+    invalidateEvaluateCache(cleanKey);
     const now = new Date();
 
     if (isDatabaseConnected()) {
@@ -94,19 +108,42 @@ export class FeatureFlagRepository {
   }
 
   async evaluate(key, { platform = 'all' } = {}) {
+    const cleanKey = String(key || '').trim();
+    const cacheKey = `${cleanKey}:${platform}`;
+    const now = Date.now();
+    const cached = evaluateCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return { ...cached.value };
+    }
+
     const flag = await this.findByKey(key);
-    if (!flag) return { key, enabled: false, reason: 'NOT_FOUND' };
-    if (!flag.enabled) return { key, enabled: false, reason: 'DISABLED' };
+    let result;
+    let ttlMs = EVALUATE_CACHE_TTL_MS;
 
-    if (flag.platform !== 'all' && platform !== 'all' && flag.platform !== platform) {
-      return { key, enabled: false, reason: 'PLATFORM_MISMATCH' };
+    if (!flag) {
+      result = { key, enabled: false, reason: 'NOT_FOUND' };
+    } else if (!flag.enabled) {
+      result = { key, enabled: false, reason: 'DISABLED' };
+    } else if (flag.platform !== 'all' && platform !== 'all' && flag.platform !== platform) {
+      result = { key, enabled: false, reason: 'PLATFORM_MISMATCH' };
+    } else if (flag.effectiveDate && new Date(flag.effectiveDate).getTime() > now) {
+      result = { key, enabled: false, reason: 'EFFECTIVE_DATE_FUTURE' };
+      ttlMs = Math.min(EVALUATE_CACHE_TTL_MS, Math.max(1, new Date(flag.effectiveDate).getTime() - now));
+    } else {
+      result = { key, enabled: true, rolloutPercentage: flag.rolloutPercentage };
     }
 
-    if (flag.effectiveDate && new Date(flag.effectiveDate).getTime() > Date.now()) {
-      return { key, enabled: false, reason: 'EFFECTIVE_DATE_FUTURE' };
+    if (evaluateCache.size >= EVALUATE_CACHE_MAX_ENTRIES) {
+      for (const [entryKey, entry] of evaluateCache) {
+        if (entry.expiresAt <= now) evaluateCache.delete(entryKey);
+        if (evaluateCache.size < EVALUATE_CACHE_MAX_ENTRIES) break;
+      }
+      if (evaluateCache.size >= EVALUATE_CACHE_MAX_ENTRIES) {
+        evaluateCache.delete(evaluateCache.keys().next().value);
+      }
     }
-
-    return { key, enabled: true, rolloutPercentage: flag.rolloutPercentage };
+    evaluateCache.set(cacheKey, { value: result, expiresAt: now + ttlMs });
+    return { ...result };
   }
 }
 

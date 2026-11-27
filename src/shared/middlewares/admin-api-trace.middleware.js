@@ -1,6 +1,7 @@
 import { logger as defaultLogger } from '../utils/logger.js';
 import { isServerRequestId } from './requestId.middleware.js';
 import { getExecutionContext } from '../runtime/execution-context.js';
+import { shouldPersistTrafficTrace } from '../../modules/admin/infrastructure/AdminApiTrafficRepository.js';
 
 // The legacy /admin and /Admin mounts also host patient-facing user routes.
 // Only count them after authentication proves the caller has an Admin role.
@@ -22,7 +23,13 @@ const getSurface = (pathname) => {
  * lets browser HARs correlate with Worker logs; routes use Express templates so
  * patient IDs, query values, request bodies, and account identifiers stay out.
  */
-export function adminApiTraceMiddleware({ logger = defaultLogger, now = () => performance.now(), record = null } = {}) {
+export function adminApiTraceMiddleware({
+  logger = defaultLogger,
+  now = () => performance.now(),
+  record = null,
+  sampleRate = 1,
+  random = Math.random,
+} = {}) {
   return (req, res, next) => {
     const startedAt = now();
     const pathname = String(req.originalUrl || req.path || '').split('?', 1)[0];
@@ -42,7 +49,10 @@ export function adminApiTraceMiddleware({ logger = defaultLogger, now = () => pe
         cache_control: String(res.getHeader?.('cache-control') || '').slice(0, 80) || undefined,
       };
       logger.info('admin.api.request', trace);
-      if (record) {
+      if (record && shouldPersistTrafficTrace(
+        { method: trace.method, status: trace.status, durationMs: trace.duration_ms },
+        { sampleRate, random },
+      )) {
         const persistence = Promise.resolve().then(() => record({
           requestId: trace.request_id,
           surface: trace.surface,

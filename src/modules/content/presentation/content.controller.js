@@ -2,6 +2,7 @@ import { BadRequestError, ForbiddenError, NotFoundError } from '../../../shared/
 import { sendSuccess } from '../../../shared/utils/response.js';
 import { LEGAL_POLICIES } from '../infrastructure/legalPoliciesData.js';
 import { hasPermission } from '../../../shared/utils/admin-permissions.js';
+import { bumpCatalogCacheVersion } from '../../../shared/cache/catalog-cache-version.js';
 
 export class ContentController {
   constructor({ contentRepository, auditEventRepository = null }) {
@@ -159,6 +160,7 @@ export class ContentController {
         }).catch(() => null);
       }
 
+      await bumpCatalogCacheVersion();
       return sendSuccess(res, { message: 'Content item created.', data: item, statusCode: 201 });
     } catch (error) {
       next(error);
@@ -198,6 +200,7 @@ export class ContentController {
         }).catch(() => null);
       }
 
+      await bumpCatalogCacheVersion();
       return sendSuccess(res, { message: 'Content status updated.', data: updated });
     } catch (error) {
       next(error);
@@ -226,6 +229,7 @@ export class ContentController {
         }).catch(() => null);
       }
 
+      await bumpCatalogCacheVersion();
       return sendSuccess(res, { message: 'Content item updated.', data: updated });
     } catch (error) {
       next(error);

@@ -1,6 +1,7 @@
 import { BadRequestError, NotFoundError } from '../../../shared/errors/index.js';
 import { sendSuccess } from '../../../shared/utils/response.js';
 import { CategoryRepository } from '../infrastructure/CategoryRepository.js';
+import { bumpCatalogCacheVersion } from '../../../shared/cache/catalog-cache-version.js';
 
 export class CategoryController {
   constructor({ listCategoriesUseCase, categoryRepository } = {}) {
@@ -117,6 +118,7 @@ export class CategoryController {
         status: status === 'inactive' ? 'inactive' : 'active',
         display_order: order,
       });
+      await bumpCatalogCacheVersion();
 
       return sendSuccess(res, created, 'Category created successfully', 201);
     } catch (error) {
@@ -169,6 +171,7 @@ export class CategoryController {
         throw new BadRequestError('Category display_order must be an integer between 0 and 100000.');
       }
       const updated = await this.categoryRepository.update(id, input);
+      await bumpCatalogCacheVersion();
       return sendSuccess(res, updated, 'Category updated successfully');
     } catch (error) {
       next(error);
@@ -187,6 +190,7 @@ export class CategoryController {
       }
 
       const success = await this.categoryRepository.delete(id);
+      await bumpCatalogCacheVersion();
       return sendSuccess(res, { success: Boolean(success), id }, 'Category deleted successfully');
     } catch (error) {
       next(error);

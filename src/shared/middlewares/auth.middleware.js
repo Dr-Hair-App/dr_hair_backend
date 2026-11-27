@@ -28,18 +28,23 @@ export const authenticateToken = async (req, res, next) => {
     return next(new UnauthorizedError('Invalid or expired authentication token', null, 'AUTH_REQUIRED'));
   }
 
+  const isAdminLookup = decoded.role === 'admin' && (decoded.email || decoded.login);
+  const isUserLookup = decoded.role === 'user' && decoded.id;
+  const adminLogin = isAdminLookup ? (decoded.email || decoded.login) : null;
+
+  const [session, account, user] = await Promise.all([
+    decoded.sessionId ? sessionRepository.findActive(decoded.sessionId) : Promise.resolve(true),
+    isAdminLookup ? adminAccountRepository.findByLogin(adminLogin) : Promise.resolve(null),
+    isUserLookup ? userRepository.findById(decoded.id) : Promise.resolve(null),
+  ]);
+
   // Check if session has been explicitly revoked
-  if (decoded.sessionId) {
-    const session = await sessionRepository.findActive(decoded.sessionId);
-    if (!session) {
-      return next(new UnauthorizedError('Session has been revoked or expired.', null, 'AUTH_REQUIRED'));
-    }
+  if (decoded.sessionId && !session) {
+    return next(new UnauthorizedError('Session has been revoked or expired.', null, 'AUTH_REQUIRED'));
   }
 
   // Check if admin account is active / not suspended
-  if (decoded.role === 'admin' && (decoded.email || decoded.login)) {
-    const login = decoded.email || decoded.login;
-    const account = await adminAccountRepository.findByLogin(login);
+  if (isAdminLookup) {
     if (!account || !account.active) {
       return next(new UnauthorizedError('Admin account has been suspended or deactivated.', null, 'AUTH_REQUIRED'));
     }
@@ -47,8 +52,7 @@ export const authenticateToken = async (req, res, next) => {
   }
 
   // Check if patient user account is active / not deleted / not blocked
-  if (decoded.role === 'user' && decoded.id) {
-    const user = await userRepository.findById(decoded.id);
+  if (isUserLookup) {
     if (!user) {
       return next(new UnauthorizedError('Your account has been deleted by clinic administration.', null, 'ACCOUNT_DELETED'));
     }

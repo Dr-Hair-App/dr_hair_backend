@@ -1,8 +1,61 @@
+import { createHash } from 'node:crypto';
 import { AppError, BadRequestError, NotFoundError } from '../../../shared/errors/index.js';
 import { sendSuccess } from '../../../shared/utils/response.js';
 import { createClinicalReportDownloadUrl } from '../../admin/infrastructure/ClinicalReportStorage.js';
 import { progressCheckInResponse } from '../../../shared/utils/progress-checkin-response.js';
 import { normalizePatientDietSuggestions } from '../../treatment/domain/patient-diet-suggestion.js';
+
+const toTimestamp = (value) => {
+  if (!value) return '';
+  if (value instanceof Date) return value.toISOString();
+  return String(value);
+};
+
+const computeClinicalRecordEtag = ({ userId, assessments, carePlans, reports, appointments }) => {
+  const fingerprint = {
+    userId: String(userId ?? ''),
+    assessments: (assessments || []).map((a) => [
+      a.id ?? '',
+      a.reference_no ?? '',
+      a.status ?? '',
+      toTimestamp(a.updated_at),
+      toTimestamp(a.reviewed_at),
+      toTimestamp(a.created_at),
+      Array.isArray(a.scalp_photos) ? a.scalp_photos.filter((p) => !p.deleted_at).length : 0,
+    ]),
+    carePlans: (carePlans || []).map((p) => [
+      p.id ?? '',
+      p.reference_no ?? '',
+      toTimestamp(p.updated_at),
+      toTimestamp(p.created_at),
+      toTimestamp(p.date),
+    ]),
+    reports: (reports || []).map((r) => [
+      r.id ?? '',
+      toTimestamp(r.updated_at),
+      toTimestamp(r.created_at),
+    ]),
+    appointments: (appointments || []).map((apt) => [
+      apt.id ?? '',
+      apt.status ?? '',
+      toTimestamp(apt.updated_at),
+      toTimestamp(apt.created_at),
+    ]),
+  };
+  const digest = createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex').slice(0, 32);
+  return `"clinical-${digest}"`;
+};
+
+const etagMatches = (clientHeader, serverEtag) => {
+  if (!clientHeader || !serverEtag) return false;
+  const target = serverEtag.replace(/^W\//, '').trim();
+  return String(clientHeader)
+    .split(',')
+    .some((tag) => {
+      const clean = tag.trim();
+      return clean === '*' || clean === serverEtag || clean.replace(/^W\//, '') === target;
+    });
+};
 
 const publicReport = (report) => ({
   id: report.id,
@@ -54,12 +107,28 @@ export class PatientClinicalController {
             : [],
         this.appointmentRepository?.listByPatient ? this.appointmentRepository.listByPatient(userId) : [],
       ]);
+      const submittedAssessments = (assessments || []).filter((assessment) => assessment.status !== 'draft');
       const sharedReports = (reports || []).filter((r) => r.visibility === 'Shared' && r.scanning_status === 'clean' && !r.deleted_at);
+      const etag = computeClinicalRecordEtag({
+        userId,
+        assessments: submittedAssessments,
+        carePlans,
+        reports: sharedReports,
+        appointments,
+      });
+      if (typeof res.setHeader === 'function') {
+        res.setHeader('ETag', etag);
+        res.setHeader('Cache-Control', 'private, no-cache');
+      }
+      const clientEtag = req.headers?.['if-none-match'] || req.headers?.['If-None-Match'];
+      if (etagMatches(clientEtag, etag)) {
+        return typeof res.end === 'function' ? res.status(304).end() : res.status(304).json(null);
+      }
+
       return sendSuccess(res, {
         data: {
           assessments: await Promise.all(
-            assessments
-              .filter((assessment) => assessment.status !== 'draft')
+            submittedAssessments
               .map(async (assessment) => ({
                 ...assessment,
                 status: assessment.status || 'submitted',
@@ -188,7 +257,7 @@ export class PatientClinicalController {
   getHomeSummary = async (req, res, next) => {
     try {
       const userId = req.user.id;
-      const [assessments, draft, carePlans, reports, appointments] = await Promise.all([
+      const [assessments, draft, carePlans, reports, appointments, shopFlag, aptFlag] = await Promise.all([
         this.hairTestRepository?.findByUserId ? this.hairTestRepository.findByUserId(userId) : [],
         this.hairTestRepository?.getDraft ? this.hairTestRepository.getDraft(userId) : null,
         this.treatmentRepository?.findByUserId ? this.treatmentRepository.findByUserId(userId) : [],
@@ -198,22 +267,16 @@ export class PatientClinicalController {
             ? this.clinicalReportRepository.listByUserId(userId)
             : [],
         this.appointmentRepository?.listByPatient ? this.appointmentRepository.listByPatient(userId) : [],
+        this.featureFlagRepository?.evaluate
+          ? Promise.resolve(this.featureFlagRepository.evaluate('shop', { platform: 'patient' })).catch(() => null)
+          : null,
+        this.featureFlagRepository?.evaluate
+          ? Promise.resolve(this.featureFlagRepository.evaluate('clinic_appointment', { platform: 'patient' })).catch(() => null)
+          : null,
       ]);
 
-      let shopEnabled = true;
-      let clinicAppointmentEnabled = true;
-      if (this.featureFlagRepository) {
-        try {
-          const shopFlag = await this.featureFlagRepository.evaluate('shop', { platform: 'patient' });
-          shopEnabled = shopFlag?.enabled !== false;
-        } catch {}
-        try {
-          const aptFlag = await this.featureFlagRepository.evaluate('clinic_appointment', { platform: 'patient' });
-          if (aptFlag && aptFlag.enabled === false) {
-            clinicAppointmentEnabled = false;
-          }
-        } catch {}
-      }
+      const shopEnabled = shopFlag ? shopFlag.enabled !== false : true;
+      const clinicAppointmentEnabled = aptFlag && aptFlag.enabled === false ? false : true;
 
       const submittedAssessments = (assessments || [])
         .filter((a) => a.status !== 'draft')

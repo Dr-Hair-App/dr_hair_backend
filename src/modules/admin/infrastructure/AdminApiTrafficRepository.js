@@ -23,6 +23,32 @@ const safeSurfaces = new Set([
   'patient-api',
 ]);
 
+const MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/**
+ * Decide whether a traced request should be persisted to D1 `admin_api_traffic`.
+ * Errors, slow requests (>= 250ms), and mutations are always persisted; fast 2xx
+ * GETs are sampled at `sampleRate` (default 10%) to reduce D1 write contention.
+ */
+export function shouldPersistTrafficTrace(
+  { method, status, durationMs } = {},
+  { sampleRate = 0.1, random = Math.random } = {},
+) {
+  const normalizedMethod = String(method || '').toUpperCase();
+  const normalizedStatus = Number(status) || 0;
+  const normalizedDuration = Number(durationMs) || 0;
+
+  if (normalizedStatus >= 400) return true;
+  if (normalizedDuration >= 250) return true;
+  if (MUTATION_METHODS.has(normalizedMethod)) return true;
+  if (sampleRate >= 1) return true;
+  if (sampleRate <= 0) return false;
+  if (normalizedMethod === 'GET' && normalizedStatus >= 200 && normalizedStatus < 300) {
+    return random() < sampleRate;
+  }
+  return false;
+}
+
 export class AdminApiTrafficRepository {
   constructor({ model = AdminApiTrafficModel, now = () => new Date() } = {}) {
     this.model = model;

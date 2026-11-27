@@ -1,10 +1,75 @@
 import { IProductRepository } from '../domain/IProductRepository.js';
 import { isDatabaseConnected } from '../../../shared/database/database.js';
 import { ProductModel } from '../../../shared/database/models.js';
+import { getDatabaseBinding } from '../../../shared/database/runtime.js';
 import { store } from '../../../shared/database/store.js';
 
-function escapeRegex(str) {
-  return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function escapeLike(str) {
+  return String(str).replace(/[\\%_]/g, '\\$&');
+}
+
+function buildD1ListWhere({ status, category, rootCause, inStock, search }) {
+  const clauses = [];
+  const args = [];
+
+  if (status && status !== 'all') {
+    // Product writes normalize status to lowercase. Equality keeps this
+    // predicate indexable by idx_products_status_created_at_2 and composite indexes.
+    clauses.push("json_extract(payload, '$.status') = ?");
+    args.push(String(status).trim().toLowerCase());
+  }
+
+  if (category && category !== 'All' && category !== 'all') {
+    const cleanCategory = String(category).trim().toLowerCase();
+    clauses.push("LOWER(json_extract(payload, '$.category')) = ?");
+    args.push(cleanCategory);
+  }
+
+  if (rootCause && rootCause !== 'All' && rootCause !== 'all') {
+    const cleanRootCause = String(rootCause).trim().toLowerCase();
+    clauses.push(
+      "(" +
+        "LOWER(json_extract(payload, '$.root_cause')) = ? OR " +
+        "LOWER(json_extract(payload, '$.root_causes')) = ? OR " +
+        "(json_type(payload, '$.root_causes') = 'array' AND EXISTS (" +
+          "SELECT 1 FROM json_each(payload, '$.root_causes') AS rc " +
+          "WHERE LOWER(CAST(rc.value AS TEXT)) = ?" +
+        "))" +
+      ")",
+    );
+    args.push(cleanRootCause, cleanRootCause, cleanRootCause);
+  }
+
+  if (inStock !== undefined) {
+    clauses.push("json_extract(payload, '$.in_stock') = ?");
+    args.push(Boolean(inStock) ? 1 : 0);
+    if (inStock === true) {
+      clauses.push("json_extract(payload, '$.stock') > ?");
+      args.push(0);
+    }
+  }
+
+  if (search && search.trim()) {
+    const likePattern = `%${escapeLike(search.trim().toLowerCase())}%`;
+    clauses.push(
+      "(" +
+        "LOWER(CAST(json_extract(payload, '$.name') AS TEXT)) LIKE ? ESCAPE '\\' OR " +
+        "LOWER(CAST(json_extract(payload, '$.subtitle') AS TEXT)) LIKE ? ESCAPE '\\' OR " +
+        "LOWER(CAST(json_extract(payload, '$.category') AS TEXT)) LIKE ? ESCAPE '\\' OR " +
+        "LOWER(CAST(json_extract(payload, '$.sku') AS TEXT)) LIKE ? ESCAPE '\\' OR " +
+        "(json_type(payload, '$.ingredients') = 'array' AND EXISTS (" +
+          "SELECT 1 FROM json_each(payload, '$.ingredients') AS nested " +
+          "WHERE LOWER(CAST(json_extract(nested.value, '$.name') AS TEXT)) LIKE ? ESCAPE '\\'" +
+        "))" +
+      ")",
+    );
+    args.push(likePattern, likePattern, likePattern, likePattern, likePattern);
+  }
+
+  return {
+    sql: clauses.length > 0 ? clauses.join(' AND ') : '1',
+    args,
+  };
 }
 
 export class ProductRepository extends IProductRepository {
@@ -22,47 +87,22 @@ export class ProductRepository extends IProductRepository {
     const skip = (safePage - 1) * safeLimit;
 
     if (isDatabaseConnected()) {
-      const andClauses = [];
-      if (status && status !== 'all') {
-        // Product writes normalize status to lowercase. Equality keeps this
-        // predicate indexable by idx_products_status_created_at_2.
-        andClauses.push({ status: String(status).trim().toLowerCase() });
-      }
-      if (category && category !== 'All' && category !== 'all') {
-        andClauses.push({ category: new RegExp(escapeRegex(category), 'i') });
-      }
-      if (rootCause && rootCause !== 'All' && rootCause !== 'all') {
-        const safeRootCause = escapeRegex(rootCause);
-        andClauses.push({
-          $or: [
-            { root_cause: new RegExp(`^${safeRootCause}$`, 'i') },
-            { root_causes: new RegExp(`^${safeRootCause}$`, 'i') },
-          ],
-        });
-      }
-      if (inStock !== undefined) {
-        andClauses.push({ in_stock: Boolean(inStock) });
-        if (inStock === true) andClauses.push({ stock: { $gt: 0 } });
-      }
-      if (search && search.trim()) {
-        const regex = new RegExp(escapeRegex(search.trim()), 'i');
-        andClauses.push({
-          $or: [
-            { name: regex },
-            { subtitle: regex },
-            { category: regex },
-            { sku: regex },
-            { 'ingredients.name': regex },
-          ],
-        });
-      }
+      const database = getDatabaseBinding();
+      const where = buildD1ListWhere({ status, category, rootCause, inStock, search });
+      const pagination = skip > 0 ? ' LIMIT ? OFFSET ?' : ' LIMIT ?';
+      const selectArgs = skip > 0 ? [...where.args, safeLimit, skip] : [...where.args, safeLimit];
+      const selectSql = `SELECT payload FROM "products" WHERE ${where.sql} ORDER BY json_extract(payload, '$.created_at') DESC${pagination}`;
+      const countSql = `SELECT COUNT(*) AS total FROM "products" WHERE ${where.sql}`;
 
-      const query = andClauses.length > 0 ? (andClauses.length === 1 ? andClauses[0] : { $and: andClauses }) : {};
-
-      const [items, total] = await Promise.all([
-        ProductModel.find(query).sort({ created_at: -1 }).skip(skip).limit(safeLimit).lean(),
-        ProductModel.countDocuments(query),
+      const [rowsResult, countRow] = await Promise.all([
+        database.prepare(selectSql).bind(...selectArgs).all(),
+        database.prepare(countSql).bind(...where.args).first(),
       ]);
+
+      const items = (rowsResult?.results || []).map((row) =>
+        typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload,
+      );
+      const total = Number(countRow?.total || 0);
       const has_more = skip + items.length < total;
 
       return { items, total, page: safePage, limit: safeLimit, has_more };
